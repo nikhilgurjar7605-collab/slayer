@@ -13,8 +13,8 @@ from telegram.ext import (
 )
 from config import BOT_TOKEN, OWNER_ID
 from utils.database import init_db, get_player, col
-from handlers.start import (start, get_name, choose_faction, choose_story,
-                            WAITING_NAME, CHOOSING_FACTION, CHOOSING_STORY)
+from handlers.start import (start, get_name, choose_faction, choose_story, captcha_callback,
+                            WAITING_NAME, WAITING_CAPTCHA, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
 from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner
 from handlers.explore import (explore, fight, attack, technique, choose_art, use_form,
@@ -178,6 +178,9 @@ async def post_init(application):
 
 PRIVATE = filters.ChatType.PRIVATE
 ANY = filters.ALL
+AUTO_GUARD_WINDOW_SECONDS = 12
+AUTO_GUARD_MAX_ACTIONS = 14
+AUTO_GUARD_REPEAT_LIMIT = 6
 
 
 async def buy_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -191,8 +194,161 @@ async def buy_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await buy(update, context)
 
 
+def _is_privileged_user(user_id: int | None) -> bool:
+    if not user_id:
+        return False
+    if user_id == OWNER_ID:
+        return True
+    return col("admins").find_one({"user_id": user_id}) is not None
+
+
+def _get_human_check_doc(user_id: int) -> dict:
+    return col("captcha_guard").find_one({"user_id": user_id}) or {}
+
+
+def _set_human_check_required(user_id: int, reason: str) -> None:
+    col("captcha_guard").update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "challenge_required": True,
+            "challenge_reason": str(reason)[:180],
+            "challenge_set_at": datetime.now(),
+        }},
+        upsert=True,
+    )
+
+
+def _activity_signature(update: Update) -> str | None:
+    query = update.callback_query
+    if query:
+        data = (query.data or "").strip()
+        if not data or data.startswith("captcha_") or data == "goto_start":
+            return None
+        return f"button:{data[:48]}"
+
+    message = update.message
+    if message and message.text and message.text.startswith("/"):
+        command = message.text.split()[0][1:].split("@")[0].lower()
+        if command == "start":
+            return None
+        return f"command:{command}"
+
+    return None
+
+
+def _note_recent_activity(context: ContextTypes.DEFAULT_TYPE, user_id: int, signature: str) -> tuple[int, int]:
+    tracker = context.application.bot_data.setdefault("auto_guard_tracker", {})
+    state = tracker.setdefault(user_id, {
+        "events": deque(maxlen=50),
+        "signatures": deque(maxlen=25),
+    })
+
+    now = datetime.now()
+    events = state["events"]
+    signatures = state["signatures"]
+
+    while events and (now - events[0]).total_seconds() > AUTO_GUARD_WINDOW_SECONDS:
+        events.popleft()
+    while signatures and (now - signatures[0][0]).total_seconds() > AUTO_GUARD_WINDOW_SECONDS:
+        signatures.popleft()
+
+    events.append(now)
+    signatures.append((now, signature))
+    repeat_count = sum(1 for _, sig in signatures if sig == signature)
+    return len(events), repeat_count
+
+
+def _human_check_message(reason: str | None = None, remaining_minutes: int | None = None) -> str:
+    if remaining_minutes:
+        return (
+            "Verification cooldown active.\n"
+            f"Wait about {remaining_minutes} minute(s), then use /start in DM."
+        )
+    if reason:
+        return (
+            "Human verification required.\n"
+            f"Trigger: {reason}\n\n"
+            "Use /start in DM and solve the captcha to continue."
+        )
+    return "Human verification required. Use /start in DM and solve the captcha to continue."
+
+
+async def _notify_human_check(update: Update, reason: str | None = None, remaining_minutes: int | None = None):
+    text = _human_check_message(reason=reason, remaining_minutes=remaining_minutes)
+    try:
+        if update.callback_query:
+            await update.callback_query.answer(text[:180], show_alert=True)
+        elif update.message:
+            await update.message.reply_text(text)
+    except Exception:
+        pass
+
+
+async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user or _is_privileged_user(user.id):
+        return
+
+    if update.callback_query and (update.callback_query.data or "").startswith("captcha_"):
+        return
+    if update.callback_query and (update.callback_query.data or "") == "goto_start":
+        return
+    if update.message and update.message.text and update.message.text.startswith("/start"):
+        return
+
+    guard_doc = _get_human_check_doc(user.id)
+    now = datetime.now()
+    lock_until = guard_doc.get("lock_until")
+    if isinstance(lock_until, datetime) and lock_until <= now:
+        col("captcha_guard").update_one(
+            {"user_id": user.id},
+            {"$set": {"lock_until": None}},
+            upsert=True,
+        )
+        lock_until = None
+
+    if isinstance(lock_until, datetime) and lock_until > now:
+        remaining = max(1, int((lock_until - now).total_seconds() // 60))
+        await _notify_human_check(update, remaining_minutes=remaining)
+        raise ApplicationHandlerStop
+
+    if guard_doc.get("challenge_required"):
+        await _notify_human_check(update, reason=guard_doc.get("challenge_reason"))
+        raise ApplicationHandlerStop
+
+    signature = _activity_signature(update)
+    if not signature:
+        return
+
+    player = get_player(user.id)
+    if not player:
+        return
+
+    burst_count, repeat_count = _note_recent_activity(context, user.id, signature)
+    if burst_count < AUTO_GUARD_MAX_ACTIONS and repeat_count < AUTO_GUARD_REPEAT_LIMIT:
+        return
+
+    reason = (
+        f"{repeat_count} repeated {signature} actions in {AUTO_GUARD_WINDOW_SECONDS}s"
+        if repeat_count >= AUTO_GUARD_REPEAT_LIMIT
+        else f"{burst_count} rapid actions in {AUTO_GUARD_WINDOW_SECONDS}s"
+    )
+    _set_human_check_required(user.id, reason)
+    log_user_activity(
+        user.id,
+        "human_check_required",
+        details=reason,
+        chat_id=update.effective_chat.id if update.effective_chat else None,
+        chat_type=update.effective_chat.type if update.effective_chat else None,
+        username=user.username,
+        name=user.first_name,
+    )
+    await _notify_human_check(update, reason=reason)
+    raise ApplicationHandlerStop
+
+
+
 async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Global pre-filter: silently blocks banned players."""
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
         return
@@ -227,11 +383,6 @@ async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raise ApplicationHandlerStop
 
 
-async def _response_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Add 1 second delay to ALL bot responses."""
-    await asyncio.sleep(1)
-
-
 async def _track_user_command_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     user = update.effective_user
@@ -258,7 +409,7 @@ async def _track_user_callback_activity(update: Update, context: ContextTypes.DE
         return
 
     data = (query.data or "").strip()
-    if not data:
+    if not data or data.startswith("captcha_"):
         return
 
     log_user_activity(
@@ -370,6 +521,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('event_'):              await event_callback(update, context)
     elif data.startswith('abroad_'):             await handle_broadcast_callback(update, context)
     elif data.startswith('cancel_broadcast:'):   await handle_broadcast_callback(update, context)
+    elif data.startswith('guide_'):        await guide_page_callback(update, context)
+    elif data.startswith('sug_'):          await suggestion_action_callback(update, context)
+    elif data.startswith('upgrade_confirm_'): await upgrade_confirm_callback(update, context)
+    elif data.startswith('offer_buy_'):    await offer_buy_callback(update, context)
+    elif data.startswith('clanlist_page_'): await clanlist_page_callback(update, context)
+    elif data.startswith('logs_'):         await logs_callback(update, context)
+    elif data.startswith('vote_'):         await vote_callback(update, context)
+    elif data.startswith('ownerplist_'):   await ownerplayers_callback(update, context)
+    elif data.startswith('event_'):              await event_callback(update, context)
     elif data.startswith('duel_settings_back_'): await duel_settings_back_callback(update, context)
     elif data.startswith('duel_settings_done_'): await duel_settings_done_callback(update, context)
     elif data.startswith('duel_settings_'): await duel_settings_callback(update, context)
@@ -416,6 +576,40 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('know_'):               await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
+    elif data == 'inv_materials':       await inv_materials_callback(update, context)
+    elif data == 'inv_back':            await inv_back_callback(update, context)
+    elif data.startswith('duel_accept_'):    await duel_accept_callback(update, context)
+    elif data.startswith('duel_decline_'):   await duel_decline_callback(update, context)
+    elif data.startswith('duel_attack_'):    await duel_attack(update, context)
+    elif data.startswith('duel_technique_'): await duel_technique_menu(update, context)
+    elif data.startswith('duel_art_'):       await duel_art_callback(update, context)
+    elif data.startswith('duel_view_'):      await duel_view(update, context)
+    elif data.startswith('duel_surrender_'): await duel_surrender(update, context)
+    elif data.startswith('duel_items_'):     await duel_items_menu(update, context)
+    elif data.startswith('duel_form_'):      await duel_use_form(update, context)
+    elif data.startswith('duel_useitem_'):   await duel_use_item(update, context)
+    elif data.startswith('claninfo_'):       await claninfo_callback(update, context)
+    elif data == 'raid_attack':              await raid_attack_callback(update, context)
+    elif data == 'raid_technique':           await raid_technique_callback(update, context)
+    elif data == 'raid_items':               await raid_items_callback(update, context)
+    elif data == 'raid_back':                await raid_back_callback(update, context)
+    elif data == 'raid_retreat':             await raid_retreat_callback(update, context)
+    elif data.startswith('raid_form_'):      await raid_use_form_callback(update, context)
+    elif data.startswith('raid_useitem_'):   await raid_use_item(update, context)
+    elif data.startswith('clan_accept_'):    await clan_accept_callback(update, context)
+    elif data.startswith('clan_reject_'):    await clan_reject_callback(update, context)
+    elif data.startswith('coop_join_'):      await coop_join_callback(update, context)
+    elif data.startswith('coop_art_'):       await coop_art_callback(update, context)
+    elif data.startswith('coop_form_'):      await coop_use_form(update, context)
+    elif data.startswith('coop_useitem_'):   await coop_use_item(update, context)
+    elif data.startswith('skillinfo_'):      await skill_detail(update, context)
+    elif data.startswith('skillpage_'):      await skilltree_page_callback(update, context)
+    elif data.startswith('shop_'):           await shop_page_callback(update, context)
+    elif data.startswith('myskills_'):       await myskills_callback(update, context)
+    elif data == 'goto_start':               await start(update, context)
+    elif data.startswith('know_'):           await know_callback(update, context)
+    elif data.startswith('help_'):           await help_callback(update, context)
+    elif data.startswith('ahelp_'):          await admin_help_callback(update, context)
     else:
         await query.answer("❓ Unknown action!", show_alert=True)
 
@@ -450,6 +644,7 @@ def main():
             CallbackQueryHandler(start, pattern='^goto_start$'),
         ],
         states={
+            WAITING_CAPTCHA: [CallbackQueryHandler(captcha_callback, pattern='^captcha_')],
             WAITING_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             CHOOSING_FACTION:[CallbackQueryHandler(choose_faction, pattern='^faction_')],
             CHOOSING_STORY:  [CallbackQueryHandler(choose_story,   pattern='^story_')],
@@ -465,13 +660,10 @@ def main():
     )
     app.add_handler(conv)
 
-    # Ban check first (instant)
     app.add_handler(MessageHandler(filters.ALL, _global_ban_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_ban_check), group=-1)
-
-    # 1 second delay on ALL responses
-    app.add_handler(MessageHandler(filters.ALL, _response_delay), group=0)
-    app.add_handler(CallbackQueryHandler(_response_delay), group=0)
+    app.add_handler(MessageHandler(filters.ALL, _global_human_check), group=-1)
+    app.add_handler(CallbackQueryHandler(_global_human_check), group=-1)
 
     everywhere = [
         ('profile',         profile),
