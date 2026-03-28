@@ -1,0 +1,15 @@
+Place your breathing style images here with these exact filenames:
+- water.jpg
+- flame.jpg
+- thunder.jpg
+- wind.jpg
+- stone.jpg
+- serpent.jpg
+- mist.jpg
+- moon.jpg
+- sun.jpg
+- insect.jpg
+- sound.jpg
+- love.jpg
+- beast.jpg       ← NEW
+- flower.jpg      ← NEW
