@@ -542,7 +542,7 @@ async def _show_duel_forms(query, user_id, player, art_name):
         return
 
     buttons = []
-    for f in forms[:6]:
+    for f in forms[:9]:
         buttons.append([InlineKeyboardButton(
             f"Form {f['form']} — {f['name']} | {f['dmg_min']}-{f['dmg_max']} DMG",
             callback_data=f"duel_form_{user_id}_{f['form']}_{art_name.replace(' ','_')}"
