@@ -1,3 +1,4 @@
+import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from datetime import datetime
@@ -6,6 +7,7 @@ from utils.database import (
     get_gift_count_today, col, canonical_item_name
 )
 
+log = logging.getLogger(__name__)
 MAX_GIFTS_PER_DAY = 10
 
 
@@ -19,12 +21,9 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         args = context.args or []
-        raw_text = update.message.text
         
-        # Debug log
-        print(f"[GIFT] Raw command: {raw_text}")
-        print(f"[GIFT] Args: {args}")
-        print(f"[GIFT] Has reply: {update.message.reply_to_message is not None}")
+        # THIS LOG IS CRITICAL - Search for this in Render logs!
+        log.info(f"[GIFT-CMD] User {user_id} ran: {update.message.text}")
 
         if not args and not update.message.reply_to_message:
             await _show_help(update)
@@ -37,20 +36,14 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Method 1: Reply
         if update.message.reply_to_message:
             replied_user = update.message.reply_to_message.from_user
-            print(f"[GIFT] Replied to user: {replied_user.id} (@{replied_user.username})")
             
             if replied_user.is_bot:
                 await update.message.reply_text("❌ Can't gift to bots!")
                 return
             
             target = col("players").find_one({"user_id": replied_user.id})
-            print(f"[GIFT] Target found in DB: {target is not None}")
-            
             if not target:
-                await update.message.reply_text(
-                    "❌ *Player not found.*\n_They need /start first._",
-                    parse_mode='Markdown'
-                )
+                await update.message.reply_text("❌ Player not found. They need /start first.")
                 return
             
             item_name_raw = ' '.join(args).strip() if args else None
@@ -60,51 +53,36 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif len(args) >= 2:
             target_username = args[0].lstrip('@')
             item_name_raw = ' '.join(args[1:]).strip()
-            print(f"[GIFT] Looking for username: {target_username}")
-            print(f"[GIFT] Item name raw: {item_name_raw}")
-            
-            target = col("players").find_one({
-                "username": {"$regex": f"^{target_username}$", "$options": "i"}
-            })
-            print(f"[GIFT] Target found: {target is not None}")
+            target = col("players").find_one({"username": {"$regex": f"^{target_username}$", "$options": "i"}})
             target_display = f"@{target_username}"
 
-        # Validation
         if not item_name_raw:
             await _show_help(update)
             return
 
         if not target:
-            await update.message.reply_text("❌ *Player not found.*", parse_mode='Markdown')
+            await update.message.reply_text("❌ Player not found.")
             return
 
         if target['user_id'] == user_id:
             await update.message.reply_text("❌ You can't gift yourself!")
             return
 
-        # Gift limit
+        # Check daily limit
         gift_count = get_gift_count_today(user_id)
-        print(f"[GIFT] Gift count today: {gift_count}")
-        
         if gift_count >= MAX_GIFTS_PER_DAY:
-            await update.message.reply_text(
-                f"❌ *Daily limit reached!* ({gift_count}/{MAX_GIFTS_PER_DAY})",
-                parse_mode='Markdown'
-            )
+            await update.message.reply_text(f"❌ Daily limit reached! ({gift_count}/{MAX_GIFTS_PER_DAY})")
             return
 
-        # === CRITICAL PART: Item matching ===
+        # Match item using canonical name
         canonical_name = canonical_item_name(item_name_raw)
-        print(f"[GIFT] Raw input: '{item_name_raw}'")
-        print(f"[GIFT] Canonical name: '{canonical_name}'")
+        log.info(f"[GIFT-CMD] Looking for: '{canonical_name}'")
 
         inventory = get_inventory(user_id)
-        print(f"[GIFT] Inventory count: {len(inventory)}")
-        print(f"[GIFT] Inventory items: {[i['item_name'] for i in inventory]}")
+        log.info(f"[GIFT-CMD] User inventory: {[i['item_name'] for i in inventory]}")
 
         owned = None
         for item in inventory:
-            print(f"[GIFT] Comparing: '{item['item_name'].lower()}' == '{canonical_name.lower()}' -> {item['item_name'].lower() == canonical_name.lower()}")
             if item['item_name'].lower() == canonical_name.lower():
                 owned = item
                 break
@@ -114,7 +92,7 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
             avail_str = ', '.join(available) + ('...' if len(inventory) > 5 else '')
             await update.message.reply_text(
                 f"❌ *Item not found:* `{item_name_raw}`\n"
-                f"(looked for: `{canonical_name}`)\n\n"
+                f"(Looked for: `{canonical_name}`)\n\n"
                 f"📦 Your items: {avail_str if avail_str else '*none*'}",
                 parse_mode='Markdown'
             )
@@ -123,11 +101,10 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Equipped check
         equipped = [player.get('equipped_sword'), player.get('equipped_armor')]
         equipped = [e for e in equipped if e]
-        print(f"[GIFT] Equipped items: {equipped}")
         
         if owned['item_name'] in equipped:
             await update.message.reply_text(
-                f"❌ *Can't gift equipped items!*\nUnequip *{owned['item_name']}* first.",
+                f"❌ Can't gift equipped items! Unequip *{owned['item_name']}* first.",
                 parse_mode='Markdown'
             )
             return
@@ -136,8 +113,6 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
         actual_name = owned['item_name']
         actual_type = owned['item_type']
         qty = owned.get('quantity', 1)
-
-        print(f"[GIFT] Transferring: {actual_name} x{qty}")
 
         remove_item(user_id, actual_name, qty)
         add_item(target['user_id'], actual_name, actual_type, qty)
@@ -174,13 +149,15 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
                 parse_mode='Markdown'
             )
-        except Exception as e:
-            print(f"[GIFT] Could not notify receiver: {e}")
+        except Exception:
+            pass
 
     except Exception as e:
-        import traceback
-        print(f"[GIFT ERROR] {traceback.format_exc()}")
-        await update.message.reply_text(f"❌ Error: `{str(e)}`", parse_mode='Markdown')
+        log.error(f"[GIFT-ERROR] {e}", exc_info=True)
+        try:
+            await update.message.reply_text(f"❌ Error: `{str(e)}`", parse_mode='Markdown')
+        except Exception:
+            pass
 
 
 async def _show_help(update: Update):
