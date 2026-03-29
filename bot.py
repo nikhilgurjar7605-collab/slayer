@@ -112,6 +112,10 @@ from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle
 from handlers.upgrade import upgrade, upgradetoggle, upgrade_confirm_callback
 from handlers.hybrid import hybrid, demonmark, hybridtoggle
 from handlers.offer import offers, offer_buy_callback, addoffer
+from handlers.tournament import (
+    createtour, starttour, endtour, listtours, settourlevel,
+    tournament, mytour, tour_fight, tournament_callback,
+)
 from handlers.imgupload import setimage, listimages
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
@@ -464,6 +468,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'travel_locked',
         'travel_to_',
         'goto_start',
+        'tour_',
     )
     is_cross = any(data.startswith(p) or data == p for p in cross_user)
 
@@ -576,6 +581,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('know_'):               await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
+    elif data.startswith('tour_'):               await tournament_callback(update, context)
     elif data == 'inv_materials':       await inv_materials_callback(update, context)
     elif data == 'inv_back':            await inv_back_callback(update, context)
     elif data.startswith('duel_accept_'):    await duel_accept_callback(update, context)
@@ -735,6 +741,15 @@ def main():
         ('hybrid',          hybrid),
         ('offers',          offers),
         ('addoffer',        addoffer),
+        # ── Tournament system ──────────────────────────────────────────────
+        ('tournament',      tournament),
+        ('mytour',          mytour),
+        ('tourfight',       tour_fight),
+        ('createtour',      createtour),
+        ('starttour',       starttour),
+        ('endtour',         endtour),
+        ('listtours',       listtours),
+        ('settourlevel',    settourlevel),
         ('setimage',        setimage),
         ('listimages',      listimages),
         ('upgradetoggle',   upgradetoggle),
