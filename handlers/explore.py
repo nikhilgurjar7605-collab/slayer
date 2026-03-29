@@ -75,85 +75,6 @@ async def safe_edit(query, text, **kwargs):
 
 
 
-async def _send_art_image(context, chat_id, art_name: str, caption: str = "", reply_to_message_id: int | None = None, form_num: int | None = None):
-    """
-    Send art/breathing image — supports BOTH:
-      Option A: image_url = "https://..."  (direct URL)
-      Option B: image     = "images/breathing/water.jpg"  (local file on server)
-    Silently skips if both are missing/bad. Never crashes the bot.
-    """
-    try:
-        reply_to_message_id = reply_to_message_id or context.bot_data.pop(f"art_reply_to_message_id_{chat_id}", None)
-        import os
-        from config import BREATHING_STYLES, DEMON_ARTS, TECHNIQUES
-        all_styles = BREATHING_STYLES + DEMON_ARTS
-        style = next((s for s in all_styles if s['name'] == art_name), None)
-        if not style:
-            return
-
-        cap = (caption[:1024] if caption else f"✨ {art_name}")
-        form = next((f for f in TECHNIQUES.get(art_name, []) if f.get('form') == form_num), None) if form_num is not None else None
-
-        image_keys = []
-        if form_num is not None:
-            image_keys.append(f"{art_name}#{form_num}")
-        image_keys.append(art_name)
-        for image_key in image_keys:
-            image_doc = col("style_images").find_one({"style_name": image_key}) or {}
-            file_id = str(image_doc.get('file_id') or '').strip()
-            if file_id:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=file_id,
-                    caption=cap,
-                    parse_mode='Markdown',
-                    reply_to_message_id=reply_to_message_id
-                )
-                return
-            saved_url = str(image_doc.get('url') or '').strip()
-            if saved_url.startswith('http'):
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=saved_url,
-                    caption=cap,
-                    parse_mode='Markdown',
-                    reply_to_message_id=reply_to_message_id
-                )
-                return
-
-        # ── Option A: image_url (external URL) ───────────────────────────
-        url = str((form or {}).get('image_url') or style.get('image_url', '')).strip()
-        if url and url.startswith('http'):
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=url,
-                caption=cap,
-                parse_mode='Markdown',
-                reply_to_message_id=reply_to_message_id
-            )
-            return
-
-        # ── Option B: local file path (images/breathing/water.jpg) ───────
-        local = str((form or {}).get('image') or style.get('image', '')).strip()
-        if local:
-            # Try relative to bot root directory
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            full_path = os.path.join(base_dir, local)
-            if os.path.isfile(full_path):
-                with open(full_path, 'rb') as f:
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=f,
-                        caption=cap,
-                        parse_mode='Markdown',
-                        reply_to_message_id=reply_to_message_id
-                    )
-                return
-
-        # Neither option available — silently skip
-    except Exception:
-        pass  # Never crash — image is optional decoration
-
 
 def get_enemies_for_region(player):
     """Get enemy for player's current region. Boss only spawns after 20 explores."""
@@ -926,9 +847,6 @@ async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(buttons)
     )
-    # Send art image in background (non-blocking, won't crash if missing)
-    await _send_art_image(context, query.message.chat_id, art_name,
-                          caption=f"✨ *{art_name}* — Select your form")
 
 
 # ── FORM INFO ─────────────────────────────────────────────────────────────
@@ -1013,13 +931,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.append(f"Hit {i + 1} -> {hit_dmg} damage!")
         total_dmg += hit_dmg
     log.append(f"{total_dmg} damage!" if hits == 1 else f"Total: {total_dmg} damage!")
-    await _send_art_image(
-        context,
-        query.message.chat_id,
-        art_name,
-        caption=f"{art_name} - Form {form_num}: {form['name']}",
-        form_num=form_num,
-    )
     ctx = context.user_data.setdefault(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = state.get('enemy_hp', 0)
     ctx['enemy_max_hp'] = state.get('enemy_max_hp', state.get('enemy_hp', 1000))
