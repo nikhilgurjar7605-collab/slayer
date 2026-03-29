@@ -81,6 +81,10 @@ def init_db():
     db.sp_tournaments.create_index("id", unique=True)
     db.sp_tournaments.create_index("status")
     db.sp_tournaments.create_index("ends_at")
+    # ── Tournament system ──────────────────────────────────────────────────
+    db.tournaments.create_index("tour_id", unique=True)
+    db.tournaments.create_index("status")
+    db.tournaments.create_index("created_at")
     db.user_activity_logs.create_index([("user_id", 1), ("timestamp", DESCENDING)])
     db.user_activity_logs.create_index("timestamp")
     db.captcha_guard.create_index("user_id", unique=True)
