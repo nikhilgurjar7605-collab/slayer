@@ -114,7 +114,7 @@ from handlers.hybrid import hybrid, demonmark, hybridtoggle
 from handlers.offer import offers, offer_buy_callback, addoffer
 from handlers.tournament import (
     createtour, starttour, endtour, listtours, settourlevel,
-    tournament, mytour, tour_fight, tournament_callback, rolltour,
+    tournament, mytour, tour_fight, tournament_callback, rolltour, tourplayers,
 )
 from handlers.imgupload import setimage, listimages
 from handlers.clan_list import clan_list, clanlist_page_callback
@@ -751,6 +751,7 @@ def main():
         ('listtours',       listtours),
         ('settourlevel',    settourlevel),
         ('roll',            rolltour),
+        ('tourplayers',     tourplayers),
         ('setimage',        setimage),
         ('listimages',      listimages),
         ('upgradetoggle',   upgradetoggle),
