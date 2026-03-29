@@ -388,6 +388,24 @@ async def _finish_duel(query, duel_doc, winner_id, loser_id, context, reason="KO
         parse_mode='Markdown'
     )
 
+    # ── TOURNAMENT HOOK ───────────────────────────────────────────────────
+    # If either player is in a tournament, auto-record the result
+    winner_fresh = get_player(winner_id)
+    loser_fresh  = get_player(loser_id)
+    tour_id = (winner_fresh or {}).get("in_tournament") or (loser_fresh or {}).get("in_tournament")
+    if tour_id:
+        try:
+            from handlers.tournament import on_tournament_duel_end
+            import asyncio
+            chat_id = query.message.chat_id if query.message else None
+            if chat_id:
+                asyncio.create_task(
+                    on_tournament_duel_end(context, winner_id, loser_id, tour_id, chat_id)
+                )
+        except Exception:
+            pass
+    # ─────────────────────────────────────────────────────────────────────
+
 
 # ── Attack ────────────────────────────────────────────────────────────────
 
