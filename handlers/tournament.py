@@ -107,17 +107,28 @@ def _tour_embed(tour: dict, extra: str = "") -> str:
 
 def _tour_keyboard(tour_id: str, status: str) -> InlineKeyboardMarkup:
     if status == "open":
-        return InlineKeyboardMarkup([[
-            InlineKeyboardButton("📝 Register", callback_data=f"tour_register_{tour_id}"),
-            InlineKeyboardButton("📋 Info",     callback_data=f"tour_info_{tour_id}"),
-        ]])
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📝 Register",    callback_data=f"tour_register_{tour_id}"),
+                InlineKeyboardButton("👥 Participants",callback_data=f"tour_participants_{tour_id}"),
+            ],
+            [
+                InlineKeyboardButton("📋 Info",        callback_data=f"tour_info_{tour_id}"),
+            ],
+        ])
     if status == "active":
-        return InlineKeyboardMarkup([[
-            InlineKeyboardButton("⚔️ Fight",    callback_data=f"tour_fight_{tour_id}"),
-            InlineKeyboardButton("📋 Bracket",  callback_data=f"tour_bracket_{tour_id}"),
-        ]])
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⚔️ Fight",       callback_data=f"tour_fight_{tour_id}"),
+                InlineKeyboardButton("👥 Participants", callback_data=f"tour_participants_{tour_id}"),
+            ],
+            [
+                InlineKeyboardButton("📋 Standings",   callback_data=f"tour_bracket_{tour_id}"),
+            ],
+        ])
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🏁 Results", callback_data=f"tour_results_{tour_id}"),
+        InlineKeyboardButton("🏁 Results",    callback_data=f"tour_results_{tour_id}"),
+        InlineKeyboardButton("👥 Participants",callback_data=f"tour_participants_{tour_id}"),
     ]])
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -263,14 +274,13 @@ async def starttour(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tour_level_override = tour_level or original_level,
         )
 
-    # Shuffle and build first-round bracket
+    # Shuffle for fairness
     _random.shuffle(updated_regs)
-    bracket = _build_bracket(updated_regs)
 
     _update_tour(tour_id,
         status        = "active",
         registrations = updated_regs,
-        bracket       = bracket,
+        bracket       = [],
         started_at    = datetime.now(),
     )
 
@@ -286,15 +296,10 @@ async def starttour(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 ID: `{tour_id}`\n"
         f"👥 Fighters ({len(updated_regs)}):\n{participant_list}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚔️ First round matches:\n"
+        f"🎲 Opponents are matched *randomly* each fight!\n"
+        f"⚔️ Same tour level fighters face each other.\n\n"
+        f"Use `/tourfight` to get a random opponent and start your match!"
     )
-    for i, match in enumerate(bracket):
-        if len(match) == 2:
-            text += f"  Match {i+1}: *{match[0]['name']}* vs *{match[1]['name']}*\n"
-        else:
-            text += f"  Match {i+1}: *{match[0]['name']}* — BYE (auto-advance)\n"
-
-    text += f"\nUse `/fight @opponent` to battle your match opponent!"
 
     kb = _tour_keyboard(tour_id, "active")
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
@@ -377,6 +382,89 @@ async def settourlevel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════════════════════
 # PLAYER COMMANDS
 # ══════════════════════════════════════════════════════════════════════════
+
+async def rolltour(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /roll <tour_id> — Owner/admin posts the full participant list and
+    DM-notifies every registered player.
+    """
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/roll <tour_id>`", parse_mode="Markdown")
+        return
+
+    tour_id = context.args[0].upper()
+    tour    = _get_tour(tour_id)
+    if not tour:
+        await update.message.reply_text(
+            f"❌ Tournament `{tour_id}` not found.", parse_mode="Markdown"
+        )
+        return
+
+    regs = tour.get("registrations", [])
+    if not regs:
+        await update.message.reply_text("❌ No participants registered yet.")
+        return
+
+    faction_icon = lambda f: "🗡️" if f == "slayer" else "👹"
+    lines_list = []
+    for i, r in enumerate(regs, 1):
+        p  = get_player(r["user_id"])
+        fi = faction_icon(p.get("faction", "slayer")) if p else "👤"
+        lines_list.append(f"  {i}. {fi} *{r['name']}*")
+
+    prize_pool = tour.get("prize_pool_yen", 0)
+    participant_block = "\n".join(lines_list)
+
+    list_text = (
+        f"🏆 *{tour['name']}* — Roll Call!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🆔 `{tour_id}` | 👥 {len(regs)}/{tour.get('max_players', '∞')} registered\n"
+        f"🎁 Prize Pool: {prize_pool:,} Yen\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{participant_block}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 Tour Level: {tour.get('tour_level', 'Auto')}\n"
+        f"💰 Entry Fee: {tour.get('fee_yen', 0):,} Yen + {tour.get('fee_sp', 0)} SP"
+    )
+
+    # Post participant list in the group
+    await update.message.reply_text(list_text, parse_mode="Markdown")
+
+    # DM-notify every registered player
+    notified = 0
+    failed   = 0
+    for r in regs:
+        uid = r["user_id"]
+        notify_text = (
+            f"📣 *Tournament Roll Call!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏆 You are registered in *{tour['name']}* (`{tour_id}`)!\n"
+            f"👥 Total fighters: {len(regs)}\n"
+            f"🎁 Prize pool: {prize_pool:,} Yen\n"
+            f"🎯 Tour level: {tour.get('tour_level', 'Auto')}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Get ready to fight! Admin will start soon.\n"
+            f"Use /mytour to check your status."
+        )
+        try:
+            await context.bot.send_message(uid, notify_text, parse_mode="Markdown")
+            notified += 1
+        except Exception:
+            failed += 1
+
+    summary = (
+        f"✅ Roll call complete!\n"
+        f"📨 Notified: {notified} players"
+    )
+    if failed:
+        summary += f"\n⚠️ Failed to DM: {failed} (they may not have started the bot in DM)"
+    await update.message.reply_text(summary)
+
 
 async def tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/tournament — Show open tournaments or your current tournament status."""
@@ -478,27 +566,44 @@ async def mytour(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # BRACKET / MATCH HELPERS
 # ══════════════════════════════════════════════════════════════════════════
 
-def _build_bracket(regs: list) -> list:
-    """Pair players into matches. Odd player gets a BYE."""
-    matches = []
-    players = list(regs)
-    while len(players) >= 2:
-        p1 = players.pop(0)
-        p2 = players.pop(0)
-        matches.append([p1, p2])
-    if players:  # BYE
-        matches.append([players[0]])
-    return matches
+def _get_random_opponent(tour: dict, user_id: int):
+    """
+    Pick a random alive opponent at the same tour level as user_id.
+    Falls back to any alive opponent if no same-level one is found.
+    Returns the opponent registration dict, or None.
+    """
+    import random as _random
+    regs = tour.get("registrations", [])
 
+    # Find caller's tour_level
+    me = next((r for r in regs if r["user_id"] == user_id), None)
+    if not me:
+        return None
 
-def _get_current_match(tour: dict, user_id: int):
-    """Find the current bracket match for a user."""
-    for match in tour.get("bracket", []):
-        if len(match) == 2:
-            ids = [m["user_id"] for m in match]
-            if user_id in ids:
-                return match
-    return None
+    my_level = me.get("tour_level")
+
+    # All alive players except self
+    alive = [r for r in regs if not r.get("eliminated") and r["user_id"] != user_id]
+    if not alive:
+        return None
+
+    # Check nobody is already in an active duel with us
+    def already_dueling(opp_id):
+        return col("duels").find_one({
+            "$or": [
+                {"challenger_id": user_id,  "target_id": opp_id},
+                {"challenger_id": opp_id,   "target_id": user_id},
+            ],
+            "status": "active"
+        }) is not None
+
+    # Prefer same tour level
+    same_level = [r for r in alive if r.get("tour_level") == my_level and not already_dueling(r["user_id"])]
+    pool = same_level if same_level else [r for r in alive if not already_dueling(r["user_id"])]
+
+    if not pool:
+        return None
+    return _random.choice(pool)
 
 
 def _record_match_result(tour_id: str, winner_id: int, loser_id: int):
@@ -515,13 +620,7 @@ def _record_match_result(tour_id: str, winner_id: int, loser_id: int):
             r["losses"]     = r.get("losses", 0) + 1
             r["eliminated"] = True
 
-    # Remove completed match from bracket
-    bracket = [
-        m for m in tour.get("bracket", [])
-        if not (len(m) == 2 and {m[0]["user_id"], m[1]["user_id"]} == {winner_id, loser_id})
-    ]
-
-    # Restore loser's level
+    # Restore loser's real profile (tour level was only temporary)
     loser_player = get_player(loser_id)
     if loser_player:
         update_player(loser_id,
@@ -531,16 +630,12 @@ def _record_match_result(tour_id: str, winner_id: int, loser_id: int):
 
     alive = [r for r in regs if not r.get("eliminated")]
 
-    _update_tour(tour_id, registrations=regs, bracket=bracket)
+    # No bracket structure needed — opponents are picked randomly each fight
+    _update_tour(tour_id, registrations=regs)
 
     # If only 1 alive → auto-end
     if len(alive) <= 1:
         return "ended"
-
-    # If bracket is empty, build next round
-    if not bracket:
-        new_bracket = _build_bracket(alive)
-        _update_tour(tour_id, bracket=new_bracket)
 
     return "continue"
 
@@ -571,43 +666,28 @@ async def tour_fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Tournament is not active.")
         return
 
-    match = _get_current_match(tour, user_id)
-    if not match:
+    # Randomly pick an opponent of the same tour level
+    opponent = _get_random_opponent(tour, user_id)
+    if not opponent:
         await update.message.reply_text(
-            "📭 No match scheduled for you right now.\n"
-            "Wait for the current round to complete!"
+            "📭 No available opponent right now — everyone is already in a fight!\n"
+            "Try again in a moment."
         )
         return
-    if len(match) == 1:
-        await update.message.reply_text("🎉 You have a BYE this round — auto-advance!")
-        return
 
-    opponent = match[1] if match[0]["user_id"] == user_id else match[0]
     opp_player = get_player(opponent["user_id"])
     if not opp_player:
         await update.message.reply_text("❌ Opponent not found.")
         return
 
-    # Check if a duel is already active
-    existing = col("duels").find_one({
-        "$or": [
-            {"challenger_id": user_id, "target_id": opponent["user_id"]},
-            {"challenger_id": opponent["user_id"], "target_id": user_id},
-        ],
-        "status": "active"
-    })
-    if existing:
-        await update.message.reply_text(
-            f"⚔️ Your tournament match against *{opponent['name']}* is already in progress!",
-            parse_mode="Markdown"
-        )
-        return
+    # Get my own registration for tour level display
+    regs = tour.get("registrations", [])
+    me_reg = next((r for r in regs if r["user_id"] == user_id), {})
 
-    # Insert a tournament-tagged duel
     fe_me  = "🗡️" if player["faction"] == "slayer" else "👹"
     fe_opp = "🗡️" if opp_player["faction"] == "slayer" else "👹"
-    level  = match[0]["tour_level"] if match[0]["user_id"] == user_id else match[1]["tour_level"]
-    opp_lv = match[1]["tour_level"] if match[0]["user_id"] == user_id else match[0]["tour_level"]
+    level  = me_reg.get("tour_level", get_level(player.get("xp", 0)))
+    opp_lv = opponent.get("tour_level", get_level(opp_player.get("xp", 0)))
 
     text = (
         f"🏆 *TOURNAMENT MATCH!*\n"
@@ -716,14 +796,57 @@ async def tournament_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not tour:
             await query.answer("❌ Not found.", show_alert=True)
             return
-        bracket = tour.get("bracket", [])
-        text = "⚔️ *Current Bracket:*\n"
-        for i, m in enumerate(bracket):
-            if len(m) == 2:
-                text += f"  Match {i+1}: *{m[0]['name']}* vs *{m[1]['name']}*\n"
+        regs  = tour.get("registrations", [])
+        alive = [r for r in regs if not r.get("eliminated")]
+        elim  = [r for r in regs if r.get("eliminated")]
+        text  = f"⚔️ *{tour['name']} — Remaining Fighters*\n━━━━━━━━━━━━━━━━━━━━━\n"
+        for r in alive:
+            text += f"  ⚔️ *{r['name']}* (Lv.{r.get('tour_level','?')}) — {r.get('wins',0)}W/{r.get('losses',0)}L\n"
+        if elim:
+            text += "\n💀 *Eliminated:*\n"
+            for r in elim:
+                text += f"  ❌ {r['name']}\n"
+        text += f"\n🎁 Prize pool: {tour.get('prize_pool_yen',0):,} Yen"
+        await _safe_edit(query, text or "No players yet.", parse_mode="Markdown")
+
+    # ── Participants ──────────────────────────────────────────────────────
+    elif data.startswith("tour_participants_"):
+        tour_id = data.split("tour_participants_")[1]
+        tour    = _get_tour(tour_id)
+        if not tour:
+            await query.answer("❌ Not found.", show_alert=True)
+            return
+        regs   = tour.get("registrations", [])
+        status = tour.get("status", "open")
+        if not regs:
+            await query.answer("📭 No participants yet!", show_alert=True)
+            return
+
+        faction_icon = lambda f: "🗡️" if f == "slayer" else "👹"
+        lines = []
+        for i, r in enumerate(regs, 1):
+            p  = get_player(r["user_id"])
+            fi = faction_icon(p.get("faction","slayer")) if p else "👤"
+            if status == "active":
+                status_icon = "💀" if r.get("eliminated") else "⚔️"
+                w = r.get("wins", 0)
+                l = r.get("losses", 0)
+                lines.append(f"  {i}. {status_icon} {fi} *{r['name']}* — {w}W/{l}L")
             else:
-                text += f"  Match {i+1}: *{m[0]['name']}* — BYE\n"
-        await _safe_edit(query, text or "No matches yet.", parse_mode="Markdown")
+                lines.append(f"  {i}. {fi} *{r['name']}*")
+
+        prize_pool = tour.get("prize_pool_yen", 0)
+        participant_block = "\n".join(lines)
+        text = (
+            f"👥 *{tour['name']} — Participants*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 `{tour_id}` | {len(regs)}/{tour.get('max_players','∞')}\n"
+            f"🎁 Prize Pool: {prize_pool:,} Yen\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{participant_block}"
+        )
+        await _safe_edit(query, text, parse_mode="Markdown",
+                         reply_markup=_tour_keyboard(tour_id, status))
 
     # ── Results ───────────────────────────────────────────────────────────
     elif data.startswith("tour_results_"):
