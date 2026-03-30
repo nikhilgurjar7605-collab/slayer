@@ -7,9 +7,11 @@ import re
 from datetime import datetime, timedelta
 from pymongo import MongoClient, DESCENDING
 from pymongo.collection import Collection
+import os as _os
+import dns.resolver
 
 # ── Connection ────────────────────────────────────────────────────────────
-import os as _os
+
 MONGO_URL = _os.environ.get("MONGO_URL", 
     "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0")
 DB_NAME   = "demon_slayer_rpg"
