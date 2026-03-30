@@ -1,9 +1,0 @@
-Place your enemy images here with these exact filenames:
-- lesser_demon.jpg
-- vampire.jpg
-- goblin.jpg
-- lower_moon.jpg
-- upper_moon.jpg
-- slayer.jpg
-- rival_demon.jpg
-- hashira.jpg
