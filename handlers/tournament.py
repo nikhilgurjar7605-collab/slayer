@@ -262,20 +262,49 @@ async def starttour(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # If not set, each player keeps their own real level
         assigned_level = tour_level if tour_level else original_level
 
+        # Calculate XP, HP and STA matching the assigned level
+        if tour_level:
+            from utils.helpers import _xp_threshold
+            # XP = minimum XP to reach assigned_level
+            tour_xp     = _xp_threshold(assigned_level)
+            # HP/STA scale: base + (level-1) * per_level_gain
+            # Using same gains as level-up: HP base=240 +5% per level, STA base=170 +10 per level
+            # Simplified flat approximation for clean scaling
+            base_hp     = 240 if player.get("faction", "slayer") == "slayer" else 280
+            base_sta    = 170 if player.get("faction", "slayer") == "slayer" else 160
+            # Each level adds ~5% of base HP (flat approx) and 10 STA
+            tour_maxhp  = int(base_hp * (1 + 0.05 * (assigned_level - 1)))
+            tour_maxsta = base_sta + (assigned_level - 1) * 10
+        else:
+            tour_xp     = player.get("xp", 0)
+            tour_maxhp  = player.get("max_hp", 240)
+            tour_maxsta = player.get("max_sta", 170)
+
+        # Save originals so we can restore after tour
         r.update({
             "original_level": original_level,
+            "original_xp":    player.get("xp", 0),
+            "original_max_hp":player.get("max_hp", 240),
+            "original_max_sta":player.get("max_sta", 170),
+            "original_hp":    player.get("hp", 240),
+            "original_sta":   player.get("sta", 170),
             "tour_level":     assigned_level,
-            "hp":             player.get("max_hp", 240),
+            "hp":             tour_maxhp,
             "eliminated":     False,
             "wins":           0,
             "losses":         0,
         })
         updated_regs.append(r)
 
-        # Store tour context on player doc
+        # Apply tour stats to player doc temporarily
         update_player(uid,
             in_tournament       = tour_id,
             tour_level_override = assigned_level,
+            xp                  = tour_xp,
+            max_hp              = tour_maxhp,
+            hp                  = tour_maxhp,
+            max_sta             = tour_maxsta,
+            sta                 = tour_maxsta,
         )
 
     # Shuffle for fairness
@@ -460,6 +489,212 @@ async def settourlevel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════════════════════
 # PLAYER COMMANDS
 # ══════════════════════════════════════════════════════════════════════════
+
+async def fixtour(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /fixtour <tour_id> — Admin: re-apply correct XP/HP/STA to all
+    active (non-eliminated) players in a running tournament.
+    Use this to fix players who joined before the stat-scaling update.
+    """
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/fixtour <tour_id>`", parse_mode="Markdown")
+        return
+
+    tour_id = context.args[0].upper()
+    tour    = _get_tour(tour_id)
+    if not tour:
+        await update.message.reply_text(f"❌ Tournament `{tour_id}` not found.", parse_mode="Markdown")
+        return
+    if tour["status"] != "active":
+        await update.message.reply_text("❌ Tournament is not active.")
+        return
+
+    from utils.helpers import _xp_threshold
+    tour_level = tour.get("tour_level")
+    regs       = tour.get("registrations", [])
+    fixed      = 0
+    skipped    = 0
+
+    for r in regs:
+        if r.get("eliminated"):
+            skipped += 1
+            continue
+
+        uid    = r["user_id"]
+        player = get_player(uid)
+        if not player:
+            skipped += 1
+            continue
+
+        assigned_level = tour_level if tour_level else r.get("tour_level", get_level(player.get("xp", 0)))
+
+        if tour_level:
+            tour_xp     = _xp_threshold(assigned_level)
+            base_hp     = 240 if player.get("faction", "slayer") == "slayer" else 280
+            base_sta    = 170 if player.get("faction", "slayer") == "slayer" else 160
+            tour_maxhp  = int(base_hp * (1 + 0.05 * (assigned_level - 1)))
+            tour_maxsta = base_sta + (assigned_level - 1) * 10
+        else:
+            tour_xp     = player.get("xp", 0)
+            tour_maxhp  = player.get("max_hp", 240)
+            tour_maxsta = player.get("max_sta", 170)
+
+        # Save originals if not already saved
+        if r.get("original_xp") is None:
+            r["original_xp"]      = player.get("xp", 0)
+            r["original_max_hp"]  = player.get("max_hp", 240)
+            r["original_hp"]      = player.get("hp", 240)
+            r["original_max_sta"] = player.get("max_sta", 170)
+            r["original_sta"]     = player.get("sta", 170)
+
+        update_player(uid,
+            in_tournament       = tour_id,
+            tour_level_override = assigned_level,
+            xp                  = tour_xp,
+            max_hp              = tour_maxhp,
+            hp                  = tour_maxhp,
+            max_sta             = tour_maxsta,
+            sta                 = tour_maxsta,
+        )
+        fixed += 1
+
+    _update_tour(tour_id, registrations=regs)
+
+    await update.message.reply_text(
+        f"✅ *Tour fix complete!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🏆 `{tour_id}` — Level {tour_level or 'Auto'}\n"
+        f"✅ Fixed: {fixed} active players\n"
+        f"⏭️ Skipped: {skipped} (eliminated or not found)",
+        parse_mode="Markdown"
+    )
+
+
+async def tourreenter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /tourreenter <tour_id> <@username or user_id>
+    Owner only — re-enters an eliminated player back into the tournament.
+    Restores their tournament-level stats and clears elimination flag.
+    """
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "❌ Usage: `/tourreenter <tour_id> <@username or user_id>`",
+            parse_mode="Markdown"
+        )
+        return
+
+    tour_id = args[0].upper()
+    tour    = _get_tour(tour_id)
+    if not tour:
+        await update.message.reply_text(f"❌ Tournament `{tour_id}` not found.", parse_mode="Markdown")
+        return
+    if tour["status"] != "active":
+        await update.message.reply_text("❌ Tournament is not active.")
+        return
+
+    # Resolve target player
+    target_arg = args[1].lstrip("@")
+    try:
+        target_uid = int(target_arg)
+        target_p   = get_player(target_uid)
+    except ValueError:
+        target_p = col("players").find_one(
+            {"username": {"$regex": f"^{target_arg}$", "$options": "i"}}
+        )
+        target_uid = target_p["user_id"] if target_p else None
+
+    if not target_p:
+        await update.message.reply_text(f"❌ Player `{target_arg}` not found.", parse_mode="Markdown")
+        return
+
+    regs = tour.get("registrations", [])
+    reg  = next((r for r in regs if r["user_id"] == target_uid), None)
+
+    if not reg:
+        await update.message.reply_text(
+            f"❌ *{target_p['name']}* is not registered in `{tour_id}`.",
+            parse_mode="Markdown"
+        )
+        return
+
+    if not reg.get("eliminated"):
+        await update.message.reply_text(
+            f"❌ *{target_p['name']}* is not eliminated — they're still fighting!",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Re-apply tournament level stats
+    from utils.helpers import _xp_threshold
+    tour_level     = tour.get("tour_level")
+    assigned_level = reg.get("tour_level", get_level(target_p.get("xp", 0)))
+
+    if tour_level:
+        tour_xp     = _xp_threshold(assigned_level)
+        base_hp     = 240 if target_p.get("faction", "slayer") == "slayer" else 280
+        base_sta    = 170 if target_p.get("faction", "slayer") == "slayer" else 160
+        tour_maxhp  = int(base_hp * (1 + 0.05 * (assigned_level - 1)))
+        tour_maxsta = base_sta + (assigned_level - 1) * 10
+    else:
+        tour_xp     = reg.get("original_xp", target_p.get("xp", 0))
+        tour_maxhp  = reg.get("original_max_hp", target_p.get("max_hp", 240))
+        tour_maxsta = reg.get("original_max_sta", target_p.get("max_sta", 170))
+
+    # Clear elimination and restore tour stats
+    reg["eliminated"] = False
+    reg["wins"]       = reg.get("wins", 0)
+    reg["losses"]     = max(0, reg.get("losses", 1) - 1)  # undo last loss
+
+    _update_tour(tour_id, registrations=regs)
+
+    update_player(target_uid,
+        in_tournament       = tour_id,
+        tour_level_override = assigned_level,
+        xp                  = tour_xp,
+        max_hp              = tour_maxhp,
+        hp                  = tour_maxhp,
+        max_sta             = tour_maxsta,
+        sta                 = tour_maxsta,
+    )
+
+    alive = len([r for r in regs if not r.get("eliminated")])
+
+    await update.message.reply_text(
+        f"✅ *{target_p['name']}* has re-entered the tournament!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🏆 `{tour_id}` — Level {assigned_level}\n"
+        f"❤️ HP: {tour_maxhp} | 🌀 STA: {tour_maxsta}\n"
+        f"👥 Active fighters now: {alive}",
+        parse_mode="Markdown"
+    )
+
+    # Notify the player
+    try:
+        await context.bot.send_message(
+            target_uid,
+            f"🔄 *You have been re-entered into the tournament!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏆 *{tour['name']}* (`{tour_id}`)\n"
+            f"🎯 Tour Level: {assigned_level}\n"
+            f"❤️ HP restored: {tour_maxhp}\n"
+            f"👥 Active fighters: {alive}\n\n"
+            f"Use /tourfight to get back in the fight!",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
 
 async def rolltour(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -739,13 +974,21 @@ def _record_match_result(tour_id: str, winner_id: int, loser_id: int):
             r["losses"]     = r.get("losses", 0) + 1
             r["eliminated"] = True
 
-    # Restore loser's real profile (tour level was only temporary)
+    # Restore loser's real profile (tour level/xp/hp/sta were only temporary)
     loser_player = get_player(loser_id)
+    loser_reg    = next((r for r in regs if r["user_id"] == loser_id), {})
     if loser_player:
-        update_player(loser_id,
+        restore_kwargs = dict(
             in_tournament       = None,
             tour_level_override = None,
         )
+        if loser_reg.get("original_xp") is not None:
+            restore_kwargs["xp"]      = loser_reg["original_xp"]
+            restore_kwargs["max_hp"]  = loser_reg["original_max_hp"]
+            restore_kwargs["hp"]      = loser_reg["original_hp"]
+            restore_kwargs["max_sta"] = loser_reg["original_max_sta"]
+            restore_kwargs["sta"]     = loser_reg["original_sta"]
+        update_player(loser_id, **restore_kwargs)
 
     alive = [r for r in regs if not r.get("eliminated")]
 
@@ -897,10 +1140,17 @@ async def _finalize_tournament(update_or_context, context_or_none, tour: dict):
     # Restore all players to their normal state
     for r in regs:
         uid = r["user_id"]
-        update_player(uid,
+        restore_kwargs = dict(
             in_tournament       = None,
             tour_level_override = None,
         )
+        if r.get("original_xp") is not None:
+            restore_kwargs["xp"]      = r["original_xp"]
+            restore_kwargs["max_hp"]  = r["original_max_hp"]
+            restore_kwargs["hp"]      = r["original_hp"]
+            restore_kwargs["max_sta"] = r["original_max_sta"]
+            restore_kwargs["sta"]     = r["original_sta"]
+        update_player(uid, **restore_kwargs)
 
     _update_tour(tour_id,
         status     = "ended",
