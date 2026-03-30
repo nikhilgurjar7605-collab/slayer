@@ -2,14 +2,15 @@
 MongoDB database layer for Demon Slayer RPG Bot.
 Drop-in replacement for the SQLite version — all function signatures identical.
 """
+import os as _os
 import json
 import re
 from datetime import datetime, timedelta
+import dns.resolver
 from pymongo import MongoClient, DESCENDING
 from pymongo.collection import Collection
+
 # ── Connection ────────────────────────────────────────────────────────────
-import os as _os
-import dns.resolver
 
 # Force Python to use Google/Cloudflare DNS to bypass the server timeout
 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
@@ -19,15 +20,9 @@ MONGO_URL = _os.environ.get("MONGO_URL",
     "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0")
 DB_NAME   = "demon_slayer_rpg"
 
-# ── Connection ────────────────────────────────────────────────────────────
-# Force Python to use Google/Cloudflare DNS to bypass the server timeout
-dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-dns.resolver.default_resolver.nameservers = ['8.8.8.8', '1.1.1.1']
-
-MONGO_URL = _os.environ.get("MONGO_URL", 
-    "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0")
-DB_NAME   = "demon_slayer_rpg"
-
+# Globals for connection reuse
+_client = None
+_db = None
 
 ITEM_NAME_ALIASES = {
     "full recovery gourd": "Full Recovery Gourd",
@@ -48,7 +43,9 @@ def canonical_item_name(item_name: str) -> str:
         return raw
     return ITEM_NAME_ALIASES.get(raw.lower(), raw.title())
 
-def get_db():
+
+def get_raw_db():
+    """Internal singleton for direct PyMongo database access."""
     global _client, _db
     if _client is None:
         _client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=15000,
@@ -56,18 +53,17 @@ def get_db():
         _db = _client[DB_NAME]
     return _db
 
-# Alias so col() works both before and after line 820
-_real_get_db = get_db
 
 def col(name) -> Collection:
-    return _real_get_db()[name]
+    """Helper to get a PyMongo collection easily."""
+    return get_raw_db()[name]
 
 
 # ── Init / Migrate ────────────────────────────────────────────────────────
 
 def init_db():
     """Create indexes and seed starter data."""
-    db = _real_get_db()
+    db = get_raw_db()
 
     # Indexes
     db.players.create_index("user_id", unique=True)
@@ -665,8 +661,8 @@ def add_clan_xp(clan_id, xp):
 # ── Duels ─────────────────────────────────────────────────────────────────
 
 def get_db_raw():
-    """Return raw pymongo db for handlers that use _real_get_db() directly."""
-    return _real_get_db()
+    """Return raw pymongo db for handlers that use get_db_raw() directly."""
+    return get_raw_db()
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────
@@ -892,7 +888,7 @@ def get_referrer(user_id):
 
 
 # ── Compatibility shims ───────────────────────────────────────────────────
-# Some handlers call _real_get_db() directly and use .execute(SQL).
+# Some handlers call get_db() directly and use .execute(SQL).
 # This shim wraps MongoDB so those calls work transparently.
 
 class _MongoCompat:
@@ -901,7 +897,7 @@ class _MongoCompat:
     them to MongoDB operations.
     """
     def __init__(self):
-        self._db = _real_get_db()
+        self._db = get_raw_db()
 
     def execute(self, sql, params=()):
         sql = sql.strip()
@@ -1027,10 +1023,8 @@ class _CountRow:
         return self._n
 
 
-# Override get_db to return compat shim for handlers using raw SQL
-_real_get_db = get_db
-
 def get_db():
+    """Returns the compat shim for handlers using raw SQL."""
     return _MongoCompat()
 
 
@@ -1086,3 +1080,4 @@ def apply_style_stat_bonus(user_id, style_name):
             updates[stat] = player.get(stat, 0) + val
     if updates:
         col("players").update_one({"user_id": user_id}, {"$set": updates})
+
