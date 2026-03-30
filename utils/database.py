@@ -7,6 +7,17 @@ import re
 from datetime import datetime, timedelta
 from pymongo import MongoClient, DESCENDING
 from pymongo.collection import Collection
+# ── Connection ────────────────────────────────────────────────────────────
+import os as _os
+import dns.resolver
+
+# Force Python to use Google/Cloudflare DNS to bypass the server timeout
+dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+dns.resolver.default_resolver.nameservers = ['8.8.8.8', '1.1.1.1']
+
+MONGO_URL = _os.environ.get("MONGO_URL", 
+    "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0")
+DB_NAME   = "demon_slayer_rpg"
 
 # ── Connection ────────────────────────────────────────────────────────────
 # Force Python to use Google/Cloudflare DNS to bypass the server timeout
