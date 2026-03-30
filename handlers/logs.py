@@ -8,6 +8,10 @@ from config import OWNER_ID
 from utils.database import col, get_player
 
 
+# ─────────────────────────────────────────────
+#  Helpers
+# ─────────────────────────────────────────────
+
 async def _safe_edit(query, text, **kwargs):
     """Edit a message safely, falling back to reply on failure."""
     try:
@@ -30,6 +34,148 @@ async def _safe_edit(query, text, **kwargs):
 def is_owner(user_id):
     return user_id == OWNER_ID
 
+
+def _fmt_ts(ts) -> str:
+    """Format a datetime with milliseconds for bot-detection analysis."""
+    if isinstance(ts, datetime):
+        return ts.strftime("%m/%d %H:%M:%S.") + f"{ts.microsecond // 1000:03d}"
+    return str(ts)[:23]
+
+
+# ─────────────────────────────────────────────
+#  Bot-Detection Analysis
+# ─────────────────────────────────────────────
+
+def _analyze_bot_signals(entries: list) -> dict:
+    """
+    Analyze a list of activity log entries for automation signals.
+
+    Signals checked:
+    - Action interval consistency  (bots repeat at near-identical intervals)
+    - Burst speed                  (many actions in < 2 seconds)
+    - Duplicate action repetition  (same button/command many times in a row)
+    - Off-hours activity           (03:00–05:00 local — rare for humans)
+    - Zero think-time clicks       (< 300 ms between consecutive actions)
+    """
+    if not entries:
+        return {}
+
+    timestamps = []
+    for e in entries:
+        ts = e.get("timestamp")
+        if isinstance(ts, datetime):
+            timestamps.append(ts)
+
+    timestamps.sort()
+    if len(timestamps) < 2:
+        return {}
+
+    intervals_ms = [
+        (timestamps[i + 1] - timestamps[i]).total_seconds() * 1000
+        for i in range(len(timestamps) - 1)
+    ]
+
+    # ── Burst: ≥3 actions within 2 seconds ──
+    burst_count = sum(1 for ms in intervals_ms if ms < 2000)
+
+    # ── Zero think-time: < 300 ms ──
+    zero_think = sum(1 for ms in intervals_ms if ms < 300)
+
+    # ── Interval consistency: low std-dev = robotic ──
+    if len(intervals_ms) >= 3:
+        avg = sum(intervals_ms) / len(intervals_ms)
+        variance = sum((x - avg) ** 2 for x in intervals_ms) / len(intervals_ms)
+        std_dev = variance ** 0.5
+        consistency_ratio = (std_dev / avg * 100) if avg > 0 else 0
+        # < 10% variation = highly consistent = bot-like
+    else:
+        avg = intervals_ms[0] if intervals_ms else 0
+        std_dev = 0
+        consistency_ratio = 0
+
+    # ── Duplicate action streaks ──
+    activities = [e.get("activity", "") for e in entries]
+    max_streak = 1
+    cur_streak = 1
+    for i in range(1, len(activities)):
+        if activities[i] == activities[i - 1]:
+            cur_streak += 1
+            max_streak = max(max_streak, cur_streak)
+        else:
+            cur_streak = 1
+
+    # ── Off-hours (03–05 UTC) ──
+    off_hours = sum(1 for ts in timestamps if 3 <= ts.hour < 5)
+
+    # ── Suspicion score (0–100) ──
+    score = 0
+    if burst_count >= 3:
+        score += 30
+    if zero_think >= 2:
+        score += 25
+    if consistency_ratio < 10 and len(intervals_ms) >= 5:
+        score += 20
+    if max_streak >= 4:
+        score += 15
+    if off_hours >= 3:
+        score += 10
+
+    score = min(score, 100)
+
+    if score >= 70:
+        verdict = "🔴 HIGH — Likely automated"
+    elif score >= 40:
+        verdict = "🟡 MEDIUM — Suspicious"
+    elif score >= 15:
+        verdict = "🟠 LOW — Slightly unusual"
+    else:
+        verdict = "🟢 CLEAN — Looks human"
+
+    return {
+        "score": score,
+        "verdict": verdict,
+        "total_actions": len(entries),
+        "avg_interval_ms": round(avg, 1),
+        "std_dev_ms": round(std_dev, 1),
+        "consistency_ratio_pct": round(consistency_ratio, 1),
+        "burst_count": burst_count,
+        "zero_think_count": zero_think,
+        "max_duplicate_streak": max_streak,
+        "off_hours_actions": off_hours,
+        "min_interval_ms": round(min(intervals_ms), 1) if intervals_ms else 0,
+        "max_interval_ms": round(max(intervals_ms), 1) if intervals_ms else 0,
+    }
+
+
+def _bot_signal_lines(signals: dict) -> list[str]:
+    """Render bot-detection signals as Markdown lines."""
+    if not signals:
+        return ["_Not enough data for bot analysis._"]
+
+    lines = [
+        "🤖 *BOT DETECTION ANALYSIS*",
+        "",
+        f"Suspicion Score: *{signals['score']}/100*",
+        f"Verdict: {signals['verdict']}",
+        "",
+        "*Signal Breakdown:*",
+        f"  Total actions analysed: `{signals['total_actions']}`",
+        f"  Avg interval: `{signals['avg_interval_ms']} ms`",
+        f"  Std deviation: `{signals['std_dev_ms']} ms`",
+        f"  Consistency ratio: `{signals['consistency_ratio_pct']}%` _(< 10% = robotic)_",
+        f"  Burst clicks (< 2s): `{signals['burst_count']}`",
+        f"  Zero think-time (< 300ms): `{signals['zero_think_count']}`",
+        f"  Max duplicate streak: `{signals['max_duplicate_streak']}`",
+        f"  Off-hours actions (03–05 UTC): `{signals['off_hours_actions']}`",
+        f"  Fastest action: `{signals['min_interval_ms']} ms`",
+        f"  Slowest action: `{signals['max_interval_ms']} ms`",
+    ]
+    return lines
+
+
+# ─────────────────────────────────────────────
+#  Logging helpers
+# ─────────────────────────────────────────────
 
 def log_action(admin_id, action, target_id=None, target_name=None, details=None):
     """Record owner/admin actions for audit."""
@@ -63,6 +209,10 @@ def log_user_activity(user_id, activity, details=None, chat_id=None, chat_type=N
         "timestamp": datetime.now(),
     })
 
+
+# ─────────────────────────────────────────────
+#  Lookup / icon helpers
+# ─────────────────────────────────────────────
 
 def _find_player_for_logs(arg: str):
     arg = str(arg or "").strip()
@@ -131,6 +281,10 @@ def _activity_label(activity: str) -> str:
         return "HUMAN CHECK REQUIRED"
     return activity.replace("_", " ").upper()
 
+
+# ─────────────────────────────────────────────
+#  Admin logs pager
+# ─────────────────────────────────────────────
 
 def _parse_logs_filters(args):
     filter_admin = None
@@ -206,8 +360,7 @@ async def _logs_send(query_or_msg, user_id, context):
     for entry in entries:
         admin = get_player(entry["admin_id"])
         aname = admin["name"] if admin else f"Admin {entry['admin_id']}"
-        ts = entry.get("timestamp")
-        ts_str = ts.strftime("%m/%d %H:%M") if isinstance(ts, datetime) else str(ts)[:16]
+        ts_str = _fmt_ts(entry.get("timestamp"))          # ← milliseconds
         target_str = ""
         if entry.get("target_name"):
             target_str = f" -> *{entry['target_name']}*"
@@ -300,6 +453,10 @@ async def logs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _logs_send(query, user_id, context)
 
 
+# ─────────────────────────────────────────────
+#  Admin stats
+# ─────────────────────────────────────────────
+
 def _extract_yen_amount(details) -> int:
     if not details:
         return 0
@@ -350,11 +507,11 @@ async def logstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not admin_entries:
             continue
 
-        yen_entries = [entry for entry in admin_entries if entry.get("action") == "giveyen"]
-        xp_entries = [entry for entry in admin_entries if entry.get("action") == "givexp"]
-        item_entries = [entry for entry in admin_entries if entry.get("action") == "giveitem"]
-        ban_entries = [entry for entry in admin_entries if entry.get("action") == "ban"]
-        yen_total = sum(_extract_yen_amount(entry.get("details")) for entry in yen_entries)
+        yen_entries = [e for e in admin_entries if e.get("action") == "giveyen"]
+        xp_entries = [e for e in admin_entries if e.get("action") == "givexp"]
+        item_entries = [e for e in admin_entries if e.get("action") == "giveitem"]
+        ban_entries = [e for e in admin_entries if e.get("action") == "ban"]
+        yen_total = sum(_extract_yen_amount(e.get("details")) for e in yen_entries)
 
         total_yen_given += yen_total
         total_xp_given += len(xp_entries)
@@ -384,7 +541,11 @@ async def logstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines).strip(), parse_mode="Markdown")
 
 
-def _combined_user_log_lines(target: dict) -> list[str]:
+# ─────────────────────────────────────────────
+#  User timeline (loguser)
+# ─────────────────────────────────────────────
+
+def _combined_user_log_lines(target: dict, include_bot_analysis: bool = True) -> list[str]:
     tid = target["user_id"]
     tname = target.get("name", str(tid))
 
@@ -428,13 +589,21 @@ def _combined_user_log_lines(target: dict) -> list[str]:
         f"Admin actions: *{len(admin_entries)}*",
         f"User activities: *{len(activity_entries)}*",
         "",
+    ]
+
+    # ── Bot-detection block ──
+    if include_bot_analysis:
+        signals = _analyze_bot_signals(activity_entries)
+        lines += _bot_signal_lines(signals)
+        lines.append("")
+
+    lines += [
         "Recent timeline:",
         "",
     ]
 
     for entry in combined:
-        ts = entry.get("timestamp")
-        ts_str = ts.strftime("%m/%d %H:%M") if isinstance(ts, datetime) else str(ts)[:16]
+        ts_str = _fmt_ts(entry.get("timestamp"))          # ← milliseconds
         details = f"\n  note: _{entry['details']}_" if entry.get("details") else ""
         lines.append(f"[{entry['icon']}] `{ts_str}` {entry['label']}{details}")
         lines.append("")
@@ -453,7 +622,7 @@ async def loguser(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "*LOG USER*\n\n"
             "Usage: `/loguser @username` or `/loguser [telegram_id]`\n"
             "Also works as `/logs user @username`.\n\n"
-            "Shows admin actions plus recorded player activity.",
+            "Shows admin actions + recorded player activity + 🤖 bot detection report.",
             parse_mode="Markdown",
         )
         return
@@ -471,6 +640,79 @@ async def loguser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
     )
 
+
+# ─────────────────────────────────────────────
+#  Bot check — standalone command
+# ─────────────────────────────────────────────
+
+async def logbotcheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /logbotcheck @username  —  deep bot-detection report for one player.
+
+    Analyses the last 100 activity log entries with millisecond precision
+    and returns a full breakdown of all automation signals.
+    """
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        await update.message.reply_text("Owner only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "*LOG BOT CHECK*\n\n"
+            "Usage: `/logbotcheck @username` or `/logbotcheck [telegram_id]`\n\n"
+            "Runs a deep automation analysis on the player's last 100 actions "
+            "and returns a suspicion score with signal breakdown.",
+            parse_mode="Markdown",
+        )
+        return
+
+    target = _find_player_for_logs(context.args[0])
+    if not target:
+        await update.message.reply_text(
+            f"Player *{context.args[0]}* not found.",
+            parse_mode="Markdown",
+        )
+        return
+
+    tid = target["user_id"]
+    tname = target.get("name", str(tid))
+
+    entries = list(
+        col("user_activity_logs").find({"user_id": tid})
+        .sort("timestamp", -1)
+        .limit(100)
+    )
+
+    signals = _analyze_bot_signals(entries)
+
+    lines = [
+        f"*BOT CHECK — {tname[:20]}*",
+        f"Telegram ID: `{tid}`",
+        f"Entries analysed: *{len(entries)}*",
+        "",
+    ]
+    lines += _bot_signal_lines(signals)
+
+    # ── Recent action timeline with ms timestamps ──
+    if entries:
+        lines += [
+            "",
+            "*Last 15 actions (ms precision):*",
+            "",
+        ]
+        for e in entries[:15]:
+            ts_str = _fmt_ts(e.get("timestamp"))
+            activity = e.get("activity", "activity")
+            details = f" — _{e['details']}_" if e.get("details") else ""
+            lines.append(f"`{ts_str}` [{_activity_icon(activity)}] *{_activity_label(activity)}*{details}")
+
+    await update.message.reply_text("\n".join(lines).strip(), parse_mode="Markdown")
+
+
+# ─────────────────────────────────────────────
+#  Log search
+# ─────────────────────────────────────────────
 
 async def logsearch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -553,8 +795,7 @@ async def logsearch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     for item in merged:
-        ts = item.get("timestamp")
-        ts_str = ts.strftime("%m/%d %H:%M") if isinstance(ts, datetime) else str(ts)[:16]
+        ts_str = _fmt_ts(item.get("timestamp"))           # ← milliseconds
         lines.append(f"`{ts_str}` {item['text']}")
         lines.append("")
 
