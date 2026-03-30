@@ -1,9 +1,0 @@
-Place your demon art images here with these exact filenames:
-- spider.jpg
-- explosive.jpg
-- spatial.jpg
-- corpse.jpg
-- water.jpg
-- blood.jpg
-- bio.jpg
-- ink.jpg
