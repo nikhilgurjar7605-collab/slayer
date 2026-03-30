@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
 from utils.database import get_player, update_player, get_all_players, get_inventory, add_item, col
-from handlers.logs import log_action
+from handlers.logs import log_action, logbotcheck
 from config import OWNER_ID, SUDO_ADMIN_IDS
 
 broadcast_status = {}
