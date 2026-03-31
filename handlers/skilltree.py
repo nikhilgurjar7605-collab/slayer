@@ -5,7 +5,7 @@ All bonuses are read by get_active_skill_bonuses() and applied in explore.py.
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from utils.database import get_player, update_player, col
+from utils.database import get_player, update_player, col, track_sp_spent
 from utils.guards import dm_only
 from config import SKILLS
 
@@ -414,6 +414,7 @@ async def _buy_skill(msg, user_id: int, name: str, query=None):
     owned.append(skill["name"])
     save_player_skills(user_id, owned)
     update_player(user_id, skill_points=sp - skill["sp_cost"])
+    track_sp_spent(skill["sp_cost"])
 
     # Apply permanent stat bonuses immediately to player doc
     perm = {"max_hp", "max_sta"}
