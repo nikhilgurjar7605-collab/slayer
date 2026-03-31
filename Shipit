@@ -1,6 +1,8 @@
 {
   "commands": {
-    "install": "pip install -r requirements.txt",
-    "start": "python app.py"
+    "install": "pip install -r requirements.txt"
+  },
+  "serve": {
+    "command": "python main.py"
   }
 }
