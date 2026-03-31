@@ -7,21 +7,16 @@ import re
 from datetime import datetime, timedelta
 from pymongo import MongoClient, DESCENDING
 from pymongo.collection import Collection
+
 # ── Connection ────────────────────────────────────────────────────────────
 import os as _os
-import dns.resolver
-
-# Force Python to use Google/Cloudflare DNS to bypass the server timeout
-dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-dns.resolver.default_resolver.nameservers = ['8.8.8.8', '1.1.1.1']
-
 MONGO_URL = _os.environ.get("MONGO_URL", 
     "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0")
 DB_NAME   = "demon_slayer_rpg"
 
-# Initialize global variables - THIS IS THE FIX
 _client = None
-_db = None
+_db     = None
+
 
 ITEM_NAME_ALIASES = {
     "full recovery gourd": "Full Recovery Gourd",
@@ -86,10 +81,6 @@ def init_db():
     db.sp_tournaments.create_index("id", unique=True)
     db.sp_tournaments.create_index("status")
     db.sp_tournaments.create_index("ends_at")
-    # ── Tournament system ──────────────────────────────────────────────────
-    db.tournaments.create_index("tour_id", unique=True)
-    db.tournaments.create_index("status")
-    db.tournaments.create_index("created_at")
     db.user_activity_logs.create_index([("user_id", 1), ("timestamp", DESCENDING)])
     db.user_activity_logs.create_index("timestamp")
     db.captcha_guard.create_index("user_id", unique=True)
@@ -381,6 +372,32 @@ def remove_item(user_id, item_name, quantity=1):
             {"_id": doc["_id"]},
             {"$inc": {"quantity": -quantity}}
         )
+
+
+
+# ── Bot-wide counters (SP spent, etc.) ───────────────────────────────────
+
+def track_sp_spent(amount: int):
+    """Atomically increment the global SP-spent counter."""
+    col("bot_counters").update_one(
+        {"_id": "globals"},
+        {"$inc": {"sp_spent": int(amount)}},
+        upsert=True
+    )
+
+
+def get_bot_counters() -> dict:
+    """Return the global counter document (sp_spent, etc.)."""
+    doc = col("bot_counters").find_one({"_id": "globals"}) or {}
+    return doc
+
+
+def get_total_yen_circulated() -> int:
+    """Sum of all yen currently held by players."""
+    result = list(col("players").aggregate([
+        {"$group": {"_id": None, "total": {"$sum": "$yen"}}}
+    ]))
+    return result[0]["total"] if result else 0
 
 
 # ── Arts ──────────────────────────────────────────────────────────────────
@@ -785,6 +802,7 @@ def buy_skill(user_id, skill_name, sp_cost):
         upsert=True
     )
     col("players").update_one({"user_id": user_id}, {"$inc": {"skill_points": -sp_cost}})
+    track_sp_spent(sp_cost)
     return True
 
 
