@@ -11,7 +11,7 @@ from utils.database import (get_player, get_battle_state, set_battle_state, clea
                              apply_status_effect, get_status_effects, tick_status_effects,
                              clear_status_effects)
 from utils.helpers import get_unlocked_forms, get_level, hp_bar, get_rank
-from utils.guards import dm_only, owner_only_button
+from utils.guards import dm_only, owner_only_button, no_button_spam
 from utils.pressure import calc_pressure, pressure_display, get_chaos_modifier
 from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS, SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES
 from utils.effects import (apply_form_effect, process_dot_effects,
@@ -276,12 +276,11 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         'Transparent Nichirin Blade':  120,
         'Sun Nichirin Blade':          200,
     }
-    s_bonus   = sword_bonus.get(player.get('equipped_sword', ''), 0)
-    plr_level = get_level(player.get('xp', 0))
-    # Base damage scales with both STR and player level (+0.5 per level)
-    lvl_bonus = int(plr_level * 0.5)
-    base      = player['str_stat'] * 2 + random.randint(base_min, base_max) + s_bonus + lvl_bonus
-    dmg       = base
+    s_bonus = sword_bonus.get(player.get('equipped_sword', ''), 0)
+    # Techniques use 70% of str contribution to bring damage in line with enemy HP pools
+    str_mult = 1.4 if not is_technique else 0.7
+    base    = int(player['str_stat'] * str_mult) + random.randint(base_min, base_max) + s_bonus
+    dmg     = base
 
     # Story bonus (applied ONCE only)
     if player.get('story_bonus') == 'dmg_bonus':
@@ -337,7 +336,8 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
 
 def _technique_level_scale(player):
     level = get_level(player['xp'])
-    return 1 + min(0.75, max(0, level - 1) * 0.015)
+    # Reduced: was 0.015/level capped at 0.75 — now 0.006/level capped at 0.30
+    return 1 + min(0.30, max(0, level - 1) * 0.006)
 
 
 def _apply_battle_start_skill_bonuses(user_id, player, bonuses, context, log_lines=None):
@@ -526,11 +526,18 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     enemy_template = get_enemies_for_region(player)
     enemy = dict(enemy_template)
 
-    enemy['hp']  = int(enemy['hp']  * (1 + level * 0.05))
-    enemy['atk'] = int(enemy['atk'] * (1 + level * 0.03))
+    # Yoriichi: HP scales purely with player level, bypasses normal scaling
+    if enemy.get('yoriichi'):
+        from config import _yoriichi_hp_for_level
+        enemy['hp'] = _yoriichi_hp_for_level(level)
+        enemy['atk'] = int(enemy['atk'] * (1 + level * 0.04))
+    else:
+        enemy['hp']  = int(enemy['hp']  * (1 + level * 0.05))
+        enemy['atk'] = int(enemy['atk'] * (1 + level * 0.03))
 
     if enemy.get('is_boss'):
-        enemy['hp']  = int(enemy['hp']  * 3)
+        if not enemy.get('yoriichi'):  # Yoriichi HP already set above
+            enemy['hp']  = int(enemy['hp']  * 3)
         enemy['atk'] = int(enemy['atk'] * 1.5)
         enemy['xp']  = int(enemy['xp']  * 3)
         enemy['yen'] = int(enemy['yen'] * 3)
@@ -598,6 +605,7 @@ async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── FIGHT (start combat) ──────────────────────────────────────────────────
 @owner_only_button
+@no_button_spam
 async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -656,6 +664,7 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── ATTACK ────────────────────────────────────────────────────────────────
 @owner_only_button
+@no_button_spam
 async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -840,6 +849,7 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
     )
 @owner_only_button
+@no_button_spam
 async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1377,6 +1387,7 @@ async def ally_fainted_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 # ── FLEE ──────────────────────────────────────────────────────────────────
 @owner_only_button
+@no_button_spam
 async def flee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1466,13 +1477,8 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     bonus_str    = player['str_stat'] + (levels_gained * 2)
     bonus_spd    = player['spd']      + (levels_gained * 1)
     bonus_def    = player['def_stat'] + (levels_gained * 1)
-    # HP grows 5% of current max_hp per level gained (stacking)
-    hp_increase  = sum(
-        int((player['max_hp'] + i * int(player['max_hp'] * 0.05)) * 0.05)
-        for i in range(levels_gained)
-    )
-    bonus_maxhp  = player['max_hp']  + hp_increase
-    bonus_maxsta = player['max_sta'] + (levels_gained * 10)
+    bonus_maxhp  = player['max_hp']   + (levels_gained * 15)
+    bonus_maxsta = player['max_sta']  + (levels_gained * 10)
 
     update_player(
         user_id,
@@ -1486,12 +1492,16 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     )
 
     from utils.database import add_item
+    from config import TRAVEL_ZONES
+    _loc = player.get('location', 'asakusa')
+    _zone = next((z for z in TRAVEL_ZONES if z['id'] == _loc), TRAVEL_ZONES[0])
+    _region_label = f"{_zone.get('emoji', '')} {_zone['name']}"
     drop_lines = []
     drop_chance = 0.65 + _victory_bonuses.get('drop_pct', 0)
     for drop in drops:
         if random.random() < drop_chance:
             add_item(user_id, drop, 'material')
-            drop_lines.append(f"🎁 {drop}")
+            drop_lines.append(f"🎁 {drop} _(found in {_region_label})_")
 
     enemy_faction = state.get('faction_type', '')
     player_faction = player.get('faction', 'slayer')
@@ -1500,26 +1510,26 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     if player_faction == 'slayer' and enemy_faction == 'demon' and random.random() < 0.80:
         add_item(user_id, 'Demon Blood', 'material')
         if 'Demon Blood' not in ' '.join(drop_lines):
-            drop_lines.append("🩸 Demon Blood")
+            drop_lines.append(f"🩸 Demon Blood _(found in {_region_label})_")
 
     # Demons fighting slayers → Slayer Badge drop  
     if player_faction == 'demon' and enemy_faction == 'slayer' and random.random() < 0.75:
         add_item(user_id, 'Slayer Badge', 'material')
-        drop_lines.append("🏅 Slayer Badge")
+        drop_lines.append(f"🏅 Slayer Badge _(found in {_region_label})_")
 
     # Demons fighting neutral → Wolf Fang / misc drops
     if player_faction == 'demon' and enemy_faction == 'neutral' and random.random() < 0.65:
         add_item(user_id, 'Wolf Fang', 'material')
-        drop_lines.append("🐺 Wolf Fang")
+        drop_lines.append(f"🐺 Wolf Fang _(found in {_region_label})_")
 
     # Slayers fighting slayer/neutral → Wolf Fang
     if player_faction == 'slayer' and enemy_faction in ('slayer', 'neutral') and random.random() < 0.60:
         add_item(user_id, 'Wolf Fang', 'material')
-        drop_lines.append("🐺 Wolf Fang")
+        drop_lines.append(f"🐺 Wolf Fang _(found in {_region_label})_")
 
     if state.get('is_boss'):
         add_item(user_id, 'Boss Shard', 'material')
-        drop_lines.append("🔸 Boss Shard")
+        drop_lines.append(f"🔸 Boss Shard _(found in {_region_label})_")
 
     # ── DEVOUR SYSTEM ─────────────────────────────────────────────────────
     faction           = player.get('faction', 'slayer')
