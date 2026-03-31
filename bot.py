@@ -1,8 +1,4 @@
 import logging
-import os
-import asyncio
-import urllib.request
-import urllib.error
 from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -102,6 +98,7 @@ from handlers.event import event_cmd, events, eventend, eventlist, event_callbac
 try:
     from handlers.event import eventresults, vote_cmd, vote_callback
 except ImportError:
+    # Fallback stubs if event.py hasn't been updated yet
     async def eventresults(update, context): await eventend(update, context)
     async def vote_cmd(update, context): await event_cmd(update, context)
     async def vote_callback(update, context): await event_callback(update, context)
@@ -112,10 +109,6 @@ from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle
 from handlers.upgrade import upgrade, upgradetoggle, upgrade_confirm_callback
 from handlers.hybrid import hybrid, demonmark, hybridtoggle
 from handlers.offer import offers, offer_buy_callback, addoffer
-from handlers.tournament import (
-    createtour, starttour, endtour, listtours, settourlevel,
-    tournament, mytour, tour_fight, tournament_callback, rolltour, tourplayers, fixtour, tourreenter,
-)
 from handlers.imgupload import setimage, listimages
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
@@ -145,34 +138,14 @@ from handlers.coop import (
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-async def _self_ping_loop(application):
-    """Keep Render service alive by pinging itself every 14 minutes."""
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
-    if not RENDER_URL:
-        logger.info("[PING] No RENDER_EXTERNAL_URL set, self-ping disabled")
-        return
-    ping_url = f"{RENDER_URL}/healthz"
-    ping_interval = 14 * 60
-    await asyncio.sleep(60)
-    while True:
-        try:
-            req = urllib.request.Request(ping_url, method='GET')
-            with urllib.request.urlopen(req, timeout=10) as response:
-                logger.info(f"[PING] Self-ping OK: {response.status}")
-        except Exception as e:
-            logger.warning(f"[PING] Failed: {e}")
-        await asyncio.sleep(ping_interval)
-
-
 async def post_init(application):
     """Called after app starts — log webhook info."""
+    import os
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
     BOT_TOKEN_ENV = os.environ.get("BOT_TOKEN", "")
     await resume_bank_giveaways(application)
     await resume_sp_features(application)
     schedule_daily_bank_tax(application)
-    asyncio.create_task(_self_ping_loop(application))
     if WEBHOOK_URL and BOT_TOKEN_ENV:
         info = await application.bot.get_webhook_info()
         logger.info(f"Webhook active: {info.url}")
@@ -181,7 +154,7 @@ async def post_init(application):
         logger.info("Running in polling mode")
 
 PRIVATE = filters.ChatType.PRIVATE
-ANY = filters.ALL
+ANY = filters.ALL  # works everywhere
 AUTO_GUARD_WINDOW_SECONDS = 12
 AUTO_GUARD_MAX_ACTIONS = 14
 AUTO_GUARD_REPEAT_LIMIT = 6
@@ -289,6 +262,10 @@ async def _notify_human_check(update: Update, reason: str | None = None, remaini
 
 
 async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Global anti-auto pre-filter.
+    Suspiciously fast command/button spam is forced through a captcha check in DM.
+    """
     user = update.effective_user
     if not user or _is_privileged_user(user.id):
         return
@@ -353,10 +330,16 @@ async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Global pre-filter: runs before EVERY command and button press.
+    Silently blocks banned players from interacting with the bot.
+    Sends a one-time ban notice so they know why.
+    """
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
         return
 
+    # Skip ban check for admin commands so admins can unban
     if update.message and update.message.text:
         cmd = update.message.text.split()[0].lstrip('/').split('@')[0].lower()
         if cmd in ('unban', 'ban', 'start', 'adminhelp'):
@@ -384,7 +367,7 @@ async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    raise ApplicationHandlerStop
+    raise ApplicationHandlerStop  # block all further handlers
 
 
 async def _track_user_command_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -430,9 +413,10 @@ async def _track_user_callback_activity(update: Update, context: ContextTypes.DE
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
+    # These are handled by ConversationHandler — callback_router must NOT touch them
     conv_callbacks = ('faction_', 'story_')
     if any(data.startswith(p) for p in conv_callbacks):
-        return
+        return  # Let ConversationHandler handle it
 
     battle_callbacks = (
         'fight', 'attack', 'technique', 'items_menu', 'flee', 'prize',
@@ -441,6 +425,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     is_battle = any(data == b or data.startswith(b) for b in battle_callbacks)
 
+    # Cross-user buttons (invites, rankings, etc.) — skip ownership check
     cross_user = (
         'duel_accept_', 'duel_decline_',
         'duel_attack_', 'duel_technique_', 'duel_art_', 'duel_view_', 'duel_surrender_', 'duel_surrender_me',
@@ -468,10 +453,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'travel_locked',
         'travel_to_',
         'goto_start',
-        'tour_',
     )
     is_cross = any(data.startswith(p) or data == p for p in cross_user)
 
+    # Ownership check: only in PRIVATE chat (DM)
     from telegram.constants import ChatType
     in_private = query.message.chat.type == ChatType.PRIVATE
     if not is_battle and not is_cross and in_private and query.from_user.id != query.message.chat_id:
@@ -493,9 +478,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'goto_explore': explore, 'goto_close': close_menu,
         'goto_inventory': inventory, 'goto_shop': shop,
         'duel_back': duel_back,
-        'duel_wait': duel_back,
+        'duel_wait': duel_back,  # waiting button = no-op
         'coop_attack': coop_attack, 'coop_technique': coop_technique,
         'coop_items': coop_items, 'coop_leave': coop_leave, 'coop_back': coop_back,
+        # Skill tree
         'skilltree_main':  skilltree,
         'skilltree_owned': skilltree_owned,
         'skilltree':       skilltree,
@@ -581,7 +567,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('know_'):               await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
-    elif data.startswith('tour_'):               await tournament_callback(update, context)
     elif data == 'inv_materials':       await inv_materials_callback(update, context)
     elif data == 'inv_back':            await inv_back_callback(update, context)
     elif data.startswith('duel_accept_'):    await duel_accept_callback(update, context)
@@ -601,7 +586,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'raid_back':                await raid_back_callback(update, context)
     elif data == 'raid_retreat':             await raid_retreat_callback(update, context)
     elif data.startswith('raid_form_'):      await raid_use_form_callback(update, context)
-    elif data.startswith('raid_useitem_'):   await raid_use_item(update, context)
+    elif data.startswith('raid_useitem_'):   await raid_use_item_callback(update, context)
     elif data.startswith('clan_accept_'):    await clan_accept_callback(update, context)
     elif data.startswith('clan_reject_'):    await clan_reject_callback(update, context)
     elif data.startswith('coop_join_'):      await coop_join_callback(update, context)
@@ -621,10 +606,20 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _end_conv_passthrough(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ConversationHandler fallback.
+    If a user has an unfinished /start session (stuck at captcha or name entry)
+    and then presses any non-conversation button (explore, fight, shop, etc.),
+    this silently ends the conversation state so the global callback_router
+    can process the button normally.
+    Without this, all their button presses would be swallowed by the
+    ConversationHandler and nothing would happen.
+    """
     return ConversationHandler.END
 
 
 def main():
+    # Validate required environment variables before starting
     import sys
     missing = []
     if not BOT_TOKEN or BOT_TOKEN == 'YOUR_BOT_TOKEN_HERE' or ':' not in BOT_TOKEN:
@@ -644,6 +639,7 @@ def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # ── Character creation — DM only ──────────────────────────────────────
     conv = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
@@ -657,20 +653,24 @@ def main():
         },
         fallbacks=[
             CommandHandler('start', start),
+            # If user presses a non-captcha button while in captcha state,
+            # end the conversation so callback_router can handle it
             CallbackQueryHandler(_end_conv_passthrough),
         ],
         per_chat=True,
         per_user=True,
         allow_reentry=False,
-        conversation_timeout=300,
+        conversation_timeout=300,  # 5 min — kills stale captcha states
     )
     app.add_handler(conv)
 
+    # ── Global ban check — runs FIRST for every update (group=-1) ────────
     app.add_handler(MessageHandler(filters.ALL, _global_ban_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_ban_check), group=-1)
     app.add_handler(MessageHandler(filters.ALL, _global_human_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_human_check), group=-1)
 
+    # ── Works EVERYWHERE (Groups + DMs) ──────────────────────────────────
     everywhere = [
         ('profile',         profile),
         ('setbanner',       setbanner),
@@ -741,19 +741,6 @@ def main():
         ('hybrid',          hybrid),
         ('offers',          offers),
         ('addoffer',        addoffer),
-        # ── Tournament system ──────────────────────────────────────────────
-        ('tournament',      tournament),
-        ('mytour',          mytour),
-        ('tourfight',       tour_fight),
-        ('createtour',      createtour),
-        ('starttour',       starttour),
-        ('endtour',         endtour),
-        ('listtours',       listtours),
-        ('settourlevel',    settourlevel),
-        ('roll',            rolltour),
-        ('tourplayers',     tourplayers),
-        ('fixtour',         fixtour),
-        ('tourreenter',     tourreenter),
         ('setimage',        setimage),
         ('listimages',      listimages),
         ('upgradetoggle',   upgradetoggle),
@@ -830,8 +817,9 @@ def main():
         ('banktax',         banktax),
     ]
     for cmd, handler in everywhere:
-        app.add_handler(CommandHandler(cmd, handler))
+        app.add_handler(CommandHandler(cmd, handler))  # no filter = works everywhere
 
+    # ── DM Only — redirects groups to bot DM ─────────────────────────────
     guarded_cmds = [
         ('menu',         menu),
         ('open',         menu),
@@ -860,9 +848,13 @@ def main():
         ('clanrole',     clanrole),
     ]
     for cmd, handler in guarded_cmds:
+        # Register without PRIVATE filters so group usage reaches the handler.
+        # The decorator decides whether to allow the command or redirect to DM.
         app.add_handler(CommandHandler(cmd, handler))
 
+    # ── Reply keyboard button handler ────────────────────────────────────
     async def reply_kb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Route reply keyboard button presses to the right handler."""
         text = update.message.text.strip() if update.message and update.message.text else ""
         routes = {
             "⚔️ Explore":    explore,
@@ -880,8 +872,8 @@ def main():
         filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
         reply_kb_handler
     ), group=1)
-
     async def doc_restore_handler(update, context):
+        """Handle JSON document uploads — trigger restore if caption says /restore or auto."""
         if update.message and update.message.document:
             fname = update.message.document.file_name or ""
             if fname.endswith(".json"):
@@ -904,6 +896,7 @@ def main():
 
 if __name__ == '__main__':
     import json
+    import os
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -977,11 +970,39 @@ if __name__ == '__main__':
             srv.serve_forever()
         except Exception as e:
             print(f"[HEALTH ERROR] {e}", flush=True)
-            _health_started.set()
+            _health_started.set()  # unblock main even if health fails
 
     t = threading.Thread(target=_run_health, daemon=True)
     t.start()
     _health_started.wait(timeout=3)
     print(f"[BOT] Render health server ready on {HOST}:{PORT}. Starting bot...", flush=True)
+
+    # ── Self-ping to prevent Render free-tier spin-down ──────────────────
+    # Render shuts down a service after ~15 min of no inbound HTTP traffic.
+    # This thread pings our own /healthz every 10 minutes so Render never
+    # sees an idle window long enough to trigger a shutdown.
+    def _self_ping():
+        import time
+        import urllib.request
+        import urllib.error
+
+        PING_INTERVAL = 10 * 60   # 10 minutes — well under Render's 15-min limit
+        target = (RENDER_URL.rstrip("/") + "/healthz") if RENDER_URL else f"http://127.0.0.1:{PORT}/healthz"
+        print(f"[PING] Self-ping started → {target} every {PING_INTERVAL//60} min", flush=True)
+
+        time.sleep(30)  # give the bot a moment to fully start before first ping
+        while True:
+            try:
+                with urllib.request.urlopen(target, timeout=10) as resp:
+                    print(f"[PING] ✅ {resp.status} — service alive", flush=True)
+            except urllib.error.URLError as exc:
+                print(f"[PING] ⚠️  ping failed: {exc.reason}", flush=True)
+            except Exception as exc:
+                print(f"[PING] ⚠️  ping error: {exc}", flush=True)
+            time.sleep(PING_INTERVAL)
+
+    ping_thread = threading.Thread(target=_self_ping, daemon=True, name="self-ping")
+    ping_thread.start()
+    # ─────────────────────────────────────────────────────────────────────
 
     main()
