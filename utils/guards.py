@@ -129,3 +129,42 @@ def group_only(func):
         return await func(update, context, *args, **kwargs)
 
     return wrapper
+
+
+# ── Button spam guard ─────────────────────────────────────────────────────
+import asyncio
+
+def _get_user_lock(context, user_id: int) -> asyncio.Lock:
+    """Return (creating if needed) a per-user asyncio.Lock stored in bot_data."""
+    locks = context.bot_data.setdefault('_user_locks', {})
+    if user_id not in locks:
+        locks[user_id] = asyncio.Lock()
+    return locks[user_id]
+
+
+def no_button_spam(func):
+    """
+    Decorator that drops duplicate callback presses while a handler is still
+    running for the same user.  The second press gets a silent query.answer()
+    so Telegram stops showing the loading spinner — no error shown to the user.
+    """
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        query = update.callback_query
+        user_id = update.effective_user.id if update.effective_user else None
+        if user_id is None:
+            return await func(update, context, *args, **kwargs)
+
+        lock = _get_user_lock(context, user_id)
+        if lock.locked():
+            # Already processing — silently dismiss the duplicate tap
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            return
+
+        async with lock:
+            return await func(update, context, *args, **kwargs)
+
+    return wrapper
