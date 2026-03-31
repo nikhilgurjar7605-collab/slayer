@@ -6,7 +6,7 @@ from utils.database import (get_player, update_player, col, get_inventory,
                              remove_item, apply_status_effect,
                              get_status_effects, tick_status_effects, clear_status_effects)
 from utils.helpers import get_level, hp_bar
-from utils.guards import group_only
+from utils.guards import group_only, no_button_spam
 from utils.pressure import calc_pressure, pressure_display
 from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS
 
@@ -222,6 +222,7 @@ async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── Accept / Decline ──────────────────────────────────────────────────────
 
+@no_button_spam
 async def duel_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query         = update.callback_query
     await query.answer()
@@ -557,6 +558,7 @@ async def _show_duel_forms(query, user_id, player, art_name):
     )
 
 
+@no_button_spam
 async def duel_art_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle art selection in duel — shows forms for the selected art."""
     query       = update.callback_query
@@ -587,6 +589,7 @@ async def duel_art_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_duel_forms(query, user_id, player, art_name)
 
 
+@no_button_spam
 async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query       = update.callback_query
     await query.answer()
@@ -954,6 +957,7 @@ async def duel_settings_done_callback(update, context):
 
 # ── Draw ──────────────────────────────────────────────────────────────────
 
+@no_button_spam
 async def duel_draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
     await query.answer()
