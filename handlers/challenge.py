@@ -388,23 +388,6 @@ async def _finish_duel(query, duel_doc, winner_id, loser_id, context, reason="KO
         parse_mode='Markdown'
     )
 
-    # ── TOURNAMENT HOOK ───────────────────────────────────────────────────
-    # Only fires if this duel was started via /tourfight (tagged tournament_id)
-    # Normal /challenge duels are NEVER counted in tournament
-    tour_id = duel_doc.get("tournament_id")
-    if tour_id:
-        try:
-            from handlers.tournament import on_tournament_duel_end
-            import asyncio
-            chat_id = query.message.chat_id if query.message else None
-            if chat_id:
-                asyncio.create_task(
-                    on_tournament_duel_end(context, winner_id, loser_id, tour_id, chat_id)
-                )
-        except Exception:
-            pass
-    # ─────────────────────────────────────────────────────────────────────
-
 
 # ── Attack ────────────────────────────────────────────────────────────────
 
@@ -552,17 +535,7 @@ async def _show_duel_forms(query, user_id, player, art_name):
     """Show form selection for a given art in a duel."""
     level = get_level(player['xp'])
     from utils.helpers import get_unlocked_forms
-    # In tournament duels: all forms unlocked regardless of level
-    duel_doc_check = col("duels").find_one({
-        "$or": [{"challenger_id": user_id}, {"target_id": user_id}],
-        "status": "active"
-    })
-    in_tour_duel = bool(duel_doc_check and duel_doc_check.get("tournament_id"))
-    if in_tour_duel:
-        from config import TECHNIQUES as _T
-        forms = _T.get(art_name, [])   # ALL forms unlocked in tournament
-    else:
-        forms = get_unlocked_forms(art_name, level)
+    forms = get_unlocked_forms(art_name, level)
 
     if not forms:
         await query.answer(f"No forms unlocked for {art_name}!", show_alert=True)
@@ -650,15 +623,8 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         art_name = attacker['style']
 
     from utils.helpers import get_unlocked_forms
-    # Check if this is a tournament duel via duel tag
-    in_tour_duel = bool(duel_doc.get("tournament_id"))
-    if in_tour_duel:
-        from config import TECHNIQUES as _T
-        all_tour_forms = _T.get(art_name, [])
-        form = next((f for f in all_tour_forms if f['form'] == form_num), None)
-    else:
-        forms = get_unlocked_forms(art_name, level)
-        form  = next((f for f in forms if f['form'] == form_num), None)
+    forms = get_unlocked_forms(art_name, level)
+    form  = next((f for f in forms if f['form'] == form_num), None)
     if not form:
         await query.answer("Form not available!", show_alert=True)
         return
@@ -674,10 +640,8 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     try:
         from handlers.explore import _safe_get_skills, _safe_get_bonuses, _calculate_form_hit_damage
-        # Disable skills only in tournament duels (tagged), not normal duels
-        in_tour_duel = bool(duel_doc.get("tournament_id"))
-        owned_skills = [] if in_tour_duel else _safe_get_skills(user_id)
-        bonuses = {} if in_tour_duel else _safe_get_bonuses(user_id, None)
+        owned_skills = _safe_get_skills(user_id)
+        bonuses = _safe_get_bonuses(user_id, None)
         dmg = _calculate_form_hit_damage(
             attacker,
             form,
@@ -694,6 +658,15 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dmg = int(dmg * pressure['tech_mult'])
     new_opp = max(0, opp_hp - dmg)
 
+    # Show technique image if available
+    try:
+        from handlers.explore import _send_art_image
+        context.bot_data[f"art_reply_to_message_id_{query.message.chat_id}"] = query.message.message_id
+        await _send_art_image(context, query.message.chat_id, art_name,
+                              caption=f"⚔️ *{art_name}* — Form {form_num}: *{form['name']}*",
+                              form_num=form_num)
+    except Exception:
+        pass
 
     log_lines = [
         f"💨 *{attacker['name']}* uses *{art_name} Form {form_num}!*",
@@ -1061,29 +1034,17 @@ async def duel_details_callback(update: Update, context: ContextTypes.DEFAULT_TY
     from utils.helpers import get_level, get_unlocked_forms
     level     = get_level(player['xp'])
     style     = player['style']
+    forms     = get_unlocked_forms(style, level, player.get('rank'), player.get('faction'))
     all_forms = TECHNIQUES.get(style, [])
 
-    # In tournament duel: ALL forms unlocked, no locked display
-    duel_doc_tl = col("duels").find_one({
-        "$or": [{"challenger_id": user_id}, {"target_id": user_id}],
-        "status": "active"
-    })
-    in_tour = bool(duel_doc_tl and duel_doc_tl.get("tournament_id"))
-    if in_tour:
-        forms         = all_forms
-        unlocked_nums = {f['form'] for f in all_forms}
-    else:
-        forms         = get_unlocked_forms(style, level, player.get('rank'), player.get('faction'))
-        unlocked_nums = {f['form'] for f in forms}
-
-    tour_tag = "  🏆 _(tournament — all unlocked)_" if in_tour else ""
     lines = [
         "╔══════════════════════╗",
         "      📋 𝙈𝙔 𝙏𝙀𝘾𝙃𝙉𝙄𝙌𝙐𝙀𝙎",
         f"╚══════════════════════╝\n",
-        f"{player['style_emoji']} *{style}* — Lv.{level}{tour_tag}\n",
+        f"{player['style_emoji']} *{style}* — Lv.{level}\n",
         "━━━━━━━━━━━━━━━━━━━━━\n",
     ]
+    unlocked_nums = {f['form'] for f in forms}
     for f in all_forms:
         if f['form'] in unlocked_nums:
             extras = []
@@ -1100,7 +1061,7 @@ async def duel_details_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if player.get('hybrid_style'):
         hs = player['hybrid_style']; he = player.get('hybrid_emoji', '⚡')
-        hforms = all_forms if in_tour else get_unlocked_forms(hs, level)
+        hforms = get_unlocked_forms(hs, level)
         lines.append(f"\n⚡ *HYBRID: {hs}* {he}\n")
         for f in hforms[:3]:
             lines.append(f"  ⚡ *Form {f['form']}* — {f['name']}\n"
