@@ -7,8 +7,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
-from utils.database import get_player, update_player, get_all_players, get_inventory, add_item, col
-from handlers.logs import log_action, logbotcheck
+from utils.database import get_player, update_player, get_all_players, get_inventory, add_item, col, get_bot_counters, get_total_yen_circulated
+from handlers.logs import log_action
 from config import OWNER_ID, SUDO_ADMIN_IDS
 
 broadcast_status = {}
@@ -331,17 +331,23 @@ async def announce(update: Update, context):
 async def botstats(update: Update, context):
     if not has_admin_access(update.effective_user.id):
         return
-    total   = col("players").count_documents({})
-    slayers = col("players").count_documents({"faction": "slayer"})
-    demons  = col("players").count_documents({"faction": "demon"})
-    banned  = col("players").count_documents({"banned": 1})
+    total     = col("players").count_documents({})
+    slayers   = col("players").count_documents({"faction": "slayer"})
+    demons    = col("players").count_documents({"faction": "demon"})
+    banned    = col("players").count_documents({"banned": 1})
+    total_yen = get_total_yen_circulated()
+    counters  = get_bot_counters()
+    sp_spent  = counters.get("sp_spent", 0)
     await update.message.reply_text(
         f"📊 *BOT STATS*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 Total players: *{total}*\n"
         f"🗡️ Slayers: *{slayers}*\n"
         f"👹 Demons:  *{demons}*\n"
-        f"🚫 Banned:  *{banned}*",
+        f"🚫 Banned:  *{banned}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Yen in circulation: *{total_yen:,}¥*\n"
+        f"💠 Total SP spent: *{sp_spent:,} SP*",
         parse_mode='Markdown'
     )
 
