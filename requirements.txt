@@ -1,6 +1,10 @@
-python-telegram-bot[job-queue,webhooks]==22.7
-pymongo==4.5.0  # Use a more widely available version
+python-telegram-bot==22.7
+apscheduler==3.11.2
 dnspython==2.4.2
-python-dotenv
-redis
-APScheduler  # Remove the leading space
+python-dotenv==1.2.2
+httpx==0.28.1
+redis==7.4.0
+tornado==6.5.5
+tzlocal==5.3.1
+certifi==2026.2.25
+pymongo
