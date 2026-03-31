@@ -278,7 +278,7 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
     }
     s_bonus = sword_bonus.get(player.get('equipped_sword', ''), 0)
     # Techniques use 70% of str contribution to bring damage in line with enemy HP pools
-    str_mult = 1.4 if not is_technique else 0.7
+    str_mult = 2.0 if not is_technique else 1.1  # boosted for better feel vs enemy HP pools
     base    = int(player['str_stat'] * str_mult) + random.randint(base_min, base_max) + s_bonus
     dmg     = base
 
