@@ -429,7 +429,7 @@ async def duel_attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # PvP damage is intentionally lower than explore (no skill bonuses, lower multiplier)
-    dmg = int(attacker['str_stat'] * 0.45) + random.randint(2, 6)
+    dmg = int(attacker['str_stat'] * 0.75) + random.randint(2, 6)
     dmg = int(dmg * pressure['atk_mult'])
     if combo >= 3: dmg = int(dmg * 1.15)
 
