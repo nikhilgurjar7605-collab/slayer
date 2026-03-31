@@ -1,6 +1,6 @@
 python-telegram-bot[job-queue,webhooks]==22.7
-pymongo[srv]==4.6.1
+pymongo==4.5.0  # Use a more widely available version
 dnspython==2.4.2
 python-dotenv
 redis
- APScheduler
+APScheduler  # Remove the leading space
