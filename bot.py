@@ -103,6 +103,7 @@ except ImportError:
     async def vote_cmd(update, context): await event_cmd(update, context)
     async def vote_callback(update, context): await event_callback(update, context)
 from handlers.logs import logs, logs_callback, logstats, logsearch, loguser, log_user_activity
+from handlers.temp_owner import addtempowner, revoketo, listtempowners, mytempowner
 from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle,
     ownergive, ownerreset, ownerban, ownerunban, ownermsg, ownerstats,
     ownerplayers, ownerplayers_callback, owner_godmode_active)
@@ -768,6 +769,11 @@ def main():
         ('logstats',        logstats),
         ('logsearch',       logsearch),
         ('loguser',          loguser),
+        # Temp owner management (owner only)
+        ('addtempowner',    addtempowner),
+        ('revoketo',        revoketo),
+        ('listtempowners',  listtempowners),
+        ('mytempowner',     mytempowner),
         ('suggestions',     suggestions),
         ('createclan',      createclan),
         ('joinclan',        joinclan),
@@ -977,28 +983,52 @@ if __name__ == '__main__':
     _health_started.wait(timeout=3)
     print(f"[BOT] Render health server ready on {HOST}:{PORT}. Starting bot...", flush=True)
 
-    # ── Self-ping to prevent Render free-tier spin-down ──────────────────
-    # Render shuts down a service after ~15 min of no inbound HTTP traffic.
-    # This thread pings our own /healthz every 10 minutes so Render never
-    # sees an idle window long enough to trigger a shutdown.
+    # ── Self-ping + temp-owner cleanup — keeps Render alive 24/7 ─────────
+    # Render free-tier shuts down after ~15 min of no HTTP traffic.
+    # This thread pings /healthz every 10 min and also cleans up
+    # expired temp-owner sessions every hour.
     def _self_ping():
         import time
         import urllib.request
         import urllib.error
+        from datetime import datetime as _dt
 
-        PING_INTERVAL = 10 * 60   # 10 minutes — well under Render's 15-min limit
+        PING_INTERVAL = 10 * 60       # 10 min — under Render's 15-min idle limit
+        CLEANUP_EVERY = 60 * 60       # 1 hour — expire stale temp-owner docs
         target = (RENDER_URL.rstrip("/") + "/healthz") if RENDER_URL else f"http://127.0.0.1:{PORT}/healthz"
         print(f"[PING] Self-ping started → {target} every {PING_INTERVAL//60} min", flush=True)
 
-        time.sleep(30)  # give the bot a moment to fully start before first ping
+        consecutive_failures = 0
+        last_cleanup = time.monotonic()
+        time.sleep(30)  # let bot finish starting
+
         while True:
             try:
-                with urllib.request.urlopen(target, timeout=10) as resp:
+                with urllib.request.urlopen(target, timeout=15) as resp:
                     print(f"[PING] ✅ {resp.status} — service alive", flush=True)
+                    consecutive_failures = 0
             except urllib.error.URLError as exc:
-                print(f"[PING] ⚠️  ping failed: {exc.reason}", flush=True)
+                consecutive_failures += 1
+                print(f"[PING] ⚠️  ping failed ({consecutive_failures}): {exc.reason}", flush=True)
             except Exception as exc:
-                print(f"[PING] ⚠️  ping error: {exc}", flush=True)
+                consecutive_failures += 1
+                print(f"[PING] ⚠️  ping error ({consecutive_failures}): {exc}", flush=True)
+
+            if consecutive_failures >= 5:
+                print("[PING] 🔴 5 consecutive failures — health server may be down.", flush=True)
+                consecutive_failures = 0
+
+            # Expired temp-owner session cleanup
+            now_mono = time.monotonic()
+            if now_mono - last_cleanup >= CLEANUP_EVERY:
+                try:
+                    result = col("temp_owners").delete_many({"expires_at": {"$lt": _dt.now()}})
+                    if result.deleted_count:
+                        print(f"[CLEANUP] Removed {result.deleted_count} expired temp-owner session(s).", flush=True)
+                except Exception as exc:
+                    print(f"[CLEANUP] temp-owner cleanup error: {exc}", flush=True)
+                last_cleanup = now_mono
+
             time.sleep(PING_INTERVAL)
 
     ping_thread = threading.Thread(target=_self_ping, daemon=True, name="self-ping")
