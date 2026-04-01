@@ -8,7 +8,7 @@ duration set by the real owner.  When the session expires (or is
 revoked), they drop back to a normal player automatically.
 
 Commands (owner only):
-  /addtempowner @user [duration]  — grant temp-owner for e.g. "2h", "30m", "1d", "1month"
+  /addtempowner @user [duration]  — grant temp-owner for e.g. "2h", "30m", "1d"
   /revoketo @user                 — revoke immediately
   /listtempowners                 — show all active sessions
 
@@ -65,13 +65,12 @@ def _parse_duration(raw: str) -> Optional[timedelta]:
         2h   / 2hr    / 2hours
         1d   / 1day   / 1days
         1w   / 1week  / 1weeks
-        1mo  / 1month / 1months
-        e.g. "2h30m" or "1d12h" also supported
+        e.g. "2h30m" also supported
     Returns None if unparseable.
     """
     raw = raw.strip().lower()
     total = timedelta()
-    pattern = re.findall(r'(\d+)\s*([mhdw]|mo)', raw)
+    pattern = re.findall(r'(\d+)\s*([mhdw])', raw)
     if not pattern:
         # Try bare number → minutes
         if raw.isdigit():
@@ -89,9 +88,6 @@ def _parse_duration(raw: str) -> Optional[timedelta]:
             total += timedelta(days=amount)
         elif unit == 'w':
             total += timedelta(weeks=amount)
-        elif unit == 'mo':
-            # Approximate 1 month = 30 days for simplicity
-            total += timedelta(days=amount * 30)
     return total if total.total_seconds() > 0 else None
 
 
@@ -102,10 +98,6 @@ def _fmt_duration(td: timedelta) -> str:
     hours, rem = divmod(rem, 3600)
     minutes, _ = divmod(rem, 60)
     parts = []
-    if days >= 30:  # Show months if >= 30 days
-        months = days // 30
-        days = days % 30
-        parts.append(f"{months}mo")
     if days:
         parts.append(f"{days}d")
     if hours:
@@ -141,8 +133,6 @@ async def addtempowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
       /addtempowner @alice 2h
       /addtempowner @bob 30m
       /addtempowner @charlie 1d
-      /addtempowner @dave 1month
-      /addtempowner @eve 2months
     """
     caller = update.effective_user.id
     if caller != OWNER_ID:
@@ -158,8 +148,6 @@ async def addtempowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "  `2h` — 2 hours\n"
             "  `1d` — 1 day\n"
             "  `1w` — 1 week\n"
-            "  `1mo` — 1 month (≈30 days)\n"
-            "  `2months` — 2 months (≈60 days)\n"
             "  `2h30m` — 2 hours 30 minutes\n\n"
             "Default duration: `1h`",
             parse_mode="Markdown",
@@ -182,15 +170,14 @@ async def addtempowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not duration:
         await update.message.reply_text(
             f"❌ Could not parse duration `{duration_str}`.\n"
-            "Use formats like `30m`, `2h`, `1d`, `1mo`.",
+            "Use formats like `30m`, `2h`, `1d`.",
             parse_mode="Markdown",
         )
         return
 
-    # Cap at 7 days for safety (or 1 month if specified)
-    max_duration = timedelta(days=7)
-    if duration.total_seconds() > max_duration.total_seconds():
-        await update.message.reply_text("❌ Max temp-owner duration is 7 days (or 1 month).")
+    # Cap at 7 days for safety
+    if duration.total_seconds() > 7 * 86400:
+        await update.message.reply_text("❌ Max temp-owner duration is 7 days.")
         return
 
     expires_at = datetime.now() + duration
@@ -332,3 +319,4 @@ async def mytempowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"Remaining: *{_fmt_duration(remaining)}*",
         parse_mode="Markdown",
     )
+  
