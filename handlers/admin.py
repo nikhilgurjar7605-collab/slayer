@@ -16,10 +16,19 @@ broadcast_reply_cache = {}
 
 
 def is_owner(user_id):
-    return user_id == OWNER_ID
+    """True for real owner OR an active temp owner."""
+    if user_id == OWNER_ID:
+        return True
+    # Lazy import to avoid circular imports at module load time
+    try:
+        from handlers.temp_owner import is_temp_owner
+        return is_temp_owner(user_id)
+    except Exception:
+        return False
 
 
 def has_admin_access(user_id):
+    """True for real owner, active temp owner, or any sudo admin."""
     if is_owner(user_id):
         return True
     doc = col("admins").find_one({"user_id": user_id})
