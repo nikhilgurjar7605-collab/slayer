@@ -641,6 +641,14 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "enemy_hp": opp_hp,
         "enemy_max_hp": duel['challenger_max_hp'] if opp_hp_key == 'challenger_hp' else duel['target_max_hp'],
     }
+    duel_ctx_key = f"duel_ctx_{duel_key}_{user_id}"
+    duel_ctx = context.bot_data.get(duel_ctx_key, {})
+    duel_ctx['enemy_hp']     = opp_hp
+    duel_ctx['enemy_max_hp'] = duel['challenger_max_hp'] if opp_hp_key == 'challenger_hp' else duel['target_max_hp']
+
+    from utils.effects import apply_form_effect, process_enemy_dots
+
+    eff_log = []
     try:
         from handlers.explore import _safe_get_skills, _safe_get_bonuses, _calculate_form_hit_damage
         owned_skills = _safe_get_skills(user_id)
@@ -653,12 +661,34 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id,
             context=None,
             bonuses=bonuses,
-            log=None,
+            log=eff_log,
         )
     except Exception:
         dmg = random.randint(form['dmg_min'], form['dmg_max'])
     dmg = int(dmg * 0.70)
     dmg = int(dmg * pressure['tech_mult'])
+
+    # Cap technique to 40% of opponent's max HP — no one-shots from techniques
+    max_tech_dmg = int(duel_ctx['enemy_max_hp'] * 0.40)
+    if dmg > max_tech_dmg:
+        log.append(f"🛡️ *Damage capped!* (Max 40% HP per technique)")
+        dmg = max_tech_dmg
+
+    # Apply technique status effects to opponent
+    eff_bonus, eff_heal, duel_ctx = apply_form_effect(user_id, attacker, form, art_name, eff_log, duel_ctx)
+    dmg += eff_bonus
+    if eff_heal > 0:
+        attacker_hp_key, _, attacker_max_key, _ = _duel_hp_key(duel, user_id)
+        cur_atk_hp = duel[attacker_hp_key]
+        new_atk_hp = min(duel[attacker_max_key], cur_atk_hp + eff_heal)
+        col("duels").update_one({"_id": duel_oid}, {"$set": {attacker_hp_key: new_atk_hp}})
+        eff_log.append(f"💚 +{eff_heal} HP healed")
+
+    # Process any existing DoT effects on the opponent this turn
+    dot_dmg, duel_ctx = process_enemy_dots(duel_ctx, {"enemy_hp": opp_hp, "enemy_max_hp": duel_ctx['enemy_max_hp']}, eff_log)
+    dmg += dot_dmg
+
+    context.bot_data[duel_ctx_key] = duel_ctx
     new_opp = max(0, opp_hp - dmg)
 
     # Show technique image if available
@@ -676,6 +706,8 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✨ *{form['name']}*",
         f"💥 {dmg} damage!",
     ]
+    if eff_log:
+        log_lines += eff_log
 
     if new_opp <= 0:
         col("duels").update_one({"_id": duel_oid}, {"$set": {opp_hp_key: 0}})
