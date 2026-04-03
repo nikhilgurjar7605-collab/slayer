@@ -185,6 +185,112 @@ def apply_form_effect(user_id, player, form, art_name, log, context_data=None):
         heal = int(player['max_hp'] * 0.10)
         log.append(f"💚 *Regen* — +{heal} HP")
 
+    # ── EXHAUST ───────────────────────────────────────────────────────────
+    elif effect == 'exhaust_apply':
+        context_data['enemy_exhausted']       = True
+        context_data['enemy_exhausted_turns'] = 3
+        context_data['enemy_atk_reduce']      = 0.25
+        log.append("😵 *EXHAUST APPLIED!* Enemy ATK -25% for 3 turns")
+
+    elif effect == 'exhaust_chance':
+        if random.random() < 0.50:
+            context_data['enemy_exhausted']       = True
+            context_data['enemy_exhausted_turns'] = 2
+            context_data['enemy_atk_reduce']      = 0.20
+            log.append("😵 *EXHAUSTED!* Enemy ATK -20% for 2 turns")
+
+    # ── STAGGER ───────────────────────────────────────────────────────────
+    elif effect == 'stagger_apply':
+        context_data['enemy_staggered']    = True
+        context_data['enemy_skip_turns']   = context_data.get('enemy_skip_turns', 0) + 1
+        log.append("💥 *STAGGERED!* Enemy loses next action")
+
+    elif effect == 'stagger_chance':
+        if random.random() < 0.45:
+            context_data['enemy_staggered']  = True
+            context_data['enemy_skip_turns'] = context_data.get('enemy_skip_turns', 0) + 1
+            log.append("💥 *STAGGERED!* Enemy loses next action")
+
+    # ── CONFUSE ───────────────────────────────────────────────────────────
+    elif effect == 'confuse_apply':
+        context_data['enemy_confused']       = True
+        context_data['enemy_confused_turns'] = 3
+        log.append("🌀 *CONFUSION!* Enemy has 35% chance to self-hit for 3 turns")
+
+    elif effect == 'confuse_chance':
+        if random.random() < 0.50:
+            context_data['enemy_confused']       = True
+            context_data['enemy_confused_turns'] = 2
+            log.append("🌀 *CONFUSED!* Enemy has 35% chance to self-hit")
+
+    # ── STUN ──────────────────────────────────────────────────────────────
+    elif effect == 'stun_apply':
+        context_data['enemy_staggered']  = True
+        context_data['enemy_skip_turns'] = context_data.get('enemy_skip_turns', 0) + 1
+        context_data['enemy_frozen']       = True
+        context_data['enemy_frozen_turns'] = 1
+        log.append("⚡ *STUNNED!* Enemy is completely immobilised this turn")
+
+    elif effect == 'stun_chance':
+        if random.random() < 0.40:
+            context_data['enemy_staggered']  = True
+            context_data['enemy_skip_turns'] = context_data.get('enemy_skip_turns', 0) + 1
+            log.append("⚡ *STUN!* Enemy loses next action")
+
+    # ── CURSE ─────────────────────────────────────────────────────────────
+    elif effect == 'curse_apply':
+        context_data['enemy_cursed']       = True
+        context_data['enemy_cursed_turns'] = 4
+        context_data['enemy_curse_pct']    = 0.04
+        log.append("💀 *CURSE APPLIED!* Enemy takes 4% HP/turn for 4 turns")
+
+    # ── DEEP POISON ───────────────────────────────────────────────────────
+    elif effect == 'deep_poison':
+        context_data['enemy_poison']       = True
+        context_data['enemy_poison_turns'] = 6
+        context_data['enemy_poison_pct']   = 0.06
+        log.append("☠️ *DEEP POISON!* 6% HP/turn for 6 turns")
+
+    # ── BARRIER (player-side shield) ──────────────────────────────────────
+    elif effect == 'barrier':
+        context_data['player_barrier']       = int(player.get('max_hp', 1000) * 0.15)
+        context_data['player_barrier_turns'] = 2
+        bonus = 0
+        log.append(f"🛡️ *BARRIER!* Absorbs up to {context_data['player_barrier']} damage for 2 turns")
+
+    # ── ATK / DEF BUFF (player-side) ──────────────────────────────────────
+    elif effect == 'atk_buff':
+        context_data['player_atk_bonus'] = context_data.get('player_atk_bonus', 0) + 0.20
+        log.append("💪 *ATK BUFF!* +20% ATK for this battle")
+
+    elif effect == 'def_buff':
+        context_data['player_def_bonus'] = context_data.get('player_def_bonus', 0) + 0.20
+        log.append("🛡️ *DEF BUFF!* +20% DEF for this battle")
+
+    # ── FLOW PUNISH ───────────────────────────────────────────────────────
+    elif effect == 'flow_punish':
+        if context_data.get('flow_active'):
+            bonus += 15
+            log.append("💧 *Flow Punish!* +15 bonus damage (Flow active)")
+        context_data['enemy_atk_reduce'] = 0.15
+        log.append("💧 Striking Tide — Enemy ATK -15%")
+
+    # ── HEAL / RESTORE ────────────────────────────────────────────────────
+    elif effect == 'restore_hp_full':
+        heal = player.get('max_hp', 0)
+        log.append(f"💚 *Full HP Restore!* +{heal} HP")
+
+    elif effect == 'restore_sta_50':
+        new_sta = min(player['max_sta'], player['sta'] + 50)
+        update_player(user_id, sta=new_sta)
+        log.append("🌀 *STA Restore!* +50 Stamina")
+
+    # ── CURE POISON ───────────────────────────────────────────────────────
+    elif effect == 'cure_poison':
+        from utils.database import clear_status_effects as _cse
+        _cse(user_id)
+        log.append("✨ *Cured!* All status effects removed")
+
     # Track combos
     form_type = form.get('type', '')
     context_data['last_form_type'] = form_type
@@ -333,6 +439,24 @@ def process_enemy_dots(context_data, state, log):
         log.append(f"🌡️ *Frostburn!* Enemy STA -{drain} ({context_data['enemy_frostburn_turns']}t left)")
         if context_data['enemy_frostburn_turns'] <= 0:
             context_data['enemy_frostburn'] = False
+
+    # Curse
+    if context_data.get('enemy_cursed') and context_data.get('enemy_cursed_turns', 0) > 0:
+        dot = max(1, int(enemy_max * context_data.get('enemy_curse_pct', 0.04)))
+        total += dot
+        context_data['enemy_cursed_turns'] -= 1
+        log.append(f"💀 *Enemy CURSED!* -{dot} HP ({context_data['enemy_cursed_turns']}t left)")
+        if context_data['enemy_cursed_turns'] <= 0:
+            context_data['enemy_cursed'] = False
+
+    # Confused enemy — 35% chance to self-attack (skip their turn instead)
+    if context_data.get('enemy_confused') and context_data.get('enemy_confused_turns', 0) > 0:
+        context_data['enemy_confused_turns'] -= 1
+        if random.random() < 0.35:
+            context_data['enemy_skip_turns'] = context_data.get('enemy_skip_turns', 0) + 1
+            log.append("🌀 *Enemy is CONFUSED!* Self-attacks and skips turn!")
+        if context_data['enemy_confused_turns'] <= 0:
+            context_data['enemy_confused'] = False
 
     # Blind — handled in explore attack logic; just tick down here
     if context_data.get('enemy_blind') and context_data.get('enemy_blind_turns', 0) > 0:
