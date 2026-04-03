@@ -278,7 +278,7 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
     }
     s_bonus = sword_bonus.get(player.get('equipped_sword', ''), 0)
     # Techniques use 70% of str contribution to bring damage in line with enemy HP pools
-    str_mult = 2.0 if not is_technique else 1.1  # boosted for better feel vs enemy HP pools
+    str_mult = 2.8 if not is_technique else 1.6  # boosted for better feel vs enemy HP pools
     base    = int(player['str_stat'] * str_mult) + random.randint(base_min, base_max) + s_bonus
     dmg     = base
 
@@ -526,17 +526,21 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     enemy_template = get_enemies_for_region(player)
     enemy = dict(enemy_template)
 
-    # Yoriichi: HP scales purely with player level, bypasses normal scaling
+    # Yoriichi / Kokushibo: HP scales purely with player level, bypasses normal scaling
     if enemy.get('yoriichi'):
         from config import _yoriichi_hp_for_level
         enemy['hp'] = _yoriichi_hp_for_level(level)
         enemy['atk'] = int(enemy['atk'] * (1 + level * 0.04))
+    elif enemy.get('kokushibo'):
+        # Kokushibo: 2M base + 15k/level above 80 — even harder than Yoriichi
+        enemy['hp'] = 2_000_000 + max(0, level - 80) * 15_000
+        enemy['atk'] = int(enemy['atk'] * (1 + level * 0.05))
     else:
         enemy['hp']  = int(enemy['hp']  * (1 + level * 0.05))
         enemy['atk'] = int(enemy['atk'] * (1 + level * 0.03))
 
     if enemy.get('is_boss'):
-        if not enemy.get('yoriichi'):  # Yoriichi HP already set above
+        if not enemy.get('yoriichi') and not enemy.get('kokushibo'):  # legendary bosses HP already set
             enemy['hp']  = int(enemy['hp']  * 3)
         enemy['atk'] = int(enemy['atk'] * 1.5)
         enemy['xp']  = int(enemy['xp']  * 3)
@@ -713,6 +717,16 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.user_data.get('boss_enraged'):
             context.user_data['boss_enraged'] = True
             log.append(f"{state['enemy_name']} enrages! ATK +30%!")
+    # Kokushibo resists demons — all demon player damage halved + regenerates
+    if state.get('kokushibo') and player.get('faction') == 'demon':
+        base_dmg = max(1, int(base_dmg * 0.30))
+        log.append("🌙 *Kokushibo RESISTS!* Demon attacks reduced to 30%!")
+        # Kokushibo regenerates 2% HP per demon attack
+        regen_amt = max(1, int(state['enemy_max_hp'] * 0.02))
+        new_koku_hp = min(state['enemy_max_hp'], state['enemy_hp'] + regen_amt)
+        update_battle_enemy_hp(user_id, new_koku_hp)
+        state = get_battle_state(user_id)
+        log.append(f"🌙 Kokushibo regenerates {regen_amt} HP!")
     new_enemy_hp = max(0, state['enemy_hp'] - base_dmg)
     update_battle_enemy_hp(user_id, new_enemy_hp)
     combo += 1
@@ -823,6 +837,17 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ally = None
             new_player_hp = player['hp']
         else:
+            _bctx = context.user_data.get(f'battle_ctx_{user_id}', {})
+            if _bctx.get('player_barrier', 0) > 0 and enemy_dmg > 0:
+                _abs = min(_bctx['player_barrier'], enemy_dmg)
+                enemy_dmg -= _abs
+                _bctx['player_barrier'] -= _abs
+                if _bctx['player_barrier'] <= 0:
+                    _bctx.pop('player_barrier', None); _bctx.pop('player_barrier_turns', None)
+                    log.append(f"🛡️ Barrier absorbed {_abs} dmg (shattered!)")
+                else:
+                    log.append(f"🛡️ Barrier absorbed {_abs} dmg ({_bctx['player_barrier']} left)")
+                context.user_data[f'battle_ctx_{user_id}'] = _bctx
             new_player_hp = max(0, player['hp'] - enemy_dmg)
             player_took_direct_hit = enemy_dmg > 0
             log.append(f"{state_fresh['enemy_name']} strikes {player['name']} - {enemy_dmg} damage!")
@@ -1072,6 +1097,14 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_combat_keyboard(has_ally=bool(ally_sk))
         )
         return
+    # Kokushibo resists demon techniques too
+    if state.get('kokushibo') and player.get('faction') == 'demon':
+        total_dmg = max(1, int(total_dmg * 0.30))
+        log.append("🌙 *Kokushibo RESISTS TECHNIQUE!* 30% damage only!")
+        regen_amt2 = max(1, int(state['enemy_max_hp'] * 0.02))
+        update_battle_enemy_hp(user_id, min(state['enemy_max_hp'], state['enemy_hp'] + regen_amt2))
+        state = get_battle_state(user_id)
+        log.append(f"🌙 Kokushibo regenerates {regen_amt2} HP!")
     new_sta = max(0, player['sta'] - actual_sta_cost)
     new_enemy_hp = max(0, state['enemy_hp'] - total_dmg)
     update_player(user_id, sta=new_sta)
@@ -1156,6 +1189,17 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ally = None
             new_player_hp = player['hp']
         else:
+            _bctx2 = context.user_data.get(f'battle_ctx_{user_id}', {})
+            if _bctx2.get('player_barrier', 0) > 0 and enemy_dmg > 0:
+                _abs2 = min(_bctx2['player_barrier'], enemy_dmg)
+                enemy_dmg -= _abs2
+                _bctx2['player_barrier'] -= _abs2
+                if _bctx2['player_barrier'] <= 0:
+                    _bctx2.pop('player_barrier', None); _bctx2.pop('player_barrier_turns', None)
+                    log.append(f"🛡️ Barrier absorbed {_abs2} dmg (shattered!)")
+                else:
+                    log.append(f"🛡️ Barrier absorbed {_abs2} dmg ({_bctx2['player_barrier']} left)")
+                context.user_data[f'battle_ctx_{user_id}'] = _bctx2
             new_player_hp = max(0, player['hp'] - enemy_dmg)
             player_took_direct_hit = enemy_dmg > 0
             log.append(f"{state_fresh['enemy_name']} strikes back - {enemy_dmg} damage!")
@@ -1675,3 +1719,4 @@ async def handle_defeat(query, user_id, player, log, context=None):
         f"💡 Use /explore to try again!",
         parse_mode='Markdown'
     )
+  
