@@ -32,6 +32,7 @@ from handlers.auction import auction, bid
 from handlers.mission import mission, select_mission, confirm_mission, abandon_mission, mission_back
 from handlers.daily import daily, streak
 from handlers.gift import gift
+from handlers.social import check, givesp as user_givesp
 from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
 from handlers.clan import (clan, createclan, joinclan, leaveclan, setclanlink, clandisband,
@@ -103,7 +104,6 @@ except ImportError:
     async def vote_cmd(update, context): await event_cmd(update, context)
     async def vote_callback(update, context): await event_callback(update, context)
 from handlers.logs import logs, logs_callback, logstats, logsearch, loguser, log_user_activity
-from handlers.temp_owner import addtempowner, revoketo, listtempowners, mytempowner
 from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle,
     ownergive, ownerreset, ownerban, ownerunban, ownermsg, ownerstats,
     ownerplayers, ownerplayers_callback, owner_godmode_active)
@@ -769,11 +769,6 @@ def main():
         ('logstats',        logstats),
         ('logsearch',       logsearch),
         ('loguser',          loguser),
-        # Temp owner management (owner only)
-        ('addtempowner',    addtempowner),
-        ('revoketo',        revoketo),
-        ('listtempowners',  listtempowners),
-        ('mytempowner',     mytempowner),
         ('suggestions',     suggestions),
         ('createclan',      createclan),
         ('joinclan',        joinclan),
@@ -802,6 +797,9 @@ def main():
         ('giveitem',        giveitem),
         ('resetplayer',     resetplayer),
         ('givesp',          givesp),
+        ('check',           check),
+        ('inspect',         check),
+        ('usersp',          user_givesp),
         ('botstats',        botstats),
         ('startraid',       startraid),
         ('stopraid',        stopraid),
@@ -983,56 +981,74 @@ if __name__ == '__main__':
     _health_started.wait(timeout=3)
     print(f"[BOT] Render health server ready on {HOST}:{PORT}. Starting bot...", flush=True)
 
-    # ── Self-ping + temp-owner cleanup — keeps Render alive 24/7 ─────────
-    # Render free-tier shuts down after ~15 min of no HTTP traffic.
-    # This thread pings /healthz every 10 min and also cleans up
-    # expired temp-owner sessions every hour.
-    def _self_ping():
-        import time
-        import urllib.request
-        import urllib.error
-        from datetime import datetime as _dt
+    # ══════════════════════════════════════════════════════════════════════
+    # RENDER KEEP-ALIVE
+    # Render free-tier spins down a service after ~15 min of NO inbound HTTP
+    # traffic.  Strategy:
+    #   1. Ping the PUBLIC Render URL every 10 min  (hits Render's edge,
+    #      counts as real inbound traffic — unlike 127.0.0.1).
+    #   2. Fall back to localhost if RENDER_EXTERNAL_URL is not set (local dev).
+    #   3. Exponential back-off on repeated failures so we don't hammer a
+    #      broken endpoint, but always recover within the 15-min window.
+    #   4. Wrap main() in a retry loop so a crash restarts the bot instead
+    #      of killing the whole process on Render.
+    # ══════════════════════════════════════════════════════════════════════
+    import time as _time
+    import urllib.request as _urllib_req
+    import urllib.error   as _urllib_err
 
-        PING_INTERVAL = 10 * 60       # 10 min — under Render's 15-min idle limit
-        CLEANUP_EVERY = 60 * 60       # 1 hour — expire stale temp-owner docs
-        target = (RENDER_URL.rstrip("/") + "/healthz") if RENDER_URL else f"http://127.0.0.1:{PORT}/healthz"
-        print(f"[PING] Self-ping started → {target} every {PING_INTERVAL//60} min", flush=True)
+    # Prefer the real public URL so Render sees genuine inbound traffic
+    _PING_TARGET   = (RENDER_URL + "/healthz") if RENDER_URL else f"http://127.0.0.1:{PORT}/healthz"
+    _PING_INTERVAL = 8 * 60          # 8 min  (< 15 min Render idle threshold)
+    _PING_TIMEOUT  = 15              # seconds per request
 
-        consecutive_failures = 0
-        last_cleanup = time.monotonic()
-        time.sleep(30)  # let bot finish starting
-
+    def _keep_alive():
+        """Pings the public URL on a fixed cadence with back-off on failure."""
+        print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
+        _time.sleep(20)              # let the bot finish starting first
+        failures = 0
         while True:
             try:
-                with urllib.request.urlopen(target, timeout=15) as resp:
-                    print(f"[PING] ✅ {resp.status} — service alive", flush=True)
-                    consecutive_failures = 0
-            except urllib.error.URLError as exc:
-                consecutive_failures += 1
-                print(f"[PING] ⚠️  ping failed ({consecutive_failures}): {exc.reason}", flush=True)
+                with _urllib_req.urlopen(_PING_TARGET, timeout=_PING_TIMEOUT) as r:
+                    print(f"[KEEP-ALIVE] ✅ {r.status} OK", flush=True)
+                    failures = 0
+            except _urllib_err.URLError as exc:
+                failures += 1
+                print(f"[KEEP-ALIVE] ⚠️  attempt {failures} failed: {exc.reason}", flush=True)
             except Exception as exc:
-                consecutive_failures += 1
-                print(f"[PING] ⚠️  ping error ({consecutive_failures}): {exc}", flush=True)
+                failures += 1
+                print(f"[KEEP-ALIVE] ⚠️  attempt {failures} error: {exc}", flush=True)
 
-            if consecutive_failures >= 5:
-                print("[PING] 🔴 5 consecutive failures — health server may be down.", flush=True)
-                consecutive_failures = 0
+            # Back-off: 1×, 2×, 4× … but cap so we never exceed the 15-min window
+            wait = min(_PING_INTERVAL, _PING_INTERVAL * (2 ** max(0, failures - 1)))
+            wait = min(wait, 13 * 60)   # hard cap at 13 min
+            _time.sleep(wait)
 
-            # Expired temp-owner session cleanup
-            now_mono = time.monotonic()
-            if now_mono - last_cleanup >= CLEANUP_EVERY:
-                try:
-                    result = col("temp_owners").delete_many({"expires_at": {"$lt": _dt.now()}})
-                    if result.deleted_count:
-                        print(f"[CLEANUP] Removed {result.deleted_count} expired temp-owner session(s).", flush=True)
-                except Exception as exc:
-                    print(f"[CLEANUP] temp-owner cleanup error: {exc}", flush=True)
-                last_cleanup = now_mono
+    _ka_thread = threading.Thread(target=_keep_alive, daemon=True, name="keep-alive")
+    _ka_thread.start()
 
-            time.sleep(PING_INTERVAL)
+    # ── Crash-restart guard ───────────────────────────────────────────────
+    # If main() crashes (network blip, Telegram API outage, etc.) wait a few
+    # seconds and restart rather than letting Render mark the service as failed.
+    _RESTART_DELAY = 10   # seconds between crash and restart
+    _MAX_RESTARTS  = 10   # give up after this many consecutive crashes
 
-    ping_thread = threading.Thread(target=_self_ping, daemon=True, name="self-ping")
-    ping_thread.start()
-    # ─────────────────────────────────────────────────────────────────────
-
-    main()
+    _restart_count = 0
+    while True:
+        try:
+            print(f"[BOT] Starting bot (restart #{_restart_count})...", flush=True)
+            main()
+            # main() returned cleanly (shouldn't normally happen)
+            print("[BOT] main() exited normally — restarting in case of clean shutdown.", flush=True)
+        except (KeyboardInterrupt, SystemExit):
+            print("[BOT] Shutdown requested — exiting.", flush=True)
+            break
+        except Exception as _exc:
+            _restart_count += 1
+            print(f"[BOT] ❌ Crash #{_restart_count}: {_exc}", flush=True)
+            if _restart_count >= _MAX_RESTARTS:
+                print(f"[BOT] Too many crashes ({_MAX_RESTARTS}). Giving up.", flush=True)
+                raise
+            print(f"[BOT] Restarting in {_RESTART_DELAY}s…", flush=True)
+            _time.sleep(_RESTART_DELAY)
+            
