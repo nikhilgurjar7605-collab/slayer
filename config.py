@@ -1083,7 +1083,7 @@ REGION_ENEMIES["void"] = {
         {"name": "Void Tyrant", "emoji": "VT", "threat": "EXTREME", "hp": 13500, "atk": 210, "xp": 16000, "yen": 8000, "drops": ["Void Core", "Boss Shard"], "faction_type": "demon", "is_boss": False},
         {"name": "Yoriichi Tsugikuni", "emoji": "☀️", "threat": "💀 LEGENDARY", "hp": 1500000, "atk": 280, "xp": 80000, "yen": 40000, "drops": ["Sun Blade Fragment", "Breath of the Sun Scroll", "Boss Shard", "Sun Nichirin Blade"], "faction_type": "neutral", "is_boss": True, "yoriichi": True},
         # ── Kokushibo — Demon-side void legendary boss (near-invincible for demons) ──
-        {"name": "Kokushibo", "emoji": "🌙", "threat": "💀 LEGENDARY", "hp": 2000000, "atk": 320, "xp": 8000, "yen": 4000, "drops": ["Moon Blade Shard", "Upper Moon Core", "Boss Shard", "Kokushibo Shard"], "faction_type": "demon", "is_boss": True, "kokushibo": True, "demon_resist": True},
+        {"name": "Kokushibo", "emoji": "🌙", "threat": "💀 LEGENDARY", "hp": 2000000, "atk": 320, "xp": 80000, "yen": 40000, "drops": ["Moon Blade Shard", "Upper Moon Core", "Boss Shard", "Kokushibo Shard"], "faction_type": "demon", "is_boss": True, "kokushibo": True, "demon_resist": True},
     ],
 }
 
