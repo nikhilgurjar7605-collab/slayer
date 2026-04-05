@@ -12,6 +12,11 @@ from utils.database import (get_player, get_battle_state, set_battle_state, clea
                              clear_status_effects)
 from utils.helpers import get_unlocked_forms, get_level, hp_bar, get_rank
 from utils.guards import dm_only, owner_only_button, no_button_spam
+from handlers.pets import (
+    roll_wild_pet_encounter, roll_egg_drop, trigger_wild_encounter,
+    apply_pet_passives_to_rewards, get_pet_drop_bonus, get_active_pet,
+    get_pet_passives,
+)
 from utils.pressure import calc_pressure, pressure_display, get_chaos_modifier
 from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS, SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES
 from utils.effects import (apply_form_effect, process_dot_effects,
@@ -305,6 +310,11 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         if 'low_hp_dmg' in bonuses and player['hp'] < player['max_hp'] * 0.30:
             dmg = int(dmg * (1 + bonuses['low_hp_dmg']))
         # NOTE: story_bonus NOT applied again here (was a double-apply bug)
+    # Pet ATK passive
+    if user_id:
+        _pet_atk = get_pet_passives(user_id).get('atk_pct', 0)
+        if _pet_atk:
+            dmg = int(dmg * (1 + _pet_atk))
     return dmg
 
 
@@ -551,9 +561,25 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_battle_state(user_id, enemy, in_combat=False)
 
+    # ── Wild pet encounter (~1% chance, skipped for boss fights) ──────────
+    if not enemy.get('is_boss'):
+        _wild_pet = roll_wild_pet_encounter(location)
+        if _wild_pet:
+            await trigger_wild_encounter(update, user_id, context, _wild_pet, location)
+
     from config import TRAVEL_ZONES
     zone = next((z for z in TRAVEL_ZONES if z['id'] == location), TRAVEL_ZONES[0])
     boss_warning = "\n🔴 *⚠️ BOSS ENCOUNTER!*" if enemy.get('is_boss') else ""
+
+    # ── Show active pet on encounter screen ───────────────────────────────
+    _active_pet = get_active_pet(user_id)
+    _pet_line = ""
+    if _active_pet:
+        from config import PETS, PET_EVOLUTIONS
+        _pn = _active_pet['name']
+        _pd = PETS.get(_pn) or PET_EVOLUTIONS.get(_pn, {})
+        _pe = _pd.get('emoji', '🐾')
+        _pet_line = f"\n🐾 *{_pn}* {_pe} active"
 
     encounter_text = (
         f"🌙 *{player['name']} ventures into {zone['emoji']} {zone['name']}...*\n\n"
@@ -566,7 +592,8 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🗡️ *{player['name']}*\n"
         f"❤️ HP: {player['hp']}/{player['max_hp']}\n"
-        f"🌀 STA: {player['sta']}/{player['max_sta']}\n"
+        f"🌀 STA: {player['sta']}/{player['max_sta']}"
+        f"{_pet_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"⭐ *Reward:* {enemy['xp']} XP | 💰 {enemy['yen']}¥\n\n"
         f"Press *Fight* to engage or *Find Different Enemy* to search again!"
@@ -1483,6 +1510,8 @@ async def handle_victory(query, user_id, player, state, log, context=None):
 
     xp_gain  = state['prize_xp']
     yen_gain = state['prize_yen']
+    # Pet passive XP/Yen bonus
+    xp_gain, yen_gain = apply_pet_passives_to_rewards(user_id, xp_gain, yen_gain)
     drops    = json.loads(state['prize_drops']) if state['prize_drops'] else []
 
     if player.get('story_bonus') == 'xp_bonus':
@@ -1541,7 +1570,7 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     _zone = next((z for z in TRAVEL_ZONES if z['id'] == _loc), TRAVEL_ZONES[0])
     _region_label = f"{_zone.get('emoji', '')} {_zone['name']}"
     drop_lines = []
-    drop_chance = 0.65 + _victory_bonuses.get('drop_pct', 0)
+    drop_chance = 0.65 + _victory_bonuses.get('drop_pct', 0) + get_pet_drop_bonus(user_id)
     for drop in drops:
         if random.random() < drop_chance:
             add_item(user_id, drop, 'material')
@@ -1620,6 +1649,12 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         result += f"💠 +{sp_gained} Skill Point(s)!\n"
     if devour_msg:
         result += devour_msg + "\n"
+    # Pet egg random drop
+    _egg = roll_egg_drop()
+    if _egg:
+        add_item(user_id, _egg, 'item', 1)
+        drop_lines.append(f'🥚 *{_egg}* dropped!')
+
     if drop_lines:
         result += '\n'.join(drop_lines) + '\n'
     if ranked_up:
@@ -1692,22 +1727,22 @@ async def handle_victory(query, user_id, player, state, log, context=None):
 
 # ── DEFEAT ────────────────────────────────────────────────────────────────
 async def handle_defeat(query, user_id, player, log, context=None):
-    # ── Phoenix Rebirth: survive death once ───────────────────────────────
+    # Phoenix Rebirth — survive once at 30% HP
     if context and context.user_data.get(f'pet_rebirth_{user_id}'):
         context.user_data.pop(f'pet_rebirth_{user_id}')
         revive_hp = int(player['max_hp'] * 0.30)
         update_player(user_id, hp=revive_hp)
         player = get_player(user_id)
-        log.append(f"🔥 *PHOENIX REBIRTH!* Survived with {revive_hp} HP!")
-        state_fresh = get_battle_state(user_id)
-        ally_fresh  = get_active_ally(state_fresh)
-        full_log    = get_battle_log(user_id)
+        log.append(f'🔥 *PHOENIX REBIRTH!* Survived with {revive_hp} HP!')
+        state_r  = get_battle_state(user_id)
+        ally_r   = get_active_ally(state_r)
+        full_r   = get_battle_log(user_id)
         append_battle_log(user_id, log)
         await safe_edit(
             query,
-            combat_status(player, state_fresh, ally_fresh, full_log),
+            combat_status(player, state_r, ally_r, full_r),
             parse_mode='Markdown',
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_fresh))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_r))
         )
         return
     log.append(f"💀 *{player['name']}* has fallen...")
