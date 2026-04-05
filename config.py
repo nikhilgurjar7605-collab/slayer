@@ -1161,10 +1161,13 @@ SHOP_ITEMS = {
         {"name": "Hashira Haori",      "code": "hashira",  "price": 8000,  "def_bonus": 30, "emoji": "👑"},
     ],
     "pet_items": [
-        {"name": "Pet Trap",       "code": "pettrap",    "price": 500,   "emoji": "🪤",  "desc": "Needed to catch wild pets"},
-        {"name": "Pet Food",       "code": "petfood",    "price": 200,   "emoji": "🍖",  "desc": "Feed your pet to gain bond XP"},
-        {"name": "Basic Egg",      "code": "basicegg",   "price": 1500,  "emoji": "🥚",  "desc": "Hatches a Common/Uncommon pet"},
-        {"name": "Spirit Crystal", "code": "spiritcrystal","price": 15000,"emoji": "💎", "desc": "Evolve your Soulbound pet"},
+        {"name": "Pet Trap",          "code": "pettrap",      "price": 500,   "emoji": "🪤",  "catch_bonus": 0.00, "desc": "Basic trap — no bonus"},
+        {"name": "Spirit Orb",        "code": "spiritorb",    "price": 1500,  "emoji": "🔵",  "catch_bonus": 0.15, "desc": "+15% catch rate"},
+        {"name": "Demon Lure",        "code": "demonlure",    "price": 3000,  "emoji": "🔴",  "catch_bonus": 0.25, "desc": "+25% catch rate, better vs demons"},
+        {"name": "Sacred Chain",      "code": "sacredchain",  "price": 8000,  "emoji": "⛓️",  "catch_bonus": 0.40, "desc": "+40% catch rate — best tool"},
+        {"name": "Pet Food",          "code": "petfood",      "price": 200,   "emoji": "🍖",  "desc": "Feed your pet for bond XP"},
+        {"name": "Basic Egg",         "code": "basicegg",     "price": 1500,  "emoji": "🥚",  "desc": "Hatches Common/Uncommon pet"},
+        {"name": "Spirit Crystal",    "code": "spiritcrystal","price": 15000, "emoji": "💎",  "desc": "Evolve your Soulbound pet"},
     ]
 }
 
@@ -1317,6 +1320,9 @@ LOTTERY_TIERS = [
 ]
 
 
+# PET SYSTEM — config data
+
+# Pet images — fill in URLs after deploying
 # ══════════════════════════════════════════════════════════════════════════
 
 # Pet images — fill in URLs after deploying
@@ -1516,7 +1522,7 @@ PET_EGGS = {
 }
 
 # Wild encounter settings
-PET_WILD_ENCOUNTER_CHANCE = 0.03   # 3% per explore
+PET_WILD_ENCOUNTER_CHANCE = 0.01   # 1% per explore — ~100 explores average
 PET_TRAP_CATCH_BONUS      = 0.0    # base bonus from trap (trap itself enables catching)
 
 # Egg drop chances from enemy kills
@@ -1537,4 +1543,49 @@ PET_RARITY_EMOJI = {
     "rare":      "🔵",
     "epic":      "🟣",
     "legendary": "🟡",
+}
+
+# Which pets can appear in each region (wild encounters)
+# Each region has a pool weighted so lore fits the area
+PET_REGIONS = {
+    "asakusa": {
+        # Starting city — Corps HQ, messengers everywhere
+        "pool":    ["Kasugai Crow", "Sparrow"],
+        "weights": [70, 30],
+    },
+    "butterfly": {
+        # Butterfly Estate — peaceful, healing, insects & birds
+        "pool":    ["Kasugai Crow", "Sparrow", "Wild Fox"],
+        "weights": [40, 40, 20],
+    },
+    "mtsagiri": {
+        # Mt. Sagiri — mountain wilderness, wolves and eagles
+        "pool":    ["Wild Fox", "Timber Wolf", "Eagle"],
+        "weights": [35, 40, 25],
+    },
+    "swordsmith": {
+        # Swordsmith Village — mystical, hidden, foxes and rare birds
+        "pool":    ["Wild Fox", "Eagle", "Crimson Fox"],
+        "weights": [40, 35, 25],
+    },
+    "yoshiwara": {
+        # Entertainment District — demons hide here, baby demons roam
+        "pool":    ["Sparrow", "Wild Fox", "Baby Demon"],
+        "weights": [30, 30, 40],
+    },
+    "natagumo": {
+        # Spider mountain — dark, dangerous, wolves and demons
+        "pool":    ["Timber Wolf", "Baby Demon", "Shadow Wolf"],
+        "weights": [35, 40, 25],
+    },
+    "infinity": {
+        # Infinity Castle — epic zone, shadow wolves and phoenix sightings
+        "pool":    ["Shadow Wolf", "Baby Demon", "Phoenix", "Void Dragon"],
+        "weights": [35, 30, 25, 10],
+    },
+    "void": {
+        # Void Map — end-game, legendary-only spawns
+        "pool":    ["Shadow Wolf", "Void Dragon", "Phoenix"],
+        "weights": [30, 40, 30],
+    },
 }
