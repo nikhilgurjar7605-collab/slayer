@@ -66,6 +66,8 @@ def init_db():
     db.players.create_index("demons_slain")
 
     db.inventory.create_index([("user_id", 1), ("item_name", 1)])
+    db.pets.create_index([("user_id", 1), ("name", 1)], unique=True)
+    db.pets.create_index("user_id")
     db.battle_state.create_index("user_id", unique=True)
     db.duels.create_index("challenger_id")
     db.duels.create_index("target_id")
