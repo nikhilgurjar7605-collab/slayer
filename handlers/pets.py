@@ -27,7 +27,7 @@ from utils.guards import owner_only_button, no_button_spam
 # ── Pet data imports ───────────────────────────────────────────────────────
 from config import (
     PETS, PET_EVOLUTIONS, PET_EGGS, PET_BOND_NAMES, PET_BOND_XP,
-    PET_RARITY_EMOJI, PET_IMAGES,
+    PET_RARITY_EMOJI, PET_IMAGES, PET_REGIONS,
     PET_WILD_ENCOUNTER_CHANCE, PET_EGG_DROP,
 )
 
@@ -192,18 +192,22 @@ def get_pet_dodge_bonus(user_id: int) -> float:
 # WILD ENCOUNTER SYSTEM
 # ══════════════════════════════════════════════════════════════════════════
 
-def roll_wild_pet_encounter() -> str | None:
+def roll_wild_pet_encounter(location: str = "asakusa") -> str | None:
     """
-    Roll whether a wild pet appears. Returns pet name or None.
-    Weighted by catch_rate (rarer pets appear less).
+    Roll whether a wild pet appears for the given region.
+    ~1% per explore (~100 explores average).
+    Returns pet name appropriate for that region, or None.
     """
     if random.random() > PET_WILD_ENCOUNTER_CHANCE:
         return None
-    # Weight by rarity: common=4, uncommon=3, rare=2, epic=1, legendary=0.3
-    rarity_weight = {"common": 4, "uncommon": 3, "rare": 2, "epic": 1, "legendary": 0.3}
-    pool = [(name, rarity_weight.get(d["rarity"], 1)) for name, d in PETS.items()]
-    names, weights = zip(*pool)
-    return random.choices(names, weights=weights, k=1)[0]
+    region_data = PET_REGIONS.get(location)
+    if not region_data:
+        # Fallback: global pool weighted by rarity
+        rarity_weight = {"common": 4, "uncommon": 3, "rare": 2, "epic": 1, "legendary": 0.3}
+        pool = [(name, rarity_weight.get(d["rarity"], 1)) for name, d in PETS.items()]
+        names, weights = zip(*pool)
+        return random.choices(names, weights=weights, k=1)[0]
+    return random.choices(region_data["pool"], weights=region_data["weights"], k=1)[0]
 
 
 def roll_egg_drop() -> str | None:
@@ -218,7 +222,7 @@ def roll_egg_drop() -> str | None:
     return None
 
 
-async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_name: str):
+async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_name: str, location: str = "asakusa"):
     """
     Send wild pet encounter message with Catch/Flee buttons.
     Stores pet_name in context.user_data for callback.
@@ -229,13 +233,19 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
 
     context.user_data[f"wild_pet_{user_id}"] = pet_name
 
+    # Get zone display name
+    from config import TRAVEL_ZONES
+    zone = next((z for z in TRAVEL_ZONES if z["id"] == location), None)
+    zone_name = f"{zone['emoji']} {zone['name']}" if zone else location.title()
+
     text = (
         f"🌿 *A WILD PET APPEARS!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{data['emoji']}  *{pet_name}*  {rarity_e} {data['rarity'].upper()}\n\n"
         f"_{data['desc']}_\n\n"
-        f"🎯 Catch rate: *{int(data['catch_rate']*100)}%*\n"
-        f"🪤 Needs: *Pet Trap* in inventory\n\n"
+        f"📍 Region: *{zone_name}*\n"
+        f"🎯 Base catch rate: *{int(data['catch_rate']*100)}%*\n"
+        f"🪤 Needs: Pet Trap / Spirit Orb / Demon Lure / Sacred Chain\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"Act fast before it escapes!"
     )
@@ -274,27 +284,48 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not player:
         return
 
-    # Check for Pet Trap in inventory
-    trap = col("inventory").find_one(
-        {"user_id": user_id, "item_name": {"$regex": "^Pet Trap$", "$options": "i"}}
-    )
-    if not trap or trap.get("quantity", 0) < 1:
+    # Catching tools — best available is auto-selected
+    CATCHING_TOOLS = [
+        ("Sacred Chain",  0.40),   # best — +40% catch rate
+        ("Demon Lure",    0.25),   # +25%
+        ("Spirit Orb",    0.15),   # +15%
+        ("Pet Trap",      0.00),   # basic — no bonus
+    ]
+
+    trap_used = None
+    catch_bonus = 0.0
+    for tool_name, bonus in CATCHING_TOOLS:
+        doc = col("inventory").find_one(
+            {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
+        )
+        if doc and doc.get("quantity", 0) > 0:
+            trap_used = (tool_name, bonus, doc)
+            catch_bonus = bonus
+            break
+
+    if not trap_used:
         await query.edit_message_text(
-            f"❌ You don't have a *Pet Trap*!\n"
-            f"Buy one from the shop and come back.\n\n"
+            f"❌ You need a catching tool!\n\n"
+            f"Buy from the shop:\n"
+            f"🪤 Pet Trap — 500¥ (basic)\n"
+            f"🔵 Spirit Orb — 1,500¥ (+15% catch)\n"
+            f"🔴 Demon Lure — 3,000¥ (+25% catch)\n"
+            f"⛓️ Sacred Chain — 8,000¥ (+40% catch)\n\n"
             f"_{pet_name} escaped..._",
             parse_mode="Markdown"
         )
         return
 
-    # Consume trap
-    if trap["quantity"] <= 1:
-        col("inventory").delete_one({"_id": trap["_id"]})
+    tool_name, catch_bonus, trap_doc = trap_used
+    # Consume one of the tool
+    if trap_doc["quantity"] <= 1:
+        col("inventory").delete_one({"_id": trap_doc["_id"]})
     else:
-        col("inventory").update_one({"_id": trap["_id"]}, {"$inc": {"quantity": -1}})
+        col("inventory").update_one({"_id": trap_doc["_id"]}, {"$inc": {"quantity": -1}})
 
     data = PETS[pet_name]
-    caught = random.random() < data["catch_rate"]
+    final_catch_rate = min(0.95, data["catch_rate"] + catch_bonus)
+    caught = random.random() < final_catch_rate
 
     if caught:
         is_new = add_pet(user_id, pet_name)
@@ -305,6 +336,7 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"{data['emoji']}  *{pet_name}*  {rarity_e}\n"
                 f"_{data['desc']}_\n\n"
+                f"🛠️ Used: *{tool_name}*  |  Rate: *{int(final_catch_rate*100)}%*\n"
                 f"✅ Added to your stable!\n"
                 f"Use `/pet {pet_name}` to activate it."
             )
@@ -312,13 +344,15 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             msg = (
                 f"📚 You already own *{pet_name}*!\n"
                 f"It struggled free — but left behind bond energy.\n"
-                f"💠 *+20 Bond XP* added to your existing pet!"
+                f"💠 *+20 Bond XP* added to your existing pet!\n"
+                f"🛠️ Used: *{tool_name}*"
             )
     else:
         msg = (
             f"💨 *{pet_name} escaped!*\n"
-            f"The trap snapped shut but it was too quick.\n"
-            f"_(Pet Trap consumed)_"
+            f"The {tool_name} snapped shut but it was too quick.\n"
+            f"🎯 Catch rate was *{int(final_catch_rate*100)}%*\n"
+            f"_(Try a better tool for higher chance!)_"
         )
 
     await query.edit_message_text(msg, parse_mode="Markdown")
