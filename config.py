@@ -1321,27 +1321,27 @@ LOTTERY_TIERS = [
 
 # Pet images — fill in URLs after deploying
 PET_IMAGES = {
-    "Kasugai Crow":   "",   # add URL here
-    "Sparrow":        "",
-    "Wild Fox":       "",
-    "Timber Wolf":    "",
-    "Eagle":          "",
-    "Baby Demon":     "",
-    "Crimson Fox":    "",
-    "Shadow Wolf":    "",
-    "Phoenix":        "",
-    "Void Dragon":    "",
+    "Kasugai Crow":   "https://i.ibb.co/FkVCwpSx/x.jpg",   # add URL here
+    "Sparrow":        "https://i.ibb.co/v4gqHxXP/x.jpg",
+    "Wild Fox":       "https://i.ibb.co/mrFztNZb/x.jpg",
+    "Timber Wolf":    "https://i.ibb.co/5X2WH5dg/x.jpg",
+    "Eagle":          "https://i.ibb.co/xQ70zZB/x.jpg",
+    "Baby Demon":     "https://i.ibb.co/7drFFMRj/x.jpg",
+    "Crimson Fox":    "https://i.ibb.co/tTV70FJ0/x.jpg",
+    "Shadow Wolf":    "https://i.ibb.co/0jKvN1G2/x.jpg",
+    "Phoenix":        "https://i.ibb.co/XxgnPxrF/x.jpg",
+    "Void Dragon":    "https://i.ibb.co/CKhSpJnZ/x.jpg",
     # Evolutions
-    "Shadow Crow":    "",
+    "Shadow Crow":    "https://i.ibb.co/Jj8Q1YmW/x.jpg",
     "Melody Sparrow": "",
-    "Spirit Fox":     "",
-    "Blood Wolf":     "",
-    "Storm Eagle":    "",
-    "Void Demon":     "",
-    "Inferno Fox":    "",
-    "Abyssal Wolf":   "",
-    "Eternal Phoenix":"",
-    "Celestial Dragon":"",
+    "Spirit Fox":     "https://i.ibb.co/FkNkLvTt/x.jpg",
+    "Blood Wolf":     "https://i.ibb.co/PzZgmJg3/x.jpg",
+    "Storm Eagle":    "https://i.ibb.co/rKG02BSS/x.jpg",
+    "Void Demon":     "https://i.ibb.co/cXTFwCxT/x.jpg",
+    "Inferno Fox":    "https://i.ibb.co/NdqJhv6W/x.jpg",
+    "Abyssal Wolf":   "https://i.ibb.co/84cDNdyX/x.jpg",
+    "Eternal Phoenix":"https://i.ibb.co/3tJvkjC/x.jpg",
+    "Celestial Dragon":"https://i.ibb.co/5W0Cggd3/x.jpg",
 }
 
 # ── Pet Definitions ────────────────────────────────────────────────────────
