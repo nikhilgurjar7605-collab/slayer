@@ -1161,13 +1161,13 @@ SHOP_ITEMS = {
         {"name": "Hashira Haori",      "code": "hashira",  "price": 8000,  "def_bonus": 30, "emoji": "👑"},
     ],
     "pet_items": [
-        {"name": "Pet Trap",          "code": "pettrap",      "price": 500,   "emoji": "🪤",  "catch_bonus": 0.00, "desc": "Basic trap — no bonus"},
-        {"name": "Spirit Orb",        "code": "spiritorb",    "price": 1500,  "emoji": "🔵",  "catch_bonus": 0.15, "desc": "+15% catch rate"},
-        {"name": "Demon Lure",        "code": "demonlure",    "price": 3000,  "emoji": "🔴",  "catch_bonus": 0.25, "desc": "+25% catch rate, better vs demons"},
-        {"name": "Sacred Chain",      "code": "sacredchain",  "price": 8000,  "emoji": "⛓️",  "catch_bonus": 0.40, "desc": "+40% catch rate — best tool"},
-        {"name": "Pet Food",          "code": "petfood",      "price": 200,   "emoji": "🍖",  "desc": "Feed your pet for bond XP"},
-        {"name": "Basic Egg",         "code": "basicegg",     "price": 1500,  "emoji": "🥚",  "desc": "Hatches Common/Uncommon pet"},
-        {"name": "Spirit Crystal",    "code": "spiritcrystal","price": 15000, "emoji": "💎",  "desc": "Evolve your Soulbound pet"},
+        {"name": "Pet Trap",          "code": "pettrap",      "price": 5000,   "emoji": "🪤",  "catch_bonus": 0.00, "desc": "Basic trap — no bonus"},
+        {"name": "Spirit Orb",        "code": "spiritorb",    "price": 15000,  "emoji": "🔵",  "catch_bonus": 0.15, "desc": "+15% catch rate"},
+        {"name": "Demon Lure",        "code": "demonlure",    "price": 30000,  "emoji": "🔴",  "catch_bonus": 0.25, "desc": "+25% catch rate, better vs demons"},
+        {"name": "Sacred Chain",      "code": "sacredchain",  "price": 80000,  "emoji": "⛓️",  "catch_bonus": 0.40, "desc": "+40% catch rate — best tool"},
+        {"name": "Pet Food",          "code": "petfood",      "price": 2000,   "emoji": "🍖",  "desc": "Feed your pet for bond XP"},
+        {"name": "Basic Egg",         "code": "basicegg",     "price": 150000,  "emoji": "🥚",  "desc": "Hatches Common/Uncommon pet"},
+        {"name": "Spirit Crystal",    "code": "spiritcrystal","price": 150000, "emoji": "💎",  "desc": "Evolve your Soulbound pet"},
     ]
 }
 
