@@ -1692,6 +1692,24 @@ async def handle_victory(query, user_id, player, state, log, context=None):
 
 # ── DEFEAT ────────────────────────────────────────────────────────────────
 async def handle_defeat(query, user_id, player, log, context=None):
+    # ── Phoenix Rebirth: survive death once ───────────────────────────────
+    if context and context.user_data.get(f'pet_rebirth_{user_id}'):
+        context.user_data.pop(f'pet_rebirth_{user_id}')
+        revive_hp = int(player['max_hp'] * 0.30)
+        update_player(user_id, hp=revive_hp)
+        player = get_player(user_id)
+        log.append(f"🔥 *PHOENIX REBIRTH!* Survived with {revive_hp} HP!")
+        state_fresh = get_battle_state(user_id)
+        ally_fresh  = get_active_ally(state_fresh)
+        full_log    = get_battle_log(user_id)
+        append_battle_log(user_id, log)
+        await safe_edit(
+            query,
+            combat_status(player, state_fresh, ally_fresh, full_log),
+            parse_mode='Markdown',
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_fresh))
+        )
+        return
     log.append(f"💀 *{player['name']}* has fallen...")
     xp_loss    = max(0, player['xp'] - 200)
     new_deaths = player['deaths'] + 1
@@ -1719,4 +1737,3 @@ async def handle_defeat(query, user_id, player, log, context=None):
         f"💡 Use /explore to try again!",
         parse_mode='Markdown'
     )
-  
