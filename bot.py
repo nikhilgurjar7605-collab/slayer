@@ -33,6 +33,11 @@ from handlers.mission import mission, select_mission, confirm_mission, abandon_m
 from handlers.daily import daily, streak
 from handlers.gift import gift
 from handlers.social import check, givesp as user_givesp
+from handlers.pets import (
+    pets, pet, hatchegg, feedpet, petskill,
+    petbattle, releasepet,
+    pet_catch_callback, pet_flee_callback,
+)
 from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
 from handlers.clan import (clan, createclan, joinclan, leaveclan, setclanlink, clandisband,
@@ -534,6 +539,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'goto_skilltree':      await skilltree(update, context)
     elif data == 'goto_close':          await close_menu(update, context)
 
+    elif data.startswith('pet_catch_'): await pet_catch_callback(update, context)
+    elif data.startswith('pet_flee_'):  await pet_flee_callback(update, context)
     elif data == 'inv_materials':    await inv_materials_callback(update, context)
     elif data == 'inv_back':         await inv_back_callback(update, context)
     elif data.startswith('duel_accept_'):  await duel_accept_callback(update, context)
@@ -798,6 +805,13 @@ def main():
         ('resetplayer',     resetplayer),
         ('givesp',          givesp),
         ('check',           check),
+        ('pets',            pets),
+        ('pet',             pet),
+        ('hatchegg',        hatchegg),
+        ('feedpet',         feedpet),
+        ('petskill',        petskill),
+        ('petbattle',       petbattle),
+        ('releasepet',      releasepet),
         ('inspect',         check),
         ('usersp',          user_givesp),
         ('botstats',        botstats),
@@ -1051,4 +1065,3 @@ if __name__ == '__main__':
                 raise
             print(f"[BOT] Restarting in {_RESTART_DELAY}s…", flush=True)
             _time.sleep(_RESTART_DELAY)
-            
