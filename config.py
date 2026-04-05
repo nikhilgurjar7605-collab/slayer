@@ -1159,6 +1159,12 @@ SHOP_ITEMS = {
         {"name": "Corps Uniform",      "code": "uniform",  "price": 500,   "def_bonus": 5,  "emoji": "👘"},
         {"name": "Reinforced Haori",   "code": "haori",    "price": 2500,  "def_bonus": 15, "emoji": "🥋"},
         {"name": "Hashira Haori",      "code": "hashira",  "price": 8000,  "def_bonus": 30, "emoji": "👑"},
+    ],
+    "pet_items": [
+        {"name": "Pet Trap",       "code": "pettrap",    "price": 500,   "emoji": "🪤",  "desc": "Needed to catch wild pets"},
+        {"name": "Pet Food",       "code": "petfood",    "price": 200,   "emoji": "🍖",  "desc": "Feed your pet to gain bond XP"},
+        {"name": "Basic Egg",      "code": "basicegg",   "price": 1500,  "emoji": "🥚",  "desc": "Hatches a Common/Uncommon pet"},
+        {"name": "Spirit Crystal", "code": "spiritcrystal","price": 15000,"emoji": "💎", "desc": "Evolve your Soulbound pet"},
     ]
 }
 
@@ -1309,3 +1315,226 @@ LOTTERY_TIERS = [
     {"name": "Gold", "cost": 500, "prize": 10000, "emoji": "🥇"},
     {"name": "Diamond", "cost": 1000, "prize": 25000, "emoji": "💎"},
 ]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+
+# Pet images — fill in URLs after deploying
+PET_IMAGES = {
+    "Kasugai Crow":   "",   # add URL here
+    "Sparrow":        "",
+    "Wild Fox":       "",
+    "Timber Wolf":    "",
+    "Eagle":          "",
+    "Baby Demon":     "",
+    "Crimson Fox":    "",
+    "Shadow Wolf":    "",
+    "Phoenix":        "",
+    "Void Dragon":    "",
+    # Evolutions
+    "Shadow Crow":    "",
+    "Melody Sparrow": "",
+    "Spirit Fox":     "",
+    "Blood Wolf":     "",
+    "Storm Eagle":    "",
+    "Void Demon":     "",
+    "Inferno Fox":    "",
+    "Abyssal Wolf":   "",
+    "Eternal Phoenix":"",
+    "Celestial Dragon":"",
+}
+
+# ── Pet Definitions ────────────────────────────────────────────────────────
+# rarity: common / uncommon / rare / epic / legendary
+# faction: slayer / demon / neutral
+# passive: dict of bonus keys (xp_pct, yen_pct, drop_pct, atk_pct, def_pct, hp_pct, dodge_pct)
+# skill: combat skill name (applied during explore)
+# catch_rate: base chance when using Pet Trap (0.0–1.0)
+# bond_levels: list of 5 passive multipliers (Stranger → Soulbound)
+# evolution: name of evolved form (unlocked at bond 5 + Spirit Crystal)
+
+PETS = {
+    "Kasugai Crow": {
+        "emoji":      "🐦‍⬛",
+        "rarity":     "common",
+        "faction":    "slayer",
+        "desc":       "The loyal messenger of the Demon Slayer Corps.",
+        "passive":    {"xp_pct": 0.08},
+        "skill":      None,
+        "catch_rate": 0.70,
+        "evolution":  "Shadow Crow",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Sparrow": {
+        "emoji":      "🐦",
+        "rarity":     "common",
+        "faction":    "slayer",
+        "desc":       "Zenitsu's beloved sparrow — cheers you on with chirps.",
+        "passive":    {"yen_pct": 0.08},
+        "skill":      None,
+        "catch_rate": 0.70,
+        "evolution":  "Melody Sparrow",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Wild Fox": {
+        "emoji":      "🦊",
+        "rarity":     "uncommon",
+        "faction":    "neutral",
+        "desc":       "A cunning forest fox that steals enemy focus.",
+        "passive":    {"drop_pct": 0.10},
+        "skill":      "Distract",
+        "skill_desc": "Reduces enemy ATK by 10% for 2 turns.",
+        "skill_effect": {"enemy_atk_reduce": 0.10, "turns": 2},
+        "catch_rate": 0.45,
+        "evolution":  "Spirit Fox",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Timber Wolf": {
+        "emoji":      "🐺",
+        "rarity":     "uncommon",
+        "faction":    "neutral",
+        "desc":       "A fierce wolf that fights alongside you.",
+        "passive":    {"atk_pct": 0.08},
+        "skill":      "Lunge",
+        "skill_desc": "Deals bonus damage equal to 8% of enemy max HP.",
+        "skill_effect": {"bonus_dmg_pct": 0.08},
+        "catch_rate": 0.45,
+        "evolution":  "Blood Wolf",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Eagle": {
+        "emoji":      "🦅",
+        "rarity":     "rare",
+        "faction":    "neutral",
+        "desc":       "A sharp-eyed eagle that never misses its mark.",
+        "passive":    {"dodge_pct": 0.12},
+        "skill":      "Talon Strike",
+        "skill_desc": "Critical hit chance +20% this turn.",
+        "skill_effect": {"crit_bonus": 0.20, "turns": 1},
+        "catch_rate": 0.25,
+        "evolution":  "Storm Eagle",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Baby Demon": {
+        "emoji":      "👹",
+        "rarity":     "rare",
+        "faction":    "demon",
+        "desc":       "A tiny demon who intimidates enemies with its aura.",
+        "passive":    {"atk_pct": 0.10, "hp_pct": 0.05},
+        "skill":      "Intimidate",
+        "skill_desc": "20% chance enemy skips their next turn.",
+        "skill_effect": {"skip_chance": 0.20},
+        "catch_rate": 0.25,
+        "evolution":  "Void Demon",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Crimson Fox": {
+        "emoji":      "🦊🔴",
+        "rarity":     "epic",
+        "faction":    "neutral",
+        "desc":       "A fox wreathed in crimson flames — drops and XP magnet.",
+        "passive":    {"drop_pct": 0.15, "xp_pct": 0.12},
+        "skill":      "Fire Bite",
+        "skill_desc": "40% chance to apply Burn to enemy (5% HP/turn × 4 turns).",
+        "skill_effect": {"burn_chance": 0.40},
+        "catch_rate": 0.10,
+        "evolution":  "Inferno Fox",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Shadow Wolf": {
+        "emoji":      "🐺🌑",
+        "rarity":     "epic",
+        "faction":    "neutral",
+        "desc":       "Howls from the abyss — grows stronger as you bleed.",
+        "passive":    {"atk_pct": 0.12, "def_pct": 0.08},
+        "skill":      "Death Howl",
+        "skill_desc": "When below 30% HP, deal +30% damage this turn.",
+        "skill_effect": {"low_hp_atk_boost": 0.30, "hp_threshold": 0.30},
+        "catch_rate": 0.10,
+        "evolution":  "Abyssal Wolf",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Phoenix": {
+        "emoji":      "🔥🦅",
+        "rarity":     "legendary",
+        "faction":    "slayer",
+        "desc":       "The undying bird. Falls once — rises again.",
+        "passive":    {"hp_pct": 0.15, "xp_pct": 0.10},
+        "skill":      "Rebirth",
+        "skill_desc": "Once per battle: if you reach 0 HP, survive with 1 HP and restore 30%.",
+        "skill_effect": {"revive": True},
+        "catch_rate": 0.03,
+        "evolution":  "Eternal Phoenix",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+    "Void Dragon": {
+        "emoji":      "🐉🌑",
+        "rarity":     "legendary",
+        "faction":    "demon",
+        "desc":       "Ancient void-born dragon. Its breath tears through existence.",
+        "passive":    {"atk_pct": 0.20, "def_pct": 0.10},
+        "skill":      "Void Breath",
+        "skill_desc": "Deal damage equal to 20% of enemy current HP (ignores DEF).",
+        "skill_effect": {"pct_dmg": 0.20},
+        "catch_rate": 0.03,
+        "evolution":  "Celestial Dragon",
+        "bond_scale": [1.0, 1.2, 1.4, 1.6, 2.0],
+    },
+}
+
+# Evolved pet definitions (inherits base pet + boosted stats)
+PET_EVOLUTIONS = {
+    "Shadow Crow":     {"base": "Kasugai Crow",  "emoji": "🐦‍⬛✨", "passive": {"xp_pct": 0.16, "yen_pct": 0.08}},
+    "Melody Sparrow":  {"base": "Sparrow",       "emoji": "🐦🎵",   "passive": {"yen_pct": 0.16, "xp_pct": 0.08}},
+    "Spirit Fox":      {"base": "Wild Fox",      "emoji": "🦊💠",   "passive": {"drop_pct": 0.20, "xp_pct": 0.10}},
+    "Blood Wolf":      {"base": "Timber Wolf",   "emoji": "🐺🩸",   "passive": {"atk_pct": 0.18, "hp_pct": 0.08}},
+    "Storm Eagle":     {"base": "Eagle",         "emoji": "🦅⚡",   "passive": {"dodge_pct": 0.22, "atk_pct": 0.10}},
+    "Void Demon":      {"base": "Baby Demon",    "emoji": "👹🌑",   "passive": {"atk_pct": 0.20, "hp_pct": 0.12}},
+    "Inferno Fox":     {"base": "Crimson Fox",   "emoji": "🦊🔥",   "passive": {"drop_pct": 0.25, "xp_pct": 0.20}},
+    "Abyssal Wolf":    {"base": "Shadow Wolf",   "emoji": "🐺💀",   "passive": {"atk_pct": 0.22, "def_pct": 0.15}},
+    "Eternal Phoenix": {"base": "Phoenix",       "emoji": "🔥🦅✨", "passive": {"hp_pct": 0.25, "xp_pct": 0.18}},
+    "Celestial Dragon":{"base": "Void Dragon",  "emoji": "🐉✨",   "passive": {"atk_pct": 0.35, "def_pct": 0.18}},
+}
+
+# Egg types and their drop pools
+PET_EGGS = {
+    "Basic Egg": {
+        "emoji":   "🥚",
+        "pool":    ["Kasugai Crow", "Sparrow", "Wild Fox", "Timber Wolf"],
+        "weights": [35, 35, 20, 10],   # out of 100
+    },
+    "Rare Egg": {
+        "emoji":   "🥚🔵",
+        "pool":    ["Wild Fox", "Timber Wolf", "Eagle", "Baby Demon", "Crimson Fox"],
+        "weights": [25, 25, 25, 15, 10],
+    },
+    "Legendary Egg": {
+        "emoji":   "🥚🌟",
+        "pool":    ["Eagle", "Baby Demon", "Crimson Fox", "Shadow Wolf", "Phoenix", "Void Dragon"],
+        "weights": [20, 20, 20, 20, 10, 10],
+    },
+}
+
+# Wild encounter settings
+PET_WILD_ENCOUNTER_CHANCE = 0.03   # 3% per explore
+PET_TRAP_CATCH_BONUS      = 0.0    # base bonus from trap (trap itself enables catching)
+
+# Egg drop chances from enemy kills
+PET_EGG_DROP = {
+    "Basic Egg":     0.05,   # 5%
+    "Rare Egg":      0.015,  # 1.5%
+    "Legendary Egg": 0.002,  # 0.2%
+}
+
+# Bond level names
+PET_BOND_NAMES = ["Stranger", "Acquaintance", "Friend", "Loyal", "Soulbound"]
+PET_BOND_XP    = [0, 100, 300, 700, 1500]   # XP needed per level
+
+# Rarity colours for display
+PET_RARITY_EMOJI = {
+    "common":    "⚪",
+    "uncommon":  "🟢",
+    "rare":      "🔵",
+    "epic":      "🟣",
+    "legendary": "🟡",
+}
