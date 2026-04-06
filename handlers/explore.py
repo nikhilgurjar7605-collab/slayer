@@ -15,7 +15,7 @@ from utils.guards import dm_only, owner_only_button, no_button_spam
 from handlers.pets import (
     roll_wild_pet_encounter, roll_egg_drop, trigger_wild_encounter,
     apply_pet_passives_to_rewards, get_pet_drop_bonus, get_active_pet,
-    get_pet_passives,
+    get_pet_passives, send_egg_drop_message,
 )
 from utils.pressure import calc_pressure, pressure_display, get_chaos_modifier
 from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS, SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES
@@ -310,11 +310,16 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         if 'low_hp_dmg' in bonuses and player['hp'] < player['max_hp'] * 0.30:
             dmg = int(dmg * (1 + bonuses['low_hp_dmg']))
         # NOTE: story_bonus NOT applied again here (was a double-apply bug)
-    # Pet ATK passive
+    # Pet ATK passive + skill bonuses
     if user_id:
         _pet_atk = get_pet_passives(user_id).get('atk_pct', 0)
         if _pet_atk:
             dmg = int(dmg * (1 + _pet_atk))
+        # Pet skill: Death Howl low-HP ATK boost
+        if context and context.user_data.get(f'pet_low_hp_boost_{user_id}'):
+            _boost = context.user_data.pop(f'pet_low_hp_boost_{user_id}')
+            dmg = int(dmg * (1 + _boost))
+        # Pet skill: Talon Strike crit boost (applied via crit_chance in attack handler)
     return dmg
 
 
@@ -722,7 +727,8 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if combo >= 3:
         base_dmg = int(base_dmg * 1.25)
         log.append(f"COMBO x{combo}! +25% damage!")
-    crit_chance = 0.15 + bonuses.get('crit_bonus', 0)
+    _pet_crit = context.user_data.pop(f'pet_crit_boost_{user_id}', 0)
+    crit_chance = 0.15 + bonuses.get('crit_bonus', 0) + _pet_crit
     crit = random.random() < crit_chance
     if crit:
         base_dmg = int(base_dmg * 1.5)
@@ -1649,11 +1655,15 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         result += f"💠 +{sp_gained} Skill Point(s)!\n"
     if devour_msg:
         result += devour_msg + "\n"
-    # Pet egg random drop
+    # Pet egg random drop — add to inventory and send hatch button
     _egg = roll_egg_drop()
     if _egg:
-        add_item(user_id, _egg, 'item', 1)
+        add_item(user_id, _egg, 'material', 1)   # stored as material type
         drop_lines.append(f'🥚 *{_egg}* dropped!')
+        # Send dedicated hatch button message as follow-up
+        if context and query:
+            import asyncio as _asyncio
+            _asyncio.ensure_future(send_egg_drop_message(context, query.message.chat_id, _egg))
 
     if drop_lines:
         result += '\n'.join(drop_lines) + '\n'
