@@ -222,6 +222,40 @@ def roll_egg_drop() -> str | None:
     return None
 
 
+async def send_egg_drop_message(context, chat_id: int, egg_name: str):
+    """
+    Send a dedicated egg drop notification with a Hatch Now button.
+    Called from handle_victory in explore.py after egg is added to inventory.
+    """
+    egg_data = PET_EGGS.get(egg_name, {})
+    emoji = egg_data.get("emoji", "🥚")
+    rarity_hint = {
+        "Basic Egg":     "Common / Uncommon pets",
+        "Rare Egg":      "Uncommon / Rare / Epic pets",
+        "Legendary Egg": "Epic / Legendary pets 🌟",
+    }.get(egg_name, "")
+
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"🥚 Hatch {egg_name} Now!", callback_data=f"pet_hatch_{egg_name.replace(' ','_')}")
+    ]])
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"🥚 *EGG FOUND!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"{emoji} *{egg_name}* dropped from enemy!\n"
+                f"_{rarity_hint}_\n\n"
+                f"Added to your inventory.\n"
+                f"Tap below to hatch it now!"
+            ),
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+    except Exception:
+        pass
+
+
 async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_name: str, location: str = "asakusa"):
     """
     Send wild pet encounter message with Catch/Flee buttons.
@@ -267,7 +301,6 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
     await send.reply_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
-@owner_only_button
 @no_button_spam
 async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle catch attempt button."""
@@ -358,7 +391,6 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(msg, parse_mode="Markdown")
 
 
-@owner_only_button
 async def pet_flee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle flee button — dismiss wild encounter."""
     query = update.callback_query
@@ -367,6 +399,57 @@ async def pet_flee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pet_name = context.user_data.pop(f"wild_pet_{user_id}", None)
     name = pet_name or "The wild pet"
     await query.edit_message_text(f"🏃 You fled from {name}.")
+
+
+# ── Hatch callback (from "Hatch Now" button after egg drop) ──────────────
+@no_button_spam
+async def pet_hatch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle Hatch Now button press."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    # Parse egg name from callback data: pet_hatch_Basic_Egg → Basic Egg
+    egg_name = query.data.replace("pet_hatch_", "").replace("_", " ")
+    if egg_name not in PET_EGGS:
+        await query.edit_message_text("❌ Unknown egg type.")
+        return
+
+    # Check inventory for egg
+    egg_doc = col("inventory").find_one(
+        {"user_id": user_id, "item_name": {"$regex": f"^{egg_name}$", "$options": "i"}}
+    )
+    if not egg_doc or egg_doc.get("quantity", 0) < 1:
+        await query.edit_message_text(
+            f"❌ You don't have a *{egg_name}* in your inventory anymore.",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Consume egg
+    if egg_doc["quantity"] <= 1:
+        col("inventory").delete_one({"_id": egg_doc["_id"]})
+    else:
+        col("inventory").update_one({"_id": egg_doc["_id"]}, {"$inc": {"quantity": -1}})
+
+    egg_data = PET_EGGS[egg_name]
+    pet_name = random.choices(egg_data["pool"], weights=egg_data["weights"], k=1)[0]
+    is_new = add_pet(user_id, pet_name)
+    pet_data = PETS[pet_name]
+    rarity_e = PET_RARITY_EMOJI[pet_data["rarity"]]
+
+    hatch_text = (
+        f"🥚 *Hatching {egg_name}...*\n\n"
+        f"💥 *CRACK!*\n\n"
+        f"{pet_data['emoji']} *{pet_name}* hatched!  {rarity_e} {pet_data['rarity'].upper()}\n"
+        f"_{pet_data['desc']}_\n\n"
+    )
+    if is_new:
+        hatch_text += f"✅ *Added to your stable!*\nUse `/pet {pet_name}` to activate."
+    else:
+        hatch_text += f"📚 You already own *{pet_name}*!\n💠 *+20 Bond XP* added instead."
+
+    await query.edit_message_text(hatch_text, parse_mode="Markdown")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -566,12 +649,13 @@ async def hatchegg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No character found.")
         return
 
-    # Find an egg in inventory (prefer higher tier)
+    # Find an egg in inventory — eggs stored as material type (prefer higher tier)
     egg_found = None
     for egg_name in ["Legendary Egg", "Rare Egg", "Basic Egg"]:
-        doc = col("inventory").find_one(
-            {"user_id": user_id, "item_name": {"$regex": f"^{egg_name}$", "$options": "i"}}
-        )
+        doc = col("inventory").find_one({
+            "user_id": user_id,
+            "item_name": {"$regex": f"^{egg_name}$", "$options": "i"}
+        })
         if doc and doc.get("quantity", 0) > 0:
             egg_found = (egg_name, doc)
             break
@@ -758,17 +842,18 @@ async def petskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Check if skill already used this battle
-    pet_doc = col("pets").find_one({"user_id": user_id, "name": pet_name})
     battle_key = f"pet_skill_used_{user_id}"
-    if context.user_data.get(battle_key):
+    bond_level = active.get("bond_level", 0)
+    uses_allowed = 2 if bond_level >= 4 else 1
+    uses_so_far  = context.user_data.get(battle_key, 0)
+    if uses_so_far >= uses_allowed:
         await update.message.reply_text(
             f"❌ *{pet_name}*'s skill already used this battle!\n"
-            f"_(At Soulbound bond, skill resets once per battle)_",
+            f"{'_(Soulbound pets get 2 uses per battle)_' if bond_level >= 4 else '_(1 use per battle)_'}",
             parse_mode="Markdown"
         )
         return
 
-    bond_level = active.get("bond_level", 0)
     effect = base_data.get("skill_effect", {})
     emoji = base_data.get("emoji", "🐾")
     log_lines = [f"{emoji} *{pet_name}* uses *{skill_name}!*"]
@@ -839,9 +924,8 @@ async def petskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result_msg = f"🔥 *REBIRTH READIED!* You will survive once at 0 HP with 30% HP restored."
         log_lines.append(result_msg)
 
-    # Mark skill used (Soulbound pets get 2 uses)
-    uses = 2 if bond_level >= 4 else 1
-    context.user_data[battle_key] = uses - 1  # 0 = no more uses
+    # Increment skill use counter
+    context.user_data[battle_key] = uses_so_far + 1
 
     await update.message.reply_text(
         "\n".join(log_lines),
