@@ -36,7 +36,7 @@ from handlers.social import check, givesp as user_givesp
 from handlers.pets import (
     pets, pet, hatchegg, feedpet, petskill,
     petbattle, releasepet,
-    pet_catch_callback, pet_flee_callback,
+    pet_catch_callback, pet_flee_callback, pet_hatch_callback,
 )
 from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
@@ -541,7 +541,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith('pet_catch_'): await pet_catch_callback(update, context)
     elif data.startswith('pet_flee_'):  await pet_flee_callback(update, context)
-    elif data == 'inv_materials':    await inv_materials_callback(update, context)
+    elif data.startswith('pet_hatch_'): await pet_hatch_callback(update, context)
+    elif data == 'noop':               await update.callback_query.answer()
+    elif data.startswith('inv_materials'): await inv_materials_callback(update, context)
     elif data == 'inv_back':         await inv_back_callback(update, context)
     elif data.startswith('duel_accept_'):  await duel_accept_callback(update, context)
     elif data.startswith('duel_decline_'): await duel_decline_callback(update, context)
@@ -575,7 +577,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('know_'):               await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
-    elif data == 'inv_materials':       await inv_materials_callback(update, context)
+    elif data.startswith('inv_materials'):  await inv_materials_callback(update, context)
     elif data == 'inv_back':            await inv_back_callback(update, context)
     elif data.startswith('duel_accept_'):    await duel_accept_callback(update, context)
     elif data.startswith('duel_decline_'):   await duel_decline_callback(update, context)
