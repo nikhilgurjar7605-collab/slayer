@@ -1161,13 +1161,13 @@ SHOP_ITEMS = {
         {"name": "Hashira Haori",      "code": "hashira",  "price": 8000,  "def_bonus": 30, "emoji": "👑"},
     ],
     "pet_items": [
-        {"name": "Pet Trap",          "code": "pettrap",      "price": 5000,   "emoji": "🪤",  "catch_bonus": 0.00, "desc": "Basic trap — no bonus"},
-        {"name": "Spirit Orb",        "code": "spiritorb",    "price": 15000,  "emoji": "🔵",  "catch_bonus": 0.15, "desc": "+15% catch rate"},
-        {"name": "Demon Lure",        "code": "demonlure",    "price": 30000,  "emoji": "🔴",  "catch_bonus": 0.25, "desc": "+25% catch rate, better vs demons"},
-        {"name": "Sacred Chain",      "code": "sacredchain",  "price": 80000,  "emoji": "⛓️",  "catch_bonus": 0.40, "desc": "+40% catch rate — best tool"},
-        {"name": "Pet Food",          "code": "petfood",      "price": 2000,   "emoji": "🍖",  "desc": "Feed your pet for bond XP"},
-        {"name": "Basic Egg",         "code": "basicegg",     "price": 150000,  "emoji": "🥚",  "desc": "Hatches Common/Uncommon pet"},
-        {"name": "Spirit Crystal",    "code": "spiritcrystal","price": 150000, "emoji": "💎",  "desc": "Evolve your Soulbound pet"},
+        {"name": "Pet Trap",          "code": "pettrap",      "price": 500,   "emoji": "🪤",  "catch_bonus": 0.00, "desc": "Basic trap — no bonus"},
+        {"name": "Spirit Orb",        "code": "spiritorb",    "price": 1500,  "emoji": "🔵",  "catch_bonus": 0.15, "desc": "+15% catch rate"},
+        {"name": "Demon Lure",        "code": "demonlure",    "price": 3000,  "emoji": "🔴",  "catch_bonus": 0.25, "desc": "+25% catch rate, better vs demons"},
+        {"name": "Sacred Chain",      "code": "sacredchain",  "price": 8000,  "emoji": "⛓️",  "catch_bonus": 0.40, "desc": "+40% catch rate — best tool"},
+        {"name": "Pet Food",          "code": "petfood",      "price": 200,   "emoji": "🍖",  "desc": "Feed your pet for bond XP"},
+        {"name": "Basic Egg",         "code": "basicegg",     "price": 1500,  "emoji": "🥚",  "desc": "Hatches Common/Uncommon pet"},
+        {"name": "Spirit Crystal",    "code": "spiritcrystal","price": 15000, "emoji": "💎",  "desc": "Evolve your Soulbound pet"},
     ]
 }
 
@@ -1323,9 +1323,6 @@ LOTTERY_TIERS = [
 # PET SYSTEM — config data
 
 # Pet images — fill in URLs after deploying
-# ══════════════════════════════════════════════════════════════════════════
-
-# Pet images — fill in URLs after deploying
 PET_IMAGES = {
     "Kasugai Crow":   "https://i.ibb.co/FkVCwpSx/x.jpg",   # add URL here
     "Sparrow":        "https://i.ibb.co/v4gqHxXP/x.jpg",
@@ -1349,6 +1346,7 @@ PET_IMAGES = {
     "Eternal Phoenix":"https://i.ibb.co/3tJvkjC/x.jpg",
     "Celestial Dragon":"https://i.ibb.co/5W0Cggd3/x.jpg",
 }
+
 
 # ── Pet Definitions ────────────────────────────────────────────────────────
 # rarity: common / uncommon / rare / epic / legendary
@@ -1507,17 +1505,20 @@ PET_EGGS = {
     "Basic Egg": {
         "emoji":   "🥚",
         "pool":    ["Kasugai Crow", "Sparrow", "Wild Fox", "Timber Wolf"],
-        "weights": [35, 35, 20, 10],   # out of 100
+        # Common: 40% each, Uncommon: 10% each — heavily skewed toward common
+        "weights": [40, 40, 10, 10],
     },
     "Rare Egg": {
         "emoji":   "🥚🔵",
         "pool":    ["Wild Fox", "Timber Wolf", "Eagle", "Baby Demon", "Crimson Fox"],
-        "weights": [25, 25, 25, 15, 10],
+        # Uncommon: 30% each, Rare: 15% each, Epic: 10%
+        "weights": [30, 30, 15, 15, 10],
     },
     "Legendary Egg": {
         "emoji":   "🥚🌟",
         "pool":    ["Eagle", "Baby Demon", "Crimson Fox", "Shadow Wolf", "Phoenix", "Void Dragon"],
-        "weights": [20, 20, 20, 20, 10, 10],
+        # Rare: 25% each, Epic: 20% each, Legendary: 5% each — still hard to get legendary
+        "weights": [25, 25, 20, 20, 5, 5],
     },
 }
 
