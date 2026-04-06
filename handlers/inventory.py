@@ -3,6 +3,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import get_player, get_inventory
 
+PAGE_SIZE = 10   # materials shown per page
+
+
 async def _safe_edit(query, text, **kwargs):
     """Edit a message safely, falling back to reply on failure."""
     try:
@@ -26,13 +29,10 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     inv = get_inventory(user_id)
 
-    # Categorize
-    items     = [i for i in inv if i['item_type'] == 'item']
-    swords    = [i for i in inv if i['item_type'] == 'sword']
-    armor_inv = [i for i in inv if i['item_type'] == 'armor']
-    materials = [i for i in inv if i['item_type'] == 'material']
-
-    location_name = player.get('location', 'asakusa').replace('_', ' ').title()
+    items     = [i for i in inv if i["item_type"] == "item"]
+    swords    = [i for i in inv if i["item_type"] == "sword"]
+    armor_inv = [i for i in inv if i["item_type"] == "armor"]
+    materials = [i for i in inv if i["item_type"] == "material"]
 
     lines = [
         f"╔══════════════════════╗",
@@ -48,59 +48,70 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"╰➤ 🛡️ 𝘼𝙧𝙢𝙤𝙧   : {player.get('equipped_armor', 'None')}",
     ]
 
-    # Items
-    lines.append(f"")
-    lines.append(f"━━━━━━━━ 🧪 ━━━━━━━")
-    lines.append(f"𝙄𝙏𝙀𝙈𝙎   ( /use )")
+    lines.append("")
+    lines.append("━━━━━━━━ 🧪 ━━━━━━━")
+    lines.append("𝙄𝙏𝙀𝙈𝙎   ( /use )")
     if items:
         for i in items:
             lines.append(f"╰➤ {i['item_name']}   × {i['quantity']}")
     else:
-        lines.append(f"╰➤ _No items_")
+        lines.append("╰➤ _No items_")
 
-    # Swords
-    lines.append(f"")
-    lines.append(f"━━━━━━━━ ⚔️ ━━━━━━━")
-    lines.append(f"𝙎𝙒𝙊𝙍𝘿𝙎   ( /equip )")
+    lines.append("")
+    lines.append("━━━━━━━━ ⚔️ ━━━━━━━")
+    lines.append("𝙎𝙒𝙊𝙍𝘿𝙎   ( /equip )")
     if swords:
         for i in swords:
             lines.append(f"╰➤ {i['item_name']}")
     else:
-        lines.append(f"╰➤ _No swords_")
+        lines.append("╰➤ _No swords_")
 
-    # Armor
     if armor_inv:
-        lines.append(f"")
-        lines.append(f"━━━━━━━━ 🛡️ ━━━━━━━")
-        lines.append(f"𝘼𝙍𝙈𝙊𝙍")
+        lines.append("")
+        lines.append("━━━━━━━━ 🛡️ ━━━━━━━")
+        lines.append("𝘼𝙍𝙈𝙊𝙍")
         for i in armor_inv:
             lines.append(f"╰➤ {i['item_name']}")
 
-    # Materials button at bottom
-    mat_count = sum(i['quantity'] for i in materials)
+    mat_count = sum(i["quantity"] for i in materials)
+    mat_types = len(materials)
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton(
-            f"🎁 Materials ({len(materials)} types  ×{mat_count} total)",
-            callback_data='inv_materials'
+            f"🎁 Materials ({mat_types} types  ×{mat_count} total)",
+            callback_data="inv_materials_0"
         )
     ]])
 
     msg = update.message if update.message else update.callback_query.message
     if update.callback_query:
         await update.callback_query.edit_message_text(
-            '\n'.join(lines), parse_mode='Markdown', reply_markup=keyboard
+            "\n".join(lines), parse_mode="Markdown", reply_markup=keyboard
         )
     else:
-        await msg.reply_text('\n'.join(lines), parse_mode='Markdown', reply_markup=keyboard)
+        await msg.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def inv_materials_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle both inv_materials (legacy) and inv_materials_<page> callbacks."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     player  = get_player(user_id)
     inv     = get_inventory(user_id)
-    materials = [i for i in inv if i['item_type'] == 'material']
+    materials = [i for i in inv if i["item_type"] == "material"]
+
+    # Parse page number from callback_data
+    data = query.data  # e.g. "inv_materials_0" or legacy "inv_materials"
+    try:
+        page = int(data.split("_")[-1])
+    except (ValueError, IndexError):
+        page = 0
+
+    total = len(materials)
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))   # clamp
+    start = page * PAGE_SIZE
+    page_items = materials[start:start + PAGE_SIZE]
 
     lines = [
         f"╔══════════════════════╗",
@@ -109,24 +120,34 @@ async def inv_materials_callback(update: Update, context: ContextTypes.DEFAULT_T
         f"╚══════════════════════╝",
         f"",
         f"━━━━━━━ 🎁 ━━━━━━━━",
-        f"𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎   ( /sell )",
+        f"𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎   ( /sell )  • Page {page+1}/{total_pages}",
     ]
 
-    if materials:
-        for i in materials:
+    if page_items:
+        for i in page_items:
             lines.append(f"╰➤ {i['item_name']}   × {i['quantity']}")
     else:
         lines.append("╰➤ _No materials yet_")
         lines.append("_Defeat enemies to collect drops!_")
 
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔙 Back to Inventory", callback_data='inv_back')
-    ]])
+    # Build navigation row
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("◀️ Prev", callback_data=f"inv_materials_{page-1}"))
+    nav_buttons.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f"inv_materials_{page+1}"))
 
-    await _safe_edit(query, '\n'.join(lines), parse_mode='Markdown', reply_markup=keyboard)
+    keyboard = InlineKeyboardMarkup([
+        nav_buttons,
+        [InlineKeyboardButton("🔙 Back to Inventory", callback_data="inv_back")]
+    ])
+
+    await _safe_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def inv_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await inventory(update, context)
+    
