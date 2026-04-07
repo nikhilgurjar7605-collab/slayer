@@ -250,10 +250,13 @@ async def duel_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     settings  = context.user_data.get(f"duel_settings_{challenger_id}", {})
     hp_mult   = settings.get("hp_multiplier", 1.0)
-    ch_hp     = int(challenger['hp'] * hp_mult)
-    ch_max_hp = int(challenger['max_hp'] * hp_mult)
-    tg_hp     = int(target['hp'] * hp_mult)
-    tg_max_hp = int(target['max_hp'] * hp_mult)
+    # Slayers get +15% HP in duels — faction bonus
+    ch_faction_mult = 1.15 if challenger.get('faction') == 'slayer' else 1.0
+    tg_faction_mult = 1.15 if target.get('faction') == 'slayer' else 1.0
+    ch_hp     = int(challenger['hp'] * hp_mult * ch_faction_mult)
+    ch_max_hp = int(challenger['max_hp'] * hp_mult * ch_faction_mult)
+    tg_hp     = int(target['hp'] * hp_mult * tg_faction_mult)
+    tg_max_hp = int(target['max_hp'] * hp_mult * tg_faction_mult)
 
     first        = challenger_id if challenger['spd'] >= target['spd'] else user_id
     first_player = challenger if first == challenger_id else target
@@ -428,15 +431,25 @@ async def duel_attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("🌀 Techniques Only mode! Use 💨 Technique.", show_alert=True)
         return
 
-    # PvP damage is intentionally lower than explore (no skill bonuses, lower multiplier)
-    dmg = int(attacker['str_stat'] * 0.75) + random.randint(2, 6)
+    # PvP: apply skill bonuses for fair, skill-based duels
+    from handlers.explore import _safe_get_skills, _safe_get_bonuses
+    owned_skills = _safe_get_skills(user_id)
+    bonuses      = _safe_get_bonuses(user_id, context)
+    dmg = int(attacker['str_stat'] * 1.2) + random.randint(2, 6)
     dmg = int(dmg * pressure['atk_mult'])
     if combo >= 3: dmg = int(dmg * 1.15)
+    if bonuses.get('atk_pct'):
+        dmg = int(dmg * (1 + bonuses['atk_pct']))
+    if bonuses.get('story_bonus') == 'dmg_bonus':
+        dmg = int(dmg * 1.10)
+    if attacker.get('slayer_mark'): dmg = int(dmg * 1.15)
+    if attacker.get('demon_mark'):  dmg = int(dmg * 1.12)
 
-    # Base crit/dodge only — no skill bonuses in PvP
-    crit  = random.random() < 0.12
-    dodge = random.random() < 0.08
-    if crit: dmg = int(dmg * 1.4)
+    crit_chance = 0.12 + bonuses.get('crit_bonus', 0)
+    dodge_chance = 0.08 + bonuses.get('dodge_bonus', 0)
+    crit  = random.random() < crit_chance
+    dodge = random.random() < dodge_chance
+    if crit: dmg = int(dmg * 1.5)
 
     log_lines = []
     if dodge:
@@ -652,14 +665,14 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from handlers.explore import _safe_get_skills, _safe_get_bonuses, _calculate_form_hit_damage
         owned_skills = _safe_get_skills(user_id)
-        bonuses = _safe_get_bonuses(user_id, None)
+        bonuses = _safe_get_bonuses(user_id, context)
         dmg = _calculate_form_hit_damage(
             attacker,
             form,
             enemy_state,
             owned_skills=owned_skills,
             user_id=user_id,
-            context=None,
+            context=context,
             bonuses=bonuses,
             log=eff_log,
         )
