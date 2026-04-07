@@ -492,9 +492,11 @@ def clear_ally(user_id):
     )
 
 
-# ── Battle Log (old raw log) ──────────────────────────────────────────────
+# ── Battle Log (raw) and Press Log ────────────────────────────────────────
 
-def append_battle_log(user_id, entries):
+def append_battle_log(user_id, entries, **kwargs):
+    """Append raw log entries, and optionally store a press line."""
+    # 1. Store raw logs (backward compatible)
     doc = col("battle_state").find_one({"user_id": user_id, "active": 1})
     if doc:
         try:
@@ -508,6 +510,9 @@ def append_battle_log(user_id, entries):
             {"user_id": user_id},
             {"$set": {"battle_log": json.dumps(existing)}}
         )
+    # 2. If a press_line was provided, store it in the press_logs collection
+    if "press_line" in kwargs:
+        append_press_turn(user_id, kwargs["press_line"])
 
 
 def get_battle_log(user_id):
@@ -519,8 +524,6 @@ def get_battle_log(user_id):
             pass
     return []
 
-
-# ── Press‑format battle log (new) ─────────────────────────────────────────
 
 def get_press_log(user_id: int, limit: int = 5) -> list:
     """
