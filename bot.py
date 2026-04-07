@@ -960,8 +960,7 @@ if __name__ == '__main__':
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
-
-   def do_GET(self):
+def do_GET(self):
         env_ok = bool(os.environ.get("BOT_TOKEN")) and bool(os.environ.get("MONGO_URL"))
         status = "RUNNING" if env_ok else "MISSING ENV VARS"
         
