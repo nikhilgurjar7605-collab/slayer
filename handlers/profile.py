@@ -67,64 +67,63 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     level    = get_level(player['xp'])
-    fe       = '🗡️' if player['faction'] == 'slayer' else '👹'
-    faction  = 'DEMON SLAYER' if player['faction'] == 'slayer' else 'DEMON'
-    # Show faction-appropriate mark
-    if player.get('faction') == 'slayer':
-        mark_label = "🔥 𝙎𝙡𝙖𝙮𝙚𝙧 𝙈𝙖𝙧𝙠"
-        mark = "🔥 Active" if player.get('slayer_mark') else "🔒 Locked"
-    else:
-        mark_label = "🌑 𝘿𝙚𝙢𝙤𝙣 𝙈𝙖𝙧𝙠"
-        mark = "🌑 Active" if player.get('demon_mark') else "🔒 Locked"
     location = player.get('location', 'asakusa').title()
     game_name = player.get('name', '—')
     tg_username = player.get('username') or update.effective_user.username or ''
     uname_display = f"{game_name}" + (f" (@{tg_username})" if tg_username else "")
 
-    lvl_str  = f"〔{'0' + str(level) if level < 10 else str(level)}〕"
     p_bar    = hp_bar(player['hp'], player['max_hp'])
     s_bar    = hp_bar(player['sta'], player['max_sta'])
 
-    # Clan info
-    clan_line = ""
+    # Show faction-appropriate mark (Cleaned up emojis for the new design)
+    if player.get('faction') == 'slayer':
+        mark_label = "🔥 𝙎𝙡𝙖𝙮𝙚𝙧 𝙈𝙖𝙧𝙠"
+        mark = "Active" if player.get('slayer_mark') else "Locked"
+    else:
+        mark_label = "🌑 𝘿𝙚𝙢𝙤𝙣 𝙈𝙖𝙧𝙠"
+        mark = "Active" if player.get('demon_mark') else "Locked"
+
+    # Clan info adjusted for new design
+    clan_line = "╰➤🏯 𝘾𝙡𝙖𝙣 : None\n"
     if player.get('clan_id'):
         clan = col("clans").find_one({"id": player['clan_id']})
         if clan:
             role = player.get('clan_role', 'recruit').title()
-            clan_line = f"🏯 𝘾𝙡𝙖𝙣      : {clan['name']} [{role}]\n"
+            clan_line = f"╰➤🏯 𝘾𝙡𝙖𝙣 : {clan['name']} [{role}]\n"
 
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(f"{player['style_emoji']} Techniques", callback_data='profile_techniques'),
-            InlineKeyboardButton("📊 Stats",                             callback_data='profile_more_info'),
+            InlineKeyboardButton("📊 Stats", callback_data='profile_more_info'),
         ]
     ])
 
+    # NEW CLEAN AESTHETIC TEXT DESIGN
     text = (
-        f"╔═════════════════════╗\n"
-        f"      {fe} 𝙋𝙍𝙊𝙁𝙄𝙇𝙀\n"
-        f"   「 {player['name'].upper()} 」\n"
-        f"╚═════════════════════╝\n"
-        f"👤 𝙉𝙖𝙢𝙚      : {uname_display}\n"
-        f"🏅 𝙍𝙖𝙣𝙠      : {player['rank']} {player['rank_kanji']}\n"
-        f"{player['style_emoji']} 𝙎𝙩𝙮𝙡𝙚     : {player['style']}\n"
-        f"📖 𝙊𝙧𝙞𝙜𝙞𝙣    : {player.get('story', '—')}\n"
-        f"📍 𝙇𝙤𝙘𝙖𝙩𝙞𝙤𝙣  : {location}\n"
-        f"⚔️ 𝙇𝙚𝙫𝙚𝙡     : {lvl_str}\n"
+        f"┏━━━━━━━━━━━━━━━━\n"
+        f"┣ ✮ 𝙉𝙖𝙢𝙚 : {uname_display}\n"
+        f"┣ ✮ 𝙄𝘿 : {user_id}\n"
+        f"┣ ✮ 𝙇𝙚𝙫𝙚𝙡 : {level}\n"
+        f"┣ ✮ 𝙀𝙭𝙥 : {player['xp']:,}\n"
+        f"┣ ✮ 𝙍𝙖𝙣𝙠 : {player['rank']} {player['rank_kanji']}\n"
+        f"┣ ✮ 𝙎𝙩𝙮𝙡𝙚 : {player['style_emoji']} {player['style']}\n"
+        f"┣ ✮ 𝘽𝙖𝙡𝙖𝙣𝙘𝙚 : {player['yen']:,}¥\n"
+        f"┗━━━━━━━━━━━━━━━━\n"
+        f"╰➤🧭 𝘾𝙪𝙧𝙧𝙚𝙣𝙩 𝙇𝙤𝙘𝙖𝙩𝙞𝙤𝙣 : 「{location}」\n"
+        f"╰➤📖 𝙊𝙧𝙞𝙜𝙞𝙣 : {player.get('story', '—')}\n"
         f"{clan_line}"
-        f"━━━━━━━━━━━ 📊 ━━━━━━━\n"
-        f"❤️  HP  : {player['hp']}/{player['max_hp']}  {p_bar}\n"
-        f"🌀  STA : {player['sta']}/{player['max_sta']}  {s_bar}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⭐ 𝙓𝙋        : {player['xp']:,}\n"
-        f"👹 𝙎𝙡𝙖𝙞𝙣     : {player['demons_slain']}\n"
-        f"📜 𝙈𝙞𝙨𝙨𝙞𝙤𝙣𝙨  : {player['missions_done']}\n"
-        f"💀 𝘿𝙚𝙖𝙩𝙝𝙨    : {player['deaths']}\n"
-        f"{mark_label} : {mark}\n"
-        f"🍖 𝘿𝙚𝙫𝙤𝙪𝙧      : {player.get('devour_stacks', 0)}/20\n"
-        f"💠 𝙎𝙠𝙞𝙡𝙡 𝙋𝙩𝙨    : {player.get('skill_points', 0)} SP\n"
-        f"💰 𝘽𝙖𝙡𝙖𝙣𝙘𝙚     : {player['yen']:,}¥\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━"
+        f"▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁\n"
+        f"❤️ 𝗛𝗣 : {player['hp']}/{player['max_hp']}\n"
+        f"{p_bar}\n"
+        f"🌀 𝗦𝗧𝗔 : {player['sta']}/{player['max_sta']}\n"
+        f"{s_bar}\n"
+        f"▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁\n"
+        f"╰➤☠️ 𝙎𝙡𝙖𝙞𝙣 : {player['demons_slain']}  |  💀 𝘿𝙚𝙖𝙩𝙝𝙨 : {player['deaths']}\n"
+        f"╰➤📜 𝙈𝙞𝙨𝙨𝙞𝙤𝙣𝙨 : {player['missions_done']}\n"
+        f"╰➤💠 𝙎𝙠𝙞𝙡𝙡 𝙋𝙩𝙨 : {player.get('skill_points', 0)} SP\n"
+        f"╰➤🍖 𝘿𝙚𝙫𝙤𝙪𝙧 : {player.get('devour_stacks', 0)}/20\n"
+        f"╰➤{mark_label} : {mark}\n"
+        f"▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔"
     )
 
     banner_media = _profile_banner_media(player)
@@ -135,7 +134,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(text, parse_mode=None, reply_markup=keyboard)
     else:
         await update.message.reply_text(text, parse_mode=None, reply_markup=keyboard)
-
 
 async def profile_techniques(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
