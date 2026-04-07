@@ -31,6 +31,14 @@ from config import (
     PET_WILD_ENCOUNTER_CHANCE, PET_EGG_DROP,
 )
 
+# Catching tools (name, catch bonus)
+CATCHING_TOOLS = [
+    ("Sacred Chain",  0.40),   # best â€” +40% catch rate
+    ("Demon Lure",    0.25),   # +25%
+    ("Spirit Orb",    0.15),   # +15%
+    ("Pet Trap",      0.00),   # basic â€” no bonus
+]
+
 # ══════════════════════════════════════════════════════════════════════════
 # DATABASE HELPERS
 # ══════════════════════════════════════════════════════════════════════════
@@ -266,6 +274,7 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
     img_url = PET_IMAGES.get(pet_name, "")
 
     context.user_data[f"wild_pet_{user_id}"] = pet_name
+    context.user_data[f"wild_pet_active_{user_id}"] = True
 
     # Get zone display name
     from config import TRAVEL_ZONES
@@ -278,7 +287,6 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
         f"{data['emoji']}  *{pet_name}*  {rarity_e} {data['rarity'].upper()}\n\n"
         f"_{data['desc']}_\n\n"
         f"📍 Region: *{zone_name}*\n"
-        f"🎯 Base catch rate: *{int(data['catch_rate']*100)}%*\n"
         f"🪤 Needs: Pet Trap / Spirit Orb / Demon Lure / Sacred Chain\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"Act fast before it escapes!"
@@ -286,8 +294,8 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
 
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🪤 Catch!", callback_data=f"pet_catch_{user_id}"),
-            InlineKeyboardButton("🏃 Flee",   callback_data=f"pet_flee_{user_id}"),
+            InlineKeyboardButton("🪤 Catch", callback_data=f"pet_catch_{user_id}"),
+            InlineKeyboardButton("🏃 Flee", callback_data=f"pet_flee_{user_id}"),
         ]
     ])
 
@@ -301,16 +309,51 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
     await send.reply_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
+async def _edit_wild_pet_message(query, text: str, **kwargs):
+    """Edit the wild encounter message safely (caption vs text)."""
+    try:
+        msg = query.message
+        if msg and (getattr(msg, "photo", None) or msg.caption is not None):
+            await query.edit_message_caption(caption=text, **kwargs)
+        else:
+            await query.edit_message_text(text, **kwargs)
+    except Exception:
+        try:
+            await query.message.reply_text(text, **kwargs)
+        except Exception:
+            pass
+
+
+def _build_tool_buttons(user_id: int, base_rate: float):
+    tool_buttons = []
+    for tool_name, bonus in CATCHING_TOOLS:
+        doc = col("inventory").find_one(
+            {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
+        )
+        if doc and doc.get("quantity", 0) > 0:
+            tool_key = tool_name.replace(" ", "_")
+            label = f"{tool_name}"
+            tool_buttons.append(InlineKeyboardButton(label, callback_data=f"pet_catch_{user_id}_{tool_key}"))
+
+    rows = []
+    if tool_buttons:
+        rows.append(tool_buttons[:2])
+        if len(tool_buttons) > 2:
+            rows.append(tool_buttons[2:])
+    rows.append([InlineKeyboardButton("🏃 Flee", callback_data=f"pet_flee_{user_id}")])
+    return InlineKeyboardMarkup(rows), bool(tool_buttons)
+
+
 @no_button_spam
 async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle catch attempt button."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    pet_name = context.user_data.pop(f"wild_pet_{user_id}", None)
+    pet_name = context.user_data.get(f"wild_pet_{user_id}")
 
     if not pet_name:
-        await query.edit_message_text("❌ The pet already escaped!")
+        await _edit_wild_pet_message(query, "❌ The pet already escaped!")
         return
 
     player = get_player(user_id)
@@ -325,19 +368,54 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ("Pet Trap",      0.00),   # basic — no bonus
     ]
 
+    tool_key = None
+    prefix = f"pet_catch_{user_id}_"
+    if query.data.startswith(prefix):
+        tool_key = query.data[len(prefix):]
+    elif query.data == f"pet_catch_{user_id}":
+        kb, has_tools = _build_tool_buttons(user_id, PETS[pet_name]["catch_rate"])
+        if not has_tools:
+            await _edit_wild_pet_message(
+                query,
+                "❌ You don't have any catching tools.\nBuy one from the shop before trying again."
+            )
+            context.user_data.pop(f"wild_pet_{user_id}", None)
+            context.user_data.pop(f"wild_pet_active_{user_id}", None)
+            return
+        await _edit_wild_pet_message(query, "Choose a catching tool:", reply_markup=kb)
+        return
+
+    tool_map = {name.replace(" ", "_"): (name, bonus) for name, bonus in CATCHING_TOOLS}
+
     trap_used = None
     catch_bonus = 0.0
-    for tool_name, bonus in CATCHING_TOOLS:
+    if tool_key:
+        selected = tool_map.get(tool_key)
+        if not selected:
+            await _edit_wild_pet_message(query, "âŒ Invalid catching tool selected.")
+            return
+        tool_name, bonus = selected
         doc = col("inventory").find_one(
             {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
         )
-        if doc and doc.get("quantity", 0) > 0:
-            trap_used = (tool_name, bonus, doc)
-            catch_bonus = bonus
-            break
+        if not doc or doc.get("quantity", 0) <= 0:
+            await _edit_wild_pet_message(query, f"âŒ You no longer have *{tool_name}*.", parse_mode="Markdown")
+            return
+        trap_used = (tool_name, bonus, doc)
+        catch_bonus = bonus
+    if trap_used is None:
+        for tool_name, bonus in CATCHING_TOOLS:
+            doc = col("inventory").find_one(
+                {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
+            )
+            if doc and doc.get("quantity", 0) > 0:
+                trap_used = (tool_name, bonus, doc)
+                catch_bonus = bonus
+                break
 
     if not trap_used:
-        await query.edit_message_text(
+        await _edit_wild_pet_message(
+            query,
             f"❌ You need a catching tool!\n\n"
             f"Buy from the shop:\n"
             f"🪤 Pet Trap — 500¥ (basic)\n"
@@ -347,6 +425,8 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"_{pet_name} escaped..._",
             parse_mode="Markdown"
         )
+        context.user_data.pop(f"wild_pet_{user_id}", None)
+        context.user_data.pop(f"wild_pet_active_{user_id}", None)
         return
 
     tool_name, catch_bonus, trap_doc = trap_used
@@ -369,7 +449,7 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"{data['emoji']}  *{pet_name}*  {rarity_e}\n"
                 f"_{data['desc']}_\n\n"
-                f"🛠️ Used: *{tool_name}*  |  Rate: *{int(final_catch_rate*100)}%*\n"
+                f"🛠️ Used: *{tool_name}*\n"
                 f"✅ Added to your stable!\n"
                 f"Use `/pet {pet_name}` to activate it."
             )
@@ -384,11 +464,12 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         msg = (
             f"💨 *{pet_name} escaped!*\n"
             f"The {tool_name} snapped shut but it was too quick.\n"
-            f"🎯 Catch rate was *{int(final_catch_rate*100)}%*\n"
             f"_(Try a better tool for higher chance!)_"
         )
 
-    await query.edit_message_text(msg, parse_mode="Markdown")
+    context.user_data.pop(f"wild_pet_{user_id}", None)
+    context.user_data.pop(f"wild_pet_active_{user_id}", None)
+    await _edit_wild_pet_message(query, msg, parse_mode="Markdown")
 
 
 async def pet_flee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -397,8 +478,9 @@ async def pet_flee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
     pet_name = context.user_data.pop(f"wild_pet_{user_id}", None)
+    context.user_data.pop(f"wild_pet_active_{user_id}", None)
     name = pet_name or "The wild pet"
-    await query.edit_message_text(f"🏃 You fled from {name}.")
+    await _edit_wild_pet_message(query, f"🏃 You fled from {name}.")
 
 
 # ── Hatch callback (from "Hatch Now" button after egg drop) ──────────────
