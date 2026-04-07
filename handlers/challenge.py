@@ -10,6 +10,42 @@ from utils.guards import group_only, no_button_spam
 from utils.pressure import calc_pressure, pressure_display
 from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS
 
+# ── PRESS‑FORMAT LOG HELPER (copied from explore.py) ─────────────────────
+def _fmt_press(lines: list) -> str:
+    """Collapse a raw log list into ONE compact press-format summary line."""
+    if not lines:
+        return ""
+    priority_keywords = [
+        ("💀", "☠️ Defeat"),
+        ("CRITICAL", "⚡ Crit"),
+        ("PHOENIX REBIRTH", "🔥 Rebirth"),
+        ("RESISTS", "🌙 Resisted"),
+        ("BURN", "🔥 Burn"),
+        ("FREEZE", "❄️ Freeze"),
+        ("POISON", "☠️ Poison"),
+        ("STAGGERED", "💥 Stagger"),
+        ("INTIMIDATED", "😨 Intimidate"),
+        ("HOWL", "🐺 Howl"),
+        ("Barrier", "🛡️ Barrier"),
+        ("Rebirth", "🔥 Rebirth"),
+        ("evolved", "✨ Evolved"),
+    ]
+    import re as _re
+    dmg_nums = _re.findall(r'\b(\d+) damage', " ".join(lines))
+    total_dmg = sum(int(x) for x in dmg_nums) if dmg_nums else 0
+    heal_nums = _re.findall(r'\+(\d+) HP', " ".join(lines))
+    total_heal = sum(int(x) for x in heal_nums) if heal_nums else 0
+    tags = []
+    combined = " ".join(lines)
+    for kw, label in priority_keywords:
+        if kw.lower() in combined.lower():
+            tags.append(label)
+            break
+    dmg_part = f"*{total_dmg:,} dmg*" if total_dmg else ""
+    heal_part = f"+{total_heal} HP" if total_heal else ""
+    tag_part = tags[0] if tags else ""
+    parts = [p for p in [dmg_part, heal_part, tag_part] if p]
+    return "  ".join(parts) if parts else lines[-1][:60]
 
 # ── Safe edit ─────────────────────────────────────────────────────────────
 
@@ -30,12 +66,10 @@ async def _safe_edit(query, text, **kwargs):
     except TimedOut:
         pass
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 def duel_hp_bar(hp, max_hp):
     return hp_bar(hp, max_hp)
-
 
 def build_duel_keyboard(user_id, challenger_id=None):
     """
@@ -60,23 +94,22 @@ def build_duel_keyboard(user_id, challenger_id=None):
         ],
     ])
 
-
 def waiting_keyboard(turn_name):
     return InlineKeyboardMarkup([[
         InlineKeyboardButton(f"⏳ Waiting for {turn_name}...", callback_data="duel_wait")
     ]])
 
-
-def duel_status_text(p1, p1_hp, p1_max, p2, p2_hp, p2_max, turn_name, pressure=None, combo=0):
+def duel_status_text(p1, p1_hp, p1_max, p2, p2_hp, p2_max, turn_name, pressure=None, combo=0, last_press=None):
     bar1 = duel_hp_bar(p1_hp, p1_max)
     bar2 = duel_hp_bar(p2_hp, p2_max)
     fe1  = '🗡️' if p1['faction'] == 'slayer' else '👹'
     fe2  = '🗡️' if p2['faction'] == 'slayer' else '👹'
     combo_line    = f"\n🔥 *Combo ×{combo}!*" if combo >= 3 else ""
     pressure_line = f"\n{pressure_display(pressure)}" if pressure else ""
+    log_line = f"\n📋 *Last turn:* {last_press}" if last_press else ""
     return (
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚔️ *PvP DUEL*{pressure_line}{combo_line}\n"
+        f"⚔️ *PvP DUEL*{pressure_line}{combo_line}{log_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{fe1} *{p1['name']}*\n"
         f"❤️ {p1_hp}/{p1_max} {bar1}\n"
@@ -87,7 +120,6 @@ def duel_status_text(p1, p1_hp, p1_max, p2, p2_hp, p2_max, turn_name, pressure=N
         f"🎯 *{turn_name}'s turn*"
     )
 
-
 def get_active_duel(user_id):
     doc = col("duels").find_one({
         "$or": [{"challenger_id": user_id}, {"target_id": user_id}],
@@ -97,16 +129,13 @@ def get_active_duel(user_id):
         doc.pop("_id", None)
     return doc
 
-
 def get_opponent_id(duel, user_id):
     return duel['target_id'] if duel['challenger_id'] == user_id else duel['challenger_id']
-
 
 def _duel_hp_key(duel, user_id):
     if duel['challenger_id'] == user_id:
         return 'challenger_hp', 'target_hp', 'challenger_max_hp', 'target_max_hp'
     return 'target_hp', 'challenger_hp', 'target_max_hp', 'challenger_max_hp'
-
 
 def _challenge_keyboard(challenger_id):
     return InlineKeyboardMarkup([
@@ -116,7 +145,6 @@ def _challenge_keyboard(challenger_id):
         ],
         [InlineKeyboardButton("⚙️ Settings", callback_data=f"duel_settings_{challenger_id}")]
     ])
-
 
 def _challenge_text(player, settings=None):
     fe    = "🗡️" if player["faction"] == "slayer" else "👹"
@@ -136,7 +164,6 @@ def _challenge_text(player, settings=None):
         f"{rules}\n\n"
         f"Do you accept?"
     )
-
 
 # ── /challenge ────────────────────────────────────────────────────────────
 
@@ -219,7 +246,6 @@ async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=_challenge_keyboard(user_id)
     )
 
-
 # ── Accept / Decline ──────────────────────────────────────────────────────
 
 @no_button_spam
@@ -273,11 +299,13 @@ async def duel_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     pressure = calc_pressure(challenger)
     context.bot_data[f"duel_pressure_{duel_key}"] = pressure
     context.bot_data[f"duel_combo_{duel_key}"]    = 0
+    context.bot_data[f"duel_last_press_{duel_key}"] = "⚔️ Duel started!"
 
     status = duel_status_text(
         challenger, ch_hp, ch_max_hp,
         target,     tg_hp, tg_max_hp,
-        first_player['name'], pressure
+        first_player['name'], pressure,
+        last_press=context.bot_data[f"duel_last_press_{duel_key}"]
     )
 
     tags = []
@@ -295,7 +323,6 @@ async def duel_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=build_duel_keyboard(first, challenger_id=challenger_id)
     )
 
-
 async def duel_decline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query         = update.callback_query
     await query.answer()
@@ -308,11 +335,9 @@ async def duel_decline_callback(update: Update, context: ContextTypes.DEFAULT_TY
     decliner = get_player(user_id)
     await _safe_edit(query, f"❌ *{decliner['name'] if decliner else 'Player'}* declined the duel.", parse_mode='Markdown')
 
-
 async def duel_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("⏳ Wait for your turn!", show_alert=True)
-
 
 async def duel_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current duel status WITHOUT consuming a turn — used by Back buttons."""
@@ -336,17 +361,16 @@ async def duel_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     turn_player = get_player(duel['turn_user_id'])
     pressure = context.bot_data.get(f"duel_pressure_{duel_key}") or calc_pressure(c_player)
     combo    = context.bot_data.get(f"duel_combo_{duel_key}", 0)
+    last_press = context.bot_data.get(f"duel_last_press_{duel_key}", "")
 
     status = duel_status_text(
         c_player, duel['challenger_hp'], duel['challenger_max_hp'],
         t_player, duel['target_hp'],     duel['target_max_hp'],
-        turn_player['name'] if turn_player else "?", pressure, combo
+        turn_player['name'] if turn_player else "?", pressure, combo, last_press
     )
-    # Show correct keyboard for whose turn it is
     turn_id = duel['turn_user_id']
     await _safe_edit(query, status, parse_mode='Markdown',
                      reply_markup=build_duel_keyboard(turn_id))
-
 
 # ── Finish duel ───────────────────────────────────────────────────────────
 
@@ -391,7 +415,6 @@ async def _finish_duel(query, duel_doc, winner_id, loser_id, context, reason="KO
         f"_Rematch? Use /challenge to duel again!_",
         parse_mode='Markdown'
     )
-
 
 # ── Attack ────────────────────────────────────────────────────────────────
 
@@ -468,6 +491,8 @@ async def duel_attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     context.bot_data[f"duel_combo_{duel_key}"] = combo
+    press_line = _fmt_press(log_lines)
+    context.bot_data[f"duel_last_press_{duel_key}"] = press_line
     col("duels").update_one({"_id": duel_oid}, {"$set": {opp_hp_key: new_opp_hp, "turn_user_id": opp_id}})
 
     c_hp = my_hp      if duel['challenger_id'] == user_id else new_opp_hp
@@ -476,7 +501,7 @@ async def duel_attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = duel_status_text(
         get_player(duel['challenger_id']), c_hp, duel['challenger_max_hp'],
         get_player(duel['target_id']),     t_hp, duel['target_max_hp'],
-        defender['name'], pressure, combo
+        defender['name'], pressure, combo, press_line
     )
     await _safe_edit(
         query,
@@ -484,7 +509,6 @@ async def duel_attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=build_duel_keyboard(opp_id)
     )
-
 
 # ── Technique ─────────────────────────────────────────────────────────────
 
@@ -544,7 +568,6 @@ async def duel_technique_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
-
 async def _show_duel_forms(query, user_id, player, art_name):
     """Show form selection for a given art in a duel."""
     level = get_level(player['xp'])
@@ -569,7 +592,6 @@ async def _show_duel_forms(query, user_id, player, art_name):
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(buttons)
     )
-
 
 @no_button_spam
 async def duel_art_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -600,7 +622,6 @@ async def duel_art_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await _show_duel_forms(query, user_id, player, art_name)
-
 
 @no_button_spam
 async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -683,8 +704,9 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Cap technique to 40% of opponent's max HP — no one-shots from techniques
     max_tech_dmg = int(duel_ctx['enemy_max_hp'] * 0.40)
+    log_lines = []  # <-- FIX: define log_lines before using it
     if dmg > max_tech_dmg:
-        log.append(f"🛡️ *Damage capped!* (Max 40% HP per technique)")
+        log_lines.append(f"🛡️ *Damage capped!* (Max 40% HP per technique)")
         dmg = max_tech_dmg
 
     # Apply technique status effects to opponent
@@ -714,11 +736,11 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    log_lines = [
+    log_lines.extend([
         f"💨 *{attacker['name']}* uses *{art_name} Form {form_num}!*",
         f"✨ *{form['name']}*",
         f"💥 {dmg} damage!",
-    ]
+    ])
     if eff_log:
         log_lines += eff_log
 
@@ -734,12 +756,14 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     combo = context.bot_data.get(f"duel_combo_{duel_key}", 0) + 1
     context.bot_data[f"duel_combo_{duel_key}"] = combo
+    press_line = _fmt_press(log_lines)
+    context.bot_data[f"duel_last_press_{duel_key}"] = press_line
 
     opp_player = get_player(opp_id)
     status = duel_status_text(
         get_player(duel['challenger_id']), c_hp, duel['challenger_max_hp'],
         get_player(duel['target_id']),     t_hp, duel['target_max_hp'],
-        opp_player['name'] if opp_player else "Opponent", pressure, combo
+        opp_player['name'] if opp_player else "Opponent", pressure, combo, press_line
     )
     await _safe_edit(
         query,
@@ -747,7 +771,6 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=build_duel_keyboard(opp_id)
     )
-
 
 # ── Items ─────────────────────────────────────────────────────────────────
 
@@ -787,7 +810,6 @@ async def duel_items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query, "🧪 *USE ITEM*\n\nChoose an item:",
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons)
     )
-
 
 async def duel_use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query       = update.callback_query
@@ -837,11 +859,12 @@ async def duel_use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     opp      = get_player(opp_id)
     duel_key = str(duel_oid)
     pressure = context.bot_data.get(f"duel_pressure_{duel_key}")
+    last_press = context.bot_data.get(f"duel_last_press_{duel_key}", "")
 
     status = duel_status_text(
         get_player(duel['challenger_id']), c_hp, duel['challenger_max_hp'],
         get_player(duel['target_id']),     t_hp, duel['target_max_hp'],
-        opp['name'] if opp else "Opponent", pressure
+        opp['name'] if opp else "Opponent", pressure, last_press=last_press
     )
     await _safe_edit(
         query,
@@ -849,7 +872,6 @@ async def duel_use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=build_duel_keyboard(opp_id)
     )
-
 
 # ── Surrender ─────────────────────────────────────────────────────────────
 
@@ -867,7 +889,6 @@ async def duel_surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     opp_id = get_opponent_id(dict(duel_doc), user_id)
     await _finish_duel(query, duel_doc, opp_id, user_id, context, "Surrender")
-
 
 # ── Settings ──────────────────────────────────────────────────────────────
 
@@ -916,7 +937,6 @@ async def duel_settings_callback(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
-
 async def duel_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
     await query.answer()
@@ -946,7 +966,6 @@ async def duel_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data[f'duel_settings_{ch_id}'] = settings
     await duel_settings_callback(update, context)
 
-
 async def duel_settings_back_callback(update, context):
     """Cancel — discard changes, go back to challenge screen."""
     query   = update.callback_query
@@ -971,7 +990,6 @@ async def duel_settings_back_callback(update, context):
         parse_mode="Markdown",
         reply_markup=_challenge_keyboard(ch_id)
     )
-
 
 async def duel_settings_done_callback(update, context):
     """Save — keep settings and return to challenge screen."""
@@ -998,7 +1016,6 @@ async def duel_settings_done_callback(update, context):
         parse_mode="Markdown",
         reply_markup=_challenge_keyboard(ch_id)
     )
-
 
 # ── Draw ──────────────────────────────────────────────────────────────────
 
@@ -1061,7 +1078,6 @@ async def duel_draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode='Markdown',
         reply_markup=accept_kb
     )
-
 
 # ── Technique Details Panel ───────────────────────────────────────────────
 
