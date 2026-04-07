@@ -492,29 +492,30 @@ def clear_ally(user_id):
     )
 
 
-# ── Battle Log (raw) and Press Log ────────────────────────────────────────
+def get_press_log(user_id: int, limit: int = 5) -> list:
+    """Retrieve the last `limit` press‑format log lines for a user."""
+    col_press = col("press_logs")
+    docs = col_press.find({"user_id": user_id}).sort("timestamp", -1).limit(limit)
+    return [doc["press_line"] for doc in docs][::-1]   # oldest first
 
-def append_battle_log(user_id, entries, **kwargs):
-    """Append raw log entries, and optionally store a press line."""
-    # 1. Store raw logs (backward compatible)
-    doc = col("battle_state").find_one({"user_id": user_id, "active": 1})
-    if doc:
-        try:
-            existing = json.loads(doc.get("battle_log") or "[]")
-        except Exception:
-            existing = []
-        existing.extend(entries)
-        if len(existing) > 60:
-            existing = existing[-60:]
-        col("battle_state").update_one(
-            {"user_id": user_id},
-            {"$set": {"battle_log": json.dumps(existing)}}
-        )
-    # 2. If a press_line was provided, store it in the press_logs collection
-    if "press_line" in kwargs:
-        append_press_turn(user_id, kwargs["press_line"])
+def append_press_turn(user_id: int, press_line: str) -> None:
+    """Store one press‑format log line for a user."""
+    col_press = col("press_logs")
+    col_press.insert_one({
+        "user_id": user_id,
+        "press_line": press_line,
+        "timestamp": datetime.utcnow()
+    })
+    # Keep only last 50 logs per user to save space
+    col_press.delete_many({
+        "user_id": user_id,
+        "timestamp": {"$lt": datetime.utcnow() - timedelta(days=1)}
+    })
 
-
+def clear_battle_log(user_id: int) -> None:
+    """Clear both the old battle log and the press logs for a user."""
+    col("battle_state").update_one({"user_id": user_id}, {"$set": {"battle_log": "[]"}})
+    col("press_logs").delete_many({"user_id": user_id})
 def get_battle_log(user_id):
     doc = col("battle_state").find_one({"user_id": user_id, "active": 1})
     if doc and doc.get("battle_log"):
