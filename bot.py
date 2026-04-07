@@ -112,6 +112,10 @@ from handlers.logs import logs, logs_callback, logstats, logsearch, loguser, log
 from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle,
     ownergive, ownerreset, ownerban, ownerunban, ownermsg, ownerstats,
     ownerplayers, ownerplayers_callback, owner_godmode_active)
+from handlers.maintenance import (
+    maintenance, approveuser, unapproveuser, approvedlist,
+    is_maintenance_on, is_approved_user
+)
 from handlers.upgrade import upgrade, upgradetoggle, upgrade_confirm_callback
 from handlers.hybrid import hybrid, demonmark, hybridtoggle
 from handlers.offer import offers, offer_buy_callback, addoffer
@@ -334,6 +338,50 @@ async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _notify_human_check(update, reason=reason)
     raise ApplicationHandlerStop
 
+
+async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Global pre-filter: blocks all users except owner and approved users
+    when maintenance mode is enabled.
+    """
+    if not is_maintenance_on():
+        return  # Maintenance off — let everyone through
+
+    user = update.effective_user
+    if not user:
+        return
+
+    uid = user.id
+
+    # Always allow owner and approved users
+    if uid == OWNER_ID or is_approved_user(uid):
+        return
+
+    # Allow maintenance commands to pass so owner can manage from anywhere
+    if update.message and update.message.text:
+        cmd = update.message.text.split()[0].lstrip('/').split('@')[0].lower()
+        if cmd in ('maintenance', 'approveuser', 'unapproveuser', 'approvedlist', 'start'):
+            return
+
+    # Block everyone else with maintenance message
+    maintenance_msg = (
+        "🔧 *Bot Under Maintenance*\n\n"
+        "The bot is currently undergoing scheduled maintenance.\n"
+        "Please try again later! 🙏\n\n"
+        "_We'll be back soon._"
+    )
+    if update.callback_query:
+        try:
+            await update.callback_query.answer(
+                "🔧 Bot is under maintenance. Please wait!",
+                show_alert=True
+            )
+        except Exception:
+            pass
+    elif update.message:
+        await update.message.reply_text(maintenance_msg, parse_mode="Markdown")
+
+    raise ApplicationHandlerStop
 
 
 async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -675,11 +723,13 @@ def main():
     )
     app.add_handler(conv)
 
-    # ── Global ban check — runs FIRST for every update (group=-1) ────────
+    # ── Global checks — run FIRST for every update (group=-1) ────────────
     app.add_handler(MessageHandler(filters.ALL, _global_ban_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_ban_check), group=-1)
     app.add_handler(MessageHandler(filters.ALL, _global_human_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_human_check), group=-1)
+    app.add_handler(MessageHandler(filters.ALL, _global_maintenance_check), group=-1)
+    app.add_handler(CallbackQueryHandler(_global_maintenance_check), group=-1)
 
     # ── Works EVERYWHERE (Groups + DMs) ──────────────────────────────────
     everywhere = [
@@ -770,6 +820,10 @@ def main():
         ('ownermsg',        ownermsg),
         ('ownerstats',      ownerstats),
         ('ownerplayers',    ownerplayers),
+        ('maintenance',     maintenance),
+        ('approveuser',     approveuser),
+        ('unapproveuser',   unapproveuser),
+        ('approvedlist',    approvedlist),
         ('backup',          backup),
         ('giveslayermark',  giveslayermark),
         ('givedemonmark',   givedemonmark),
@@ -999,31 +1053,18 @@ if __name__ == '__main__':
     _health_started.wait(timeout=3)
     print(f"[BOT] Render health server ready on {HOST}:{PORT}. Starting bot...", flush=True)
 
-    # ══════════════════════════════════════════════════════════════════════
-    # RENDER KEEP-ALIVE
-    # Render free-tier spins down a service after ~15 min of NO inbound HTTP
-    # traffic.  Strategy:
-    #   1. Ping the PUBLIC Render URL every 10 min  (hits Render's edge,
-    #      counts as real inbound traffic — unlike 127.0.0.1).
-    #   2. Fall back to localhost if RENDER_EXTERNAL_URL is not set (local dev).
-    #   3. Exponential back-off on repeated failures so we don't hammer a
-    #      broken endpoint, but always recover within the 15-min window.
-    #   4. Wrap main() in a retry loop so a crash restarts the bot instead
-    #      of killing the whole process on Render.
-    # ══════════════════════════════════════════════════════════════════════
     import time as _time
     import urllib.request as _urllib_req
     import urllib.error   as _urllib_err
 
-    # Prefer the real public URL so Render sees genuine inbound traffic
     _PING_TARGET   = (RENDER_URL + "/healthz") if RENDER_URL else f"http://127.0.0.1:{PORT}/healthz"
-    _PING_INTERVAL = 8 * 60          # 8 min  (< 15 min Render idle threshold)
-    _PING_TIMEOUT  = 15              # seconds per request
+    _PING_INTERVAL = 8 * 60
+    _PING_TIMEOUT  = 15
 
     def _keep_alive():
         """Pings the public URL on a fixed cadence with back-off on failure."""
         print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
-        _time.sleep(20)              # let the bot finish starting first
+        _time.sleep(20)
         failures = 0
         while True:
             try:
@@ -1037,26 +1078,21 @@ if __name__ == '__main__':
                 failures += 1
                 print(f"[KEEP-ALIVE] ⚠️  attempt {failures} error: {exc}", flush=True)
 
-            # Back-off: 1×, 2×, 4× … but cap so we never exceed the 15-min window
             wait = min(_PING_INTERVAL, _PING_INTERVAL * (2 ** max(0, failures - 1)))
-            wait = min(wait, 13 * 60)   # hard cap at 13 min
+            wait = min(wait, 13 * 60)
             _time.sleep(wait)
 
     _ka_thread = threading.Thread(target=_keep_alive, daemon=True, name="keep-alive")
     _ka_thread.start()
 
-    # ── Crash-restart guard ───────────────────────────────────────────────
-    # If main() crashes (network blip, Telegram API outage, etc.) wait a few
-    # seconds and restart rather than letting Render mark the service as failed.
-    _RESTART_DELAY = 10   # seconds between crash and restart
-    _MAX_RESTARTS  = 10   # give up after this many consecutive crashes
+    _RESTART_DELAY = 10
+    _MAX_RESTARTS  = 10
 
     _restart_count = 0
     while True:
         try:
             print(f"[BOT] Starting bot (restart #{_restart_count})...", flush=True)
             main()
-            # main() returned cleanly (shouldn't normally happen)
             print("[BOT] main() exited normally — restarting in case of clean shutdown.", flush=True)
         except (KeyboardInterrupt, SystemExit):
             print("[BOT] Shutdown requested — exiting.", flush=True)
