@@ -249,13 +249,17 @@ def _note_recent_activity(context: ContextTypes.DEFAULT_TYPE, user_id: int, sign
 def _human_check_message(reason: str | None = None, remaining_minutes: int | None = None) -> str:
     if remaining_minutes:
         return (
-            "Verification cooldown active.\n"
+            "Verification cooldown active.
+"
             f"Wait about {remaining_minutes} minute(s), then use /start in DM."
         )
     if reason:
         return (
-            "Human verification required.\n"
-            f"Trigger: {reason}\n\n"
+            "Human verification required.
+"
+            f"Trigger: {reason}
+
+"
             "Use /start in DM and solve the captcha to continue."
         )
     return "Human verification required. Use /start in DM and solve the captcha to continue."
@@ -342,7 +346,7 @@ async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Global pre-filter: blocks all users except owner and approved users
-    when maintenance mode is enabled.
+    when maintenance mode is enabled. Runs at group=-2 (before everything).
     """
     if not is_maintenance_on():
         return  # Maintenance off — let everyone through
@@ -353,23 +357,17 @@ async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAUL
 
     uid = user.id
 
-    # Always allow owner and approved users
+    # Always allow owner and approved users through
     if uid == OWNER_ID or is_approved_user(uid):
         return
 
-    # Allow maintenance commands to pass so owner can manage from anywhere
+    # Allow maintenance management commands to pass (owner can turn it off)
     if update.message and update.message.text:
         cmd = update.message.text.split()[0].lstrip('/').split('@')[0].lower()
         if cmd in ('maintenance', 'approveuser', 'unapproveuser', 'approvedlist', 'start'):
             return
 
-    # Block everyone else with maintenance message
-    maintenance_msg = (
-        "🔧 *Bot Under Maintenance*\n\n"
-        "The bot is currently undergoing scheduled maintenance.\n"
-        "Please try again later! 🙏\n\n"
-        "_We'll be back soon._"
-    )
+    # Block all callback queries with alert
     if update.callback_query:
         try:
             await update.callback_query.answer(
@@ -378,8 +376,25 @@ async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAUL
             )
         except Exception:
             pass
-    elif update.message:
-        await update.message.reply_text(maintenance_msg, parse_mode="Markdown")
+        raise ApplicationHandlerStop
+
+    # Block all messages/commands with maintenance message
+    maintenance_msg = (
+        "🔧 *Bot Under Maintenance*
+
+"
+        "The bot is currently undergoing scheduled maintenance.
+"
+        "Please try again later! 🙏
+
+"
+        "_We'll be back soon._"
+    )
+    if update.message:
+        try:
+            await update.message.reply_text(maintenance_msg, parse_mode="Markdown")
+        except Exception:
+            pass
 
     raise ApplicationHandlerStop
 
@@ -407,9 +422,14 @@ async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reason = player.get('ban_reason', 'No reason given')
     msg = (
-        "🚫 *YOU ARE BANNED*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"❌ Reason: _{reason}_\n\n"
+        "🚫 *YOU ARE BANNED*
+"
+        "━━━━━━━━━━━━━━━━━━━━━
+
+"
+        f"❌ Reason: _{reason}_
+
+"
         "_Contact an admin if you believe this is a mistake._"
     )
     try:
@@ -567,15 +587,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('event_'):              await event_callback(update, context)
     elif data.startswith('abroad_'):             await handle_broadcast_callback(update, context)
     elif data.startswith('cancel_broadcast:'):   await handle_broadcast_callback(update, context)
-    elif data.startswith('guide_'):        await guide_page_callback(update, context)
-    elif data.startswith('sug_'):          await suggestion_action_callback(update, context)
-    elif data.startswith('upgrade_confirm_'): await upgrade_confirm_callback(update, context)
-    elif data.startswith('offer_buy_'):    await offer_buy_callback(update, context)
-    elif data.startswith('clanlist_page_'): await clanlist_page_callback(update, context)
-    elif data.startswith('logs_'):         await logs_callback(update, context)
-    elif data.startswith('vote_'):         await vote_callback(update, context)
-    elif data.startswith('ownerplist_'):   await ownerplayers_callback(update, context)
-    elif data.startswith('event_'):              await event_callback(update, context)
     elif data.startswith('duel_settings_back_'): await duel_settings_back_callback(update, context)
     elif data.startswith('duel_settings_done_'): await duel_settings_done_callback(update, context)
     elif data.startswith('duel_settings_'): await duel_settings_callback(update, context)
@@ -587,7 +598,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'goto_clan':           await clan(update, context)
     elif data == 'goto_skilltree':      await skilltree(update, context)
     elif data == 'goto_close':          await close_menu(update, context)
-
     elif data.startswith('pet_catch_'): await pet_catch_callback(update, context)
     elif data.startswith('pet_flee_'):  await pet_flee_callback(update, context)
     elif data.startswith('pet_hatch_'): await pet_hatch_callback(update, context)
@@ -617,6 +627,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('coop_join_'):    await coop_join_callback(update, context)
     elif data.startswith('coop_form_'):    await coop_use_form(update, context)
     elif data.startswith('coop_useitem_'): await coop_use_item(update, context)
+    elif data.startswith('coop_art_'):     await coop_art_callback(update, context)
     elif data.startswith('skillinfo_'):       await skill_detail(update, context)
     elif data.startswith('skillbuy_'):        await skilltree_buy_callback(update, context)
     elif data.startswith('skillpage_'):       await skilltree_page_callback(update, context)
@@ -626,40 +637,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('know_'):               await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
-    elif data.startswith('inv_materials'):  await inv_materials_callback(update, context)
-    elif data == 'inv_back':            await inv_back_callback(update, context)
-    elif data.startswith('duel_accept_'):    await duel_accept_callback(update, context)
-    elif data.startswith('duel_decline_'):   await duel_decline_callback(update, context)
-    elif data.startswith('duel_attack_'):    await duel_attack(update, context)
-    elif data.startswith('duel_technique_'): await duel_technique_menu(update, context)
-    elif data.startswith('duel_art_'):       await duel_art_callback(update, context)
-    elif data.startswith('duel_view_'):      await duel_view(update, context)
-    elif data.startswith('duel_surrender_'): await duel_surrender(update, context)
-    elif data.startswith('duel_items_'):     await duel_items_menu(update, context)
-    elif data.startswith('duel_form_'):      await duel_use_form(update, context)
-    elif data.startswith('duel_useitem_'):   await duel_use_item(update, context)
-    elif data.startswith('claninfo_'):       await claninfo_callback(update, context)
-    elif data == 'raid_attack':              await raid_attack_callback(update, context)
-    elif data == 'raid_technique':           await raid_technique_callback(update, context)
-    elif data == 'raid_items':               await raid_items_callback(update, context)
-    elif data == 'raid_back':                await raid_back_callback(update, context)
-    elif data == 'raid_retreat':             await raid_retreat_callback(update, context)
-    elif data.startswith('raid_form_'):      await raid_use_form_callback(update, context)
-    elif data.startswith('raid_useitem_'):   await raid_use_item_callback(update, context)
-    elif data.startswith('clan_accept_'):    await clan_accept_callback(update, context)
-    elif data.startswith('clan_reject_'):    await clan_reject_callback(update, context)
-    elif data.startswith('coop_join_'):      await coop_join_callback(update, context)
-    elif data.startswith('coop_art_'):       await coop_art_callback(update, context)
-    elif data.startswith('coop_form_'):      await coop_use_form(update, context)
-    elif data.startswith('coop_useitem_'):   await coop_use_item(update, context)
-    elif data.startswith('skillinfo_'):      await skill_detail(update, context)
-    elif data.startswith('skillpage_'):      await skilltree_page_callback(update, context)
-    elif data.startswith('shop_'):           await shop_page_callback(update, context)
-    elif data.startswith('myskills_'):       await myskills_callback(update, context)
-    elif data == 'goto_start':               await start(update, context)
-    elif data.startswith('know_'):           await know_callback(update, context)
-    elif data.startswith('help_'):           await help_callback(update, context)
-    elif data.startswith('ahelp_'):          await admin_help_callback(update, context)
     else:
         await query.answer("❓ Unknown action!", show_alert=True)
 
@@ -723,13 +700,15 @@ def main():
     )
     app.add_handler(conv)
 
-    # ── Global checks — run FIRST for every update (group=-1) ────────────
+    # ── Maintenance check — runs BEFORE everything else (group=-2) ───────
+    app.add_handler(MessageHandler(filters.ALL, _global_maintenance_check), group=-2)
+    app.add_handler(CallbackQueryHandler(_global_maintenance_check), group=-2)
+
+    # ── Global checks — runs before commands (group=-1) ──────────────────
     app.add_handler(MessageHandler(filters.ALL, _global_ban_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_ban_check), group=-1)
     app.add_handler(MessageHandler(filters.ALL, _global_human_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_human_check), group=-1)
-    app.add_handler(MessageHandler(filters.ALL, _global_maintenance_check), group=-1)
-    app.add_handler(CallbackQueryHandler(_global_maintenance_check), group=-1)
 
     # ── Works EVERYWHERE (Groups + DMs) ──────────────────────────────────
     everywhere = [
@@ -923,8 +902,6 @@ def main():
         ('clanrole',     clanrole),
     ]
     for cmd, handler in guarded_cmds:
-        # Register without PRIVATE filters so group usage reaches the handler.
-        # The decorator decides whether to allow the command or redirect to DM.
         app.add_handler(CommandHandler(cmd, handler))
 
     # ── Reply keyboard button handler ────────────────────────────────────
@@ -947,6 +924,7 @@ def main():
         filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
         reply_kb_handler
     ), group=1)
+
     async def doc_restore_handler(update, context):
         """Handle JSON document uploads — trigger restore if caption says /restore or auto."""
         if update.message and update.message.document:
@@ -1005,7 +983,8 @@ if __name__ == '__main__':
                 if self.path == "/":
                     self._send_text(
                         200,
-                        "\n".join([
+                        "
+".join([
                             "Demon Slayer RPG Bot",
                             f"Status: {status}",
                             f"Host: {HOST}",
