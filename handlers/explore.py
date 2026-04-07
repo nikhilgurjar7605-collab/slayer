@@ -8,6 +8,7 @@ from utils.database import (get_player, get_battle_state, set_battle_state, clea
                              update_battle_enemy_hp, update_player, get_inventory, remove_item,
                              get_arts, get_party, set_active_ally, update_ally_hp, clear_ally,
                              col, append_battle_log, get_battle_log, clear_battle_log,
+                             get_press_log, append_press_turn,
                              apply_status_effect, get_status_effects, tick_status_effects,
                              clear_status_effects)
 from utils.helpers import get_unlocked_forms, get_level, hp_bar, get_rank
@@ -218,7 +219,60 @@ def build_encounter_keyboard():
     ])
 
 
-def combat_status(player, state, ally=None, log_lines=None):
+def _fmt_press(lines: list) -> str:
+    """
+    Collapse a raw log list into ONE compact press-format summary line.
+    Used to build the battle ticker shown in combat_status.
+    """
+    if not lines:
+        return ""
+    # Key lines we want to surface (in priority order)
+    priority_keywords = [
+        ("💀", "☠️ Defeat"),
+        ("CRITICAL", "⚡ Crit"),
+        ("PHOENIX REBIRTH", "🔥 Rebirth"),
+        ("RESISTS", "🌙 Resisted"),
+        ("BURN", "🔥 Burn"),
+        ("FREEZE", "❄️ Freeze"),
+        ("POISON", "☠️ Poison"),
+        ("STAGGERED", "💥 Stagger"),
+        ("INTIMIDATED", "😨 Intimidate"),
+        ("HOWL", "🐺 Howl"),
+        ("Barrier", "🛡️ Barrier"),
+        ("Rebirth", "🔥 Rebirth"),
+        ("evolved", "✨ Evolved"),
+    ]
+    # Find damage numbers
+    import re as _re
+    dmg_nums = _re.findall(r'\b(\d+) damage', " ".join(lines))
+    total_dmg = sum(int(x) for x in dmg_nums) if dmg_nums else 0
+
+    # Find heal numbers
+    heal_nums = _re.findall(r'\+(\d+) HP', " ".join(lines))
+    total_heal = sum(int(x) for x in heal_nums) if heal_nums else 0
+
+    # Build tag list
+    tags = []
+    combined = " ".join(lines)
+    for kw, label in priority_keywords:
+        if kw.lower() in combined.lower():
+            tags.append(label)
+            break  # only top priority tag
+
+    dmg_part = f"*{total_dmg:,} dmg*" if total_dmg else ""
+    heal_part = f"+{total_heal} HP" if total_heal else ""
+    tag_part  = tags[0] if tags else ""
+
+    parts = [p for p in [dmg_part, heal_part, tag_part] if p]
+    return "  ".join(parts) if parts else lines[-1][:60]
+
+
+def combat_status(player, state, ally=None, log_lines=None, press_turns=None):
+    """
+    Build the battle HUD. Shows last 3 turns as press-format ticker lines.
+    press_turns: list of pre-built press strings (preferred).
+    log_lines: raw log fallback if press_turns not available.
+    """
     p_bar = hp_bar(player['hp'], player['max_hp'])
     e_bar = hp_bar(state['enemy_hp'], state['enemy_max_hp'])
 
@@ -227,22 +281,29 @@ def combat_status(player, state, ally=None, log_lines=None):
         a_bar = hp_bar(state.get('ally_hp', 0), state.get('ally_max_hp', 1) or 1)
         ally_line = (
             f"\n👥 *{ally['name']}* (Ally)\n"
-            f"❤️ HP: {state.get('ally_hp',0)}/{state.get('ally_max_hp',0)} {a_bar}\n"
+            f"❤️ HP: {state.get('ally_hp',0)}/{state.get('ally_max_hp',0)} {a_bar}"
         )
 
+    # Build ticker from press_turns or raw log_lines
     log_section = ""
-    if log_lines:
+    if press_turns:
+        recent = press_turns[-3:]
+        ticker_lines = []
+        for i, pt in enumerate(recent):
+            age_icon = ["🕐", "🕑", "🕒"][min(i, 2)]
+            ticker_lines.append(f"{age_icon} {pt}")
+        log_section = "📋 *BATTLE LOG*\n" + "\n".join(ticker_lines) + "\n━━━━━━━━━━━━━━━━━━━━━\n"
+    elif log_lines:
         recent = log_lines[-3:] if len(log_lines) > 3 else log_lines
         log_section = '\n'.join(recent) + "\n\n"
 
     return (
         f"{log_section}"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{state['enemy_emoji']} *{state['enemy_name']}*\n"
-        f"❤️ HP: {state['enemy_hp']}/{state['enemy_max_hp']} {e_bar}\n"
+        f"❤️ {state['enemy_hp']:,}/{state['enemy_max_hp']:,} {e_bar}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🗡️ *{player['name']}*\n"
-        f"❤️ HP: {player['hp']}/{player['max_hp']} {p_bar}\n"
+        f"❤️ {player['hp']:,}/{player['max_hp']:,} {p_bar}\n"
         f"🌀 STA: {player['sta']}/{player['max_sta']}"
         f"{ally_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -291,6 +352,9 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
     if player.get('story_bonus') == 'dmg_bonus':
         dmg = int(dmg * 1.10)
 
+    # Faction bonus — slayers deal slightly more damage vs demons
+    if player.get('faction') == 'slayer':
+        dmg = int(dmg * 1.10)
     # Mark bonuses
     if player.get('slayer_mark'):
         dmg = int(dmg * 1.25)
@@ -335,6 +399,9 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
     }
     a_bonus = armor_bonus.get(player.get('equipped_armor', ''), 0)
     dmg = max(1, random.randint(int(state['enemy_atk'] * 0.8), state['enemy_atk']) - a_bonus)
+    # Slayer natural resilience — 10% reduced enemy damage
+    if player.get('faction') == 'slayer':
+        dmg = max(1, int(dmg * 0.90))
     if player.get('story_bonus') == 'def_bonus':
         dmg = int(dmg * 0.90)
 
@@ -454,25 +521,25 @@ def _apply_turn_end_player_sustain(user_id, player, current_hp, bonuses, context
         if 'Second Wind' not in used_once and random.random() < bonuses['second_wind']:
             current_hp = 1
             used_once.append('Second Wind')
-            log.append(f"ðŸ’ª *Second Wind!* Survived with 1 HP! _(used for this battle)_")
+            log.append(f"ðŸ'ª *Second Wind!* Survived with 1 HP! _(used for this battle)_")
 
     if current_hp <= 0 and bonuses.get('last_stand'):
         if 'Last Stand' not in used_once:
             current_hp = 1
             used_once.append('Last Stand')
-            log.append("ðŸ’€ *LAST STAND!* Survived with 1 HP! _(used for this battle)_")
+            log.append("ðŸ'€ *LAST STAND!* Survived with 1 HP! _(used for this battle)_")
 
     if bonuses.get('regen_pct') and current_hp > 0:
         regen_pct_hp = int(player['max_hp'] * bonuses['regen_pct'])
         if regen_pct_hp > 0:
             current_hp = min(player['max_hp'], current_hp + regen_pct_hp)
-            log.append(f"ðŸ’š *Regeneration* +{regen_pct_hp} HP")
+            log.append(f"ðŸ'š *Regeneration* +{regen_pct_hp} HP")
 
     if 'regen_hp' in bonuses and current_hp > 0:
         regen = int(bonuses['regen_hp'])
         if regen > 0:
             current_hp = min(player['max_hp'], current_hp + regen)
-            log.append(f"ðŸ§¬ *Demon Regen* â€” +{regen} HP")
+            log.append(f"ðŸ§¬ *Demon Regen* â€" +{regen} HP")
 
     battle_ctx['used_once_skills'] = used_once
     context.user_data[f'battle_ctx_{user_id}'] = battle_ctx
@@ -564,6 +631,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enemy['xp']  = int(enemy['xp']  * 1.5)
         enemy['yen'] = int(enemy['yen'] * 1.5)
 
+    set_battle_state(user_id, enemy, in_combat=False)
 
     # ── Wild pet encounter (~1% chance, skipped for boss fights) ──────────
     if not enemy.get('is_boss'):
@@ -571,8 +639,6 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if _wild_pet:
             await trigger_wild_encounter(update, user_id, context, _wild_pet, location)
             return
-
-    set_battle_state(user_id, enemy, in_combat=False)
 
     from config import TRAVEL_ZONES
     zone = next((z for z in TRAVEL_ZONES if z['id'] == location), TRAVEL_ZONES[0])
@@ -657,7 +723,7 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_battle_state_in_combat(user_id)
     ally = get_active_ally(state)
-    log_lines = get_battle_log(user_id)
+    press_turns_init = get_press_log(user_id)
 
     location = player.get('location', 'asakusa')
     pressure = calc_pressure(player, location)
@@ -668,7 +734,7 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     battle_skills  = _safe_get_skills(user_id)
     battle_bonuses = _safe_get_bonuses(user_id, context)
-    player = _apply_battle_start_skill_bonuses(user_id, player, battle_bonuses, context, log_lines)
+    player = _apply_battle_start_skill_bonuses(user_id, player, battle_bonuses, context, [])
     skill_lines = []
     if battle_bonuses:
         bonus_map = {
@@ -686,6 +752,8 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
             skill_lines = [f"💠 *Skills:* {' | '.join(parts[:4])}"]
 
     boss_line = f"\n☠️ *BOSS BATTLE!* HP x3 | ATK x1.5" if state.get('is_boss') else ""
+
+    # ── Show active pet bonuses in battle intro ───────────────────────────
     pet_lines = []
     _active_pet = get_active_pet(user_id)
     if _active_pet:
@@ -700,9 +768,9 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pet_bonuses.get('dodge_pct'):
             pet_parts.append(f"Dodge +{int(pet_bonuses['dodge_pct'] * 100)}%")
         if pet_parts:
-            pet_lines = [f"ðŸ¾ *Pet:* {_active_pet['name']} | " + " | ".join(pet_parts[:4])]
+            pet_lines = [f"🐾 *Pet:* {_active_pet['name']} | " + " | ".join(pet_parts[:4])]
         else:
-            pet_lines = [f"ðŸ¾ *Pet:* {_active_pet['name']} active"]
+            pet_lines = [f"🐾 *Pet:* {_active_pet['name']} active"]
 
     pdisp = pressure_display(pressure, location)
 
@@ -714,7 +782,7 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await safe_edit(
         query,
-        f"{intro}\n\n{combat_status(player, state, ally, log_lines)}",
+        f"{intro}\n\n{combat_status(player, state, ally, press_turns=press_turns_init)}",
         parse_mode='Markdown',
         reply_markup=build_combat_keyboard(has_ally=bool(ally))
     )
@@ -795,17 +863,17 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if skip_turn:
         state_s = get_battle_state(user_id)
         ally_s = get_active_ally(state_s)
-        full_log_s = get_battle_log(user_id)
-        append_battle_log(user_id, log)
+        press_turns_s = get_press_log(user_id)
+        append_battle_log(user_id, log, press_line=_fmt_press(log))
         await safe_edit(
             query,
-            combat_status(player, state_s, ally_s, full_log_s),
+            combat_status(player, state_s, ally_s, press_turns=press_turns_s),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_s))
         )
         return
-    log.append(f"{player['name']} attacks!")
-    log.append(f"CRITICAL HIT! {base_dmg} damage!" if crit else f"{base_dmg} damage!")
+    log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}*")
+    log.append("💥 *" + (f'CRIT! {base_dmg:,} dmg*' if crit else f'{base_dmg:,} dmg*'))
     if new_enemy_hp <= 0:
         await handle_victory(query, user_id, player, state, log, context)
         return
@@ -842,14 +910,14 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         end_turn_hp = _apply_turn_end_player_sustain(user_id, player, player['hp'], bonuses, context, log)
         if end_turn_hp != player['hp']:
             update_player(user_id, hp=end_turn_hp)
-        append_battle_log(user_id, log)
+        append_battle_log(user_id, log, press_line=_fmt_press(log))
         player = get_player(user_id)
         state_upd = get_battle_state(user_id)
         ally_upd = get_active_ally(state_upd)
-        full_log = get_battle_log(user_id)
+        press_turns = get_press_log(user_id)
         await safe_edit(
             query,
-            combat_status(player, state_upd, ally_upd, full_log),
+            combat_status(player, state_upd, ally_upd, press_turns=press_turns),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_upd))
         )
@@ -914,20 +982,22 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     new_player_hp = _apply_turn_end_player_sustain(user_id, player, new_player_hp, bonuses, context, log)
     update_player(user_id, hp=max(0, new_player_hp))
-    append_battle_log(user_id, log)
+    append_battle_log(user_id, log, press_line=_fmt_press(log))
     if new_player_hp <= 0:
         await handle_defeat(query, user_id, player, log, context)
         return
     player = get_player(user_id)
     state_updated = get_battle_state(user_id)
     ally_updated = get_active_ally(state_updated)
-    full_log = get_battle_log(user_id)
+    press_turns = get_press_log(user_id)
     await safe_edit(
         query,
-        combat_status(player, state_updated, ally_updated, full_log),
+        combat_status(player, state_updated, ally_updated, press_turns=press_turns),
         parse_mode='Markdown',
         reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
     )
+
+
 @owner_only_button
 @no_button_spam
 async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1086,8 +1156,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     ally = get_active_ally(state)
     log = []
-    log.append(f"{player['name']} uses {art_name} - Form {form['form']}!")
-    log.append(f"{form['name']}")
+    log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
     hits = form.get('hits', 1)
     total_dmg = 0
     for i in range(hits):
@@ -1129,25 +1198,25 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         skip_turn, no_tech = False, False
     if no_tech:
-        append_battle_log(user_id, log)
+        append_battle_log(user_id, log, press_line=_fmt_press(log))
         state_fr = get_battle_state(user_id)
         ally_fr = get_active_ally(state_fr)
-        full_fr = get_battle_log(user_id)
+        press_turns_fr = get_press_log(user_id)
         await safe_edit(
             query,
-            "Frozen! Cannot use techniques this turn!\n\n" + combat_status(player, state_fr, ally_fr, full_fr),
+            "Frozen! Cannot use techniques this turn!\n\n" + combat_status(player, state_fr, ally_fr, press_turns=press_turns_fr),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_fr))
         )
         return
     if skip_turn:
-        append_battle_log(user_id, log)
+        append_battle_log(user_id, log, press_line=_fmt_press(log))
         state_sk = get_battle_state(user_id)
         ally_sk = get_active_ally(state_sk)
-        full_sk = get_battle_log(user_id)
+        press_turns_sk = get_press_log(user_id)
         await safe_edit(
             query,
-            combat_status(player, state_sk, ally_sk, full_sk),
+            combat_status(player, state_sk, ally_sk, press_turns=press_turns_sk),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_sk))
         )
@@ -1194,14 +1263,14 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         end_turn_hp = _apply_turn_end_player_sustain(user_id, player, player['hp'], bonuses, context, log)
         if end_turn_hp != player['hp']:
             update_player(user_id, hp=end_turn_hp)
-        append_battle_log(user_id, log)
+        append_battle_log(user_id, log, press_line=_fmt_press(log))
         player = get_player(user_id)
         state_updated = get_battle_state(user_id)
         ally_updated = get_active_ally(state_updated)
-        full_log = get_battle_log(user_id)
+        press_turns = get_press_log(user_id)
         await safe_edit(
             query,
-            combat_status(player, state_updated, ally_updated, full_log),
+            combat_status(player, state_updated, ally_updated, press_turns=press_turns),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
         )
@@ -1266,20 +1335,22 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     new_player_hp = _apply_turn_end_player_sustain(user_id, player, new_player_hp, bonuses, context, log)
     update_player(user_id, hp=max(0, new_player_hp))
-    append_battle_log(user_id, log)
+    append_battle_log(user_id, log, press_line=_fmt_press(log))
     if new_player_hp <= 0:
         await handle_defeat(query, user_id, player, log, context)
         return
     player = get_player(user_id)
     state_updated = get_battle_state(user_id)
     ally_updated = get_active_ally(state_updated)
-    full_log = get_battle_log(user_id)
+    press_turns = get_press_log(user_id)
     await safe_edit(
         query,
-        combat_status(player, state_updated, ally_updated, full_log),
+        combat_status(player, state_updated, ally_updated, press_turns=press_turns),
         parse_mode='Markdown',
         reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
     )
+
+
 @owner_only_button
 async def items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1748,7 +1819,7 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         if drops_list and random.random() < 0.30:
             add_to_clan_treasury(player_now['clan_id'], drops_list[0], 1)
 
-    append_battle_log(user_id, log)
+    append_battle_log(user_id, log, press_line=_fmt_press(log))
     clear_battle_state(user_id)
     clear_status_effects(user_id)
 
@@ -1768,11 +1839,11 @@ async def handle_defeat(query, user_id, player, log, context=None):
         log.append(f'🔥 *PHOENIX REBIRTH!* Survived with {revive_hp} HP!')
         state_r  = get_battle_state(user_id)
         ally_r   = get_active_ally(state_r)
-        full_r   = get_battle_log(user_id)
-        append_battle_log(user_id, log)
+        press_turns_r = get_press_log(user_id)
+        append_battle_log(user_id, log, press_line=_fmt_press(log))
         await safe_edit(
             query,
-            combat_status(player, state_r, ally_r, full_r),
+            combat_status(player, state_r, ally_r, press_turns=press_turns_r),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_r))
         )
@@ -1782,7 +1853,7 @@ async def handle_defeat(query, user_id, player, log, context=None):
     new_deaths = player['deaths'] + 1
     new_hp     = int(player['max_hp'] * 0.5)
     update_player(user_id, hp=new_hp, sta=player['max_sta'], xp=xp_loss, deaths=new_deaths)
-    append_battle_log(user_id, log)
+    append_battle_log(user_id, log, press_line=_fmt_press(log))
     clear_battle_state(user_id)
     clear_status_effects(user_id)
     if hasattr(context, 'user_data'):
