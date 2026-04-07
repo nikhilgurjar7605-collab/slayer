@@ -573,3 +573,183 @@ async def ownerplayers_callback(update: Update, context: ContextTypes.DEFAULT_TY
     page = int(query.data.split('_')[-1])
     context.args = [str(page + 1)]
     await ownerplayers(update, context)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ADDITIONAL OWNER COMMANDS
+# ══════════════════════════════════════════════════════════════════════════
+
+async def ownersetyen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownersetyen @user amount — Set a player's yen to exact value."""
+    from utils.guards import dm_only
+    if not _is_owner(update.effective_user.id):
+        return
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Usage: `/ownersetyen @username amount`", parse_mode="Markdown")
+        return
+    target = _find_player(context.args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+    try:
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid amount.")
+        return
+    update_player(target["user_id"], yen=amount)
+    await update.message.reply_text(
+        f"✅ Set *{target['name']}*'s Yen to *{amount:,}¥*", parse_mode="Markdown"
+    )
+
+
+async def ownersetsp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownersetsp @user amount — Set a player's skill points."""
+    if not _is_owner(update.effective_user.id):
+        return
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Usage: `/ownersetsp @username amount`", parse_mode="Markdown")
+        return
+    target = _find_player(context.args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+    try:
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid amount.")
+        return
+    update_player(target["user_id"], skill_points=amount)
+    await update.message.reply_text(
+        f"✅ Set *{target['name']}*'s SP to *{amount}*", parse_mode="Markdown"
+    )
+
+
+async def ownerclearinv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownerclearinv @user — Clear all inventory for a player."""
+    if not _is_owner(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: `/ownerclearinv @username`", parse_mode="Markdown")
+        return
+    target = _find_player(context.args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+    col("inventory").delete_many({"user_id": target["user_id"]})
+    await update.message.reply_text(
+        f"✅ Cleared *{target['name']}*'s inventory.", parse_mode="Markdown"
+    )
+
+
+async def ownersetfaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownersetfaction @user slayer|demon — Force-change player faction."""
+    if not _is_owner(update.effective_user.id):
+        return
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Usage: `/ownersetfaction @username slayer|demon`", parse_mode="Markdown")
+        return
+    target = _find_player(context.args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+    faction = context.args[1].lower()
+    if faction not in ("slayer", "demon"):
+        await update.message.reply_text("❌ Faction must be `slayer` or `demon`.", parse_mode="Markdown")
+        return
+    update_player(target["user_id"], faction=faction)
+    await update.message.reply_text(
+        f"✅ *{target['name']}* is now a *{faction.title()}*!", parse_mode="Markdown"
+    )
+
+
+async def ownergivepet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownergivepet @user PetName — Give a pet directly to a player."""
+    if not _is_owner(update.effective_user.id):
+        return
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Usage: `/ownergivepet @username Pet Name`", parse_mode="Markdown")
+        return
+    target = _find_player(context.args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+    pet_name = " ".join(context.args[1:])
+    from config import PETS, PET_EVOLUTIONS
+    if pet_name not in PETS and pet_name not in PET_EVOLUTIONS:
+        valid = ", ".join(list(PETS.keys())[:5]) + "..."
+        await update.message.reply_text(
+            f"❌ Unknown pet *{pet_name}*\nValid: {valid}", parse_mode="Markdown"
+        )
+        return
+    from handlers.pets import add_pet
+    is_new = add_pet(target["user_id"], pet_name)
+    if is_new:
+        await update.message.reply_text(
+            f"✅ Gave *{pet_name}* to *{target['name']}*!", parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            f"ℹ️ *{target['name']}* already owns *{pet_name}*. Added +20 Bond XP.", parse_mode="Markdown"
+        )
+
+
+async def ownersetloc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownersetloc @user location — Teleport player to any region."""
+    if not _is_owner(update.effective_user.id):
+        return
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: `/ownersetloc @username location`\n"
+            "Locations: asakusa, butterfly, mtsagiri, swordsmith, yoshiwara, natagumo, infinity, void",
+            parse_mode="Markdown"
+        )
+        return
+    target = _find_player(context.args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+    location = context.args[1].lower()
+    valid_locs = ["asakusa","butterfly","mtsagiri","swordsmith","yoshiwara","natagumo","infinity","void"]
+    if location not in valid_locs:
+        await update.message.reply_text(f"❌ Invalid location. Valid: {', '.join(valid_locs)}")
+        return
+    update_player(target["user_id"], location=location)
+    await update.message.reply_text(
+        f"✅ Moved *{target['name']}* to *{location.title()}*!", parse_mode="Markdown"
+    )
+
+
+async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownerhelp — Full owner command list."""
+    if not _is_owner(update.effective_user.id):
+        return
+    await update.message.reply_text(
+        "👑 *OWNER COMMANDS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "*Player Management:*\n"
+        "`/owneraccess @u` — view player info\n"
+        "`/ownersetlevel @u lvl` — set level\n"
+        "`/ownersetstyle @u style` — set style\n"
+        "`/ownersetyen @u amount` — set yen\n"
+        "`/ownersetsp @u amount` — set skill points\n"
+        "`/ownersetfaction @u slayer|demon` — change faction\n"
+        "`/ownersetloc @u location` — teleport player\n"
+        "`/ownerclearinv @u` — wipe inventory\n"
+        "`/ownerreset @u` — full reset\n"
+        "`/ownerban @u` / `/ownerunban @u`\n\n"
+        "*Giving:*\n"
+        "`/ownergive @u xp|yen|sp|items amount` — give anything\n"
+        "`/ownergivepet @u PetName` — give pet directly\n"
+        "`/giveultimate @u` — give legendary demon art\n"
+        "`/giveslayermark @u` / `/givedemonmark @u`\n\n"
+        "*Bot Control:*\n"
+        "`/ownermode on|off` — maintenance mode\n"
+        "`/ownerstats` — full bot stats\n"
+        "`/ownerplayers` — browse all players\n"
+        "`/ownermsg @u text` — DM any player\n"
+        "`/backup` — export DB\n"
+        "`/restore` — import DB\n"
+        "`/master` — emergency owner panel\n"
+        "`/ownerhelp` — this list",
+        parse_mode="Markdown"
+    )
