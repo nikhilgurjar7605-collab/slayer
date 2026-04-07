@@ -140,6 +140,7 @@ from handlers.coop import (
     coop_use_item,
     coop_art_callback,
 )
+from handlers.admin_tools import get_media_file_id
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -903,6 +904,7 @@ def main():
         filters.Document.MimeType('application/json') & filters.ChatType.PRIVATE,
         doc_restore_handler
     ))
+    app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
