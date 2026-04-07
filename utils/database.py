@@ -95,6 +95,9 @@ def init_db():
     db.clans.create_index("name", unique=True)
     db.admins.create_index("user_id", unique=True)
 
+    # Press logs index (added for performance)
+    db.press_logs.create_index([("user_id", 1), ("timestamp", DESCENDING)])
+
     # Seed Black Market
     if db.black_market.count_documents({"status": "active"}) == 0:
         expires = datetime.now() + timedelta(days=30)
@@ -489,7 +492,7 @@ def clear_ally(user_id):
     )
 
 
-# ── Battle Log ────────────────────────────────────────────────────────────
+# ── Battle Log (old raw log) ──────────────────────────────────────────────
 
 def append_battle_log(user_id, entries):
     doc = col("battle_state").find_one({"user_id": user_id, "active": 1})
@@ -517,8 +520,39 @@ def get_battle_log(user_id):
     return []
 
 
-def clear_battle_log(user_id):
+# ── Press‑format battle log (new) ─────────────────────────────────────────
+
+def get_press_log(user_id: int, limit: int = 5) -> list:
+    """
+    Retrieve the last `limit` press‑format log lines for a user.
+    Stored in a separate collection 'press_logs'.
+    """
+    col_press = col("press_logs")
+    docs = col_press.find({"user_id": user_id}).sort("timestamp", -1).limit(limit)
+    return [doc["press_line"] for doc in docs][::-1]   # oldest first
+
+
+def append_press_turn(user_id: int, press_line: str) -> None:
+    """Store one press‑format log line for a user."""
+    col_press = col("press_logs")
+    col_press.insert_one({
+        "user_id": user_id,
+        "press_line": press_line,
+        "timestamp": datetime.utcnow()
+    })
+    # Optional: keep only last 50 logs per user to save space
+    col_press.delete_many({
+        "user_id": user_id,
+        "timestamp": {"$lt": datetime.utcnow() - timedelta(days=1)}
+    })
+
+
+def clear_battle_log(user_id: int) -> None:
+    """Clear both the old battle log and the press logs for a user."""
+    # Clear regular battle log (stored inside battle_state)
     col("battle_state").update_one({"user_id": user_id}, {"$set": {"battle_log": "[]"}})
+    # Clear press logs
+    col("press_logs").delete_many({"user_id": user_id})
 
 
 # ── Party ─────────────────────────────────────────────────────────────────
