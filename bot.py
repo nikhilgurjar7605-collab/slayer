@@ -965,12 +965,10 @@ if __name__ == '__main__':
             env_ok = bool(os.environ.get("BOT_TOKEN")) and bool(os.environ.get("MONGO_URL"))
             status = "RUNNING" if env_ok else "MISSING ENV VARS"
 
-            if self.path in ("/", "/health", "/healthz", "/ready"):
-                if self.path == "/":
+           if self.path == "/":
                     self._send_text(
                         200,
-                        "
-".join([
+                        "\n".join([
                             "Demon Slayer RPG Bot",
                             f"Status: {status}",
                             f"Host: {HOST}",
