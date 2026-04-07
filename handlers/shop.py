@@ -66,10 +66,7 @@ def _flat_items(cat_filter="all"):
 
 
 def _item_detail(cat, item, player):
-    """One-line description for an item."""
-    icon = CAT_ICONS.get(cat, "📦")
-    price_str = f"{item['price']:,}¥"
-
+    """Multi-line structured description for an item."""
     if cat == "swords":
         detail = f"+{item['atk_bonus']} ATK"
     elif cat == "armor":
@@ -81,7 +78,7 @@ def _item_detail(cat, item, player):
     else:
         basic = {'wisteria': 'Cures status effects',
                  'stamina':  '+50 STA', 'gourd': 'Full HP restore'}
-        detail = basic.get(item.get('code', ''), '')
+        detail = basic.get(item.get('code', ''), 'Special Item')
 
     eq_mark = ""
     if cat == "swords" and player and player.get('equipped_sword') == item['name']:
@@ -89,7 +86,12 @@ def _item_detail(cat, item, player):
     if cat == "armor" and player and player.get('equipped_armor') == item['name']:
         eq_mark = " ✅"
 
-    return f"{icon} *{item['name']}*{eq_mark}  `{item.get('code','—')}`  — *{price_str}*\n   _{detail}_"
+    return (
+        f"❖ <b>{item['name']}</b>{eq_mark}\n"
+        f"   ├─ 💰 Cost : ¥ <b>{item['price']:,}</b>\n"
+        f"   ├─ 🏷️ Code : <code>{item.get('code','—')}</code>\n"
+        f"   └─ 📝 Info : <i>{detail}</i>"
+    )
 
 
 def _build_shop_page(player, page, cat_filter="all"):
@@ -99,33 +101,46 @@ def _build_shop_page(player, page, cat_filter="all"):
     page        = max(0, min(page, total_pages - 1))
     page_items  = flat[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
-    bal  = f"{player['yen']:,}¥" if player else "—"
+    bal  = f"¥ {player['yen']:,}" if player else "—"
     eq_s = player.get('equipped_sword', 'None') if player else 'None'
     eq_a = player.get('equipped_armor', 'None') if player else 'None'
 
     lines = [
-        "╔══════════════════════╗",
-        "      🏪 𝙎𝙃𝙊𝙋",
-        "╚══════════════════════╝\n",
-        f"💰 *Balance:* {bal}  |  📄 Page *{page+1}/{total_pages}*",
-        f"⚔️ *{eq_s}*  🛡️ *{eq_a}*\n",
-        "━━━━━━━━━━━━━━━━━━━━━",
+        "╔═════════════════╗",
+        "     ⛩️ <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> ⛩️",
+        "          <b>𝙈𝙀𝙍𝘾𝙃𝘼𝙉𝙏 𝙎𝙃𝙊𝙋</b>",
+        "╚═════════════════╝\n",
+        f"👛 <b>Balance:</b> {bal}  |  📄 Page <b>{page+1}/{total_pages}</b>",
+        f"⚔️ <b>{eq_s}</b>  |  🛡️ <b>{eq_a}</b>\n"
     ]
 
-    # Group items by category for headers
+    CAT_FONTS = {
+        "swords":   "⚔️ 𝙒𝙀𝘼𝙋𝙊𝙉  𝘼𝙍𝙈𝙊𝙍𝙔 ⚔️",
+        "armor":    "🛡️ 𝘼𝙍𝙈𝙊𝙍  𝙎𝙏𝘼𝙉𝘿 🛡️",
+        # Notice the &amp; below! This stops Telegram from crashing in HTML mode.
+        "items":    "🧪 𝙄𝙏𝙀𝙈𝙎  &amp;  𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎 🧪",
+        "potions":  "🔮 𝘼𝙇𝘾𝙃𝙀𝙈𝙔  𝙋𝙊𝙏𝙄𝙊𝙉𝙎 🔮",
+        "upgrades": "⬆️ 𝙋𝙇𝘼𝙔𝙀𝙍  𝙐𝙋𝙂𝙍𝘼𝘿𝙀𝙎 ⬆️"
+    }
+
     cur_cat = None
     for cat, item in page_items:
         if cat != cur_cat:
             cur_cat = cat
-            lines.append(f"\n{CAT_ICONS.get(cat,'📦')} *{cat.upper()}*")
-        lines.append(_item_detail(cat, item, player))
+            lines.append(f"     {CAT_FONTS.get(cat, '📦 𝙎𝙃𝙊𝙋 𝙄𝙏𝙀𝙈𝙎 📦')}")
+            lines.append("━━━━━━━━━━━━━━━━━━━")
+        lines.append(_item_detail(cat, item, player) + "\n")
+
+    if lines[-1].endswith("\n"):
+        lines[-1] = lines[-1].rstrip("\n")
 
     lines += [
-        "\n━━━━━━━━━━━━━━━━━━━━━",
-        "💡 `/buy [code]` or `/buy [name]`",
+        "━━━━━━━━━━━━━━━━━━━",
+        "<blockquote>🛒 <b>Purchase Command</b>",
+        "└ Use: <code>/buy [code]</code> or <code>/buy [name]</code></blockquote>",
+        "━━━━━━━━━━━━━━━━━━━"
     ]
 
-    # ── Navigation buttons ─────────────────────────────────────────────
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"shop_{page-1}_{cat_filter}"))
@@ -133,12 +148,11 @@ def _build_shop_page(player, page, cat_filter="all"):
     if page < total_pages - 1:
         nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"shop_{page+1}_{cat_filter}"))
 
-    # ── Category filter buttons ────────────────────────────────────────
     cats = [("All","all"),("⚔️","swords"),("🛡️","armor"),
             ("🧪","items"),("🔮","potions"),("⬆️","upgrades")]
     cat_row = [
         InlineKeyboardButton(
-            f"{'✓' if (cf=='all' and cat_filter=='all') or cat_filter==cf else ''}{emoji}",
+            f"{'✓ ' if (cf=='all' and cat_filter=='all') or cat_filter==cf else ''}{emoji}",
             callback_data=f"shop_0_{cf}"
         )
         for emoji, cf in cats
@@ -158,9 +172,9 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = update.message if update.message else update.callback_query.message
     if update.callback_query:
-        await _safe_edit(update.callback_query, text, parse_mode='Markdown', reply_markup=kb)
+        await _safe_edit(update.callback_query, text, parse_mode='HTML', reply_markup=kb)
     else:
-        await msg.reply_text(text, parse_mode='Markdown', reply_markup=kb)
+        await msg.reply_text(text, parse_mode='HTML', reply_markup=kb)
 
 
 # ── Shop page callback ─────────────────────────────────────────────────────
@@ -179,7 +193,7 @@ async def shop_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = query.from_user.id
     player  = get_player(user_id)
     text, kb = _build_shop_page(player, page, cat_filter)
-    await _safe_edit(query, text, parse_mode='Markdown', reply_markup=kb)
+    await _safe_edit(query, text, parse_mode='HTML', reply_markup=kb)
 
 
 # ── /buy ───────────────────────────────────────────────────────────────────
