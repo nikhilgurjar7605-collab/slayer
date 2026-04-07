@@ -631,6 +631,11 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enemy['xp']  = int(enemy['xp']  * 1.5)
         enemy['yen'] = int(enemy['yen'] * 1.5)
 
+    # === FIX: Store prize fields in the enemy dict ===
+    enemy['prize_xp'] = enemy['xp']
+    enemy['prize_yen'] = enemy['yen']
+    enemy['prize_drops'] = enemy.get('drops', [])
+
     set_battle_state(user_id, enemy, in_combat=False)
 
     # ── Wild pet encounter (~1% chance, skipped for boss fights) ──────────
