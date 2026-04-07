@@ -20,7 +20,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from utils.database import (
-    get_player, update_player, col, add_item
+    get_player, update_player, col, add_item, append_battle_log
 )
 from utils.guards import owner_only_button, no_button_spam
 
@@ -927,6 +927,7 @@ async def petskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Increment skill use counter
     context.user_data[battle_key] = uses_so_far + 1
 
+    append_battle_log(user_id, log_lines)
     await update.message.reply_text(
         "\n".join(log_lines),
         parse_mode="Markdown"

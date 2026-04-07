@@ -564,13 +564,15 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enemy['xp']  = int(enemy['xp']  * 1.5)
         enemy['yen'] = int(enemy['yen'] * 1.5)
 
-    set_battle_state(user_id, enemy, in_combat=False)
 
     # ── Wild pet encounter (~1% chance, skipped for boss fights) ──────────
     if not enemy.get('is_boss'):
         _wild_pet = roll_wild_pet_encounter(location)
         if _wild_pet:
             await trigger_wild_encounter(update, user_id, context, _wild_pet, location)
+            return
+
+    set_battle_state(user_id, enemy, in_combat=False)
 
     from config import TRAVEL_ZONES
     zone = next((z for z in TRAVEL_ZONES if z['id'] == location), TRAVEL_ZONES[0])
@@ -684,11 +686,31 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
             skill_lines = [f"💠 *Skills:* {' | '.join(parts[:4])}"]
 
     boss_line = f"\n☠️ *BOSS BATTLE!* HP x3 | ATK x1.5" if state.get('is_boss') else ""
+    pet_lines = []
+    _active_pet = get_active_pet(user_id)
+    if _active_pet:
+        pet_bonuses = get_pet_passives(user_id)
+        pet_parts = []
+        if pet_bonuses.get('atk_pct'):
+            pet_parts.append(f"ATK +{int(pet_bonuses['atk_pct'] * 100)}%")
+        if pet_bonuses.get('def_pct'):
+            pet_parts.append(f"DEF +{int(pet_bonuses['def_pct'] * 100)}%")
+        if pet_bonuses.get('hp_pct'):
+            pet_parts.append(f"HP +{int(pet_bonuses['hp_pct'] * 100)}%")
+        if pet_bonuses.get('dodge_pct'):
+            pet_parts.append(f"Dodge +{int(pet_bonuses['dodge_pct'] * 100)}%")
+        if pet_parts:
+            pet_lines = [f"ðŸ¾ *Pet:* {_active_pet['name']} | " + " | ".join(pet_parts[:4])]
+        else:
+            pet_lines = [f"ðŸ¾ *Pet:* {_active_pet['name']} active"]
+
     pdisp = pressure_display(pressure, location)
 
     intro = f"⚔️ *BATTLE BEGINS!*{boss_line}\n\n{pdisp}"
     if skill_lines:
         intro += "\n" + "\n".join(skill_lines)
+    if pet_lines:
+        intro += "\n" + "\n".join(pet_lines)
 
     await safe_edit(
         query,
