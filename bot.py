@@ -249,17 +249,13 @@ def _note_recent_activity(context: ContextTypes.DEFAULT_TYPE, user_id: int, sign
 def _human_check_message(reason: str | None = None, remaining_minutes: int | None = None) -> str:
     if remaining_minutes:
         return (
-            "Verification cooldown active.
-"
+            "Verification cooldown active."
             f"Wait about {remaining_minutes} minute(s), then use /start in DM."
         )
     if reason:
         return (
-            "Human verification required.
-"
-            f"Trigger: {reason}
-
-"
+            "Human verification required."
+            f"Trigger: {reason}"
             "Use /start in DM and solve the captcha to continue."
         )
     return "Human verification required. Use /start in DM and solve the captcha to continue."
