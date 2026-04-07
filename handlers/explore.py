@@ -379,10 +379,13 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         _pet_atk = get_pet_passives(user_id).get('atk_pct', 0)
         if _pet_atk:
             dmg = int(dmg * (1 + _pet_atk))
+            if context is not None:
+                context.user_data[f'pet_atk_boost_applied_{user_id}'] = _pet_atk
         # Pet skill: Death Howl low-HP ATK boost
         if context and context.user_data.get(f'pet_low_hp_boost_{user_id}'):
             _boost = context.user_data.pop(f'pet_low_hp_boost_{user_id}')
             dmg = int(dmg * (1 + _boost))
+            context.user_data[f'pet_low_hp_boost_applied_{user_id}'] = _boost
         # Pet skill: Talon Strike crit boost (applied via crit_chance in attack handler)
     return dmg
 
@@ -454,6 +457,13 @@ def _calculate_form_hit_damage(player, form, state, owned_skills=None, user_id=N
         user_id=user_id,
         context=context,
     )
+    if context and user_id:
+        _pet_atk_applied = context.user_data.pop(f'pet_atk_boost_applied_{user_id}', 0)
+        if _pet_atk_applied:
+            log.append(f"ðŸ¾ Pet power: +{int(_pet_atk_applied * 100)}% ATK")
+        _pet_low_hp_applied = context.user_data.pop(f'pet_low_hp_boost_applied_{user_id}', 0)
+        if _pet_low_hp_applied:
+            log.append(f"ðŸº Death Howl: +{int(_pet_low_hp_applied * 100)}% ATK")
     dmg = int(dmg * _technique_level_scale(player))
 
     combo = context.user_data.get('combo', 0) if context else 0
@@ -567,8 +577,29 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send("❌ You are banned from this game.")
         return
 
+    if context.user_data.get(f"wild_pet_active_{user_id}"):
+        await send(
+            "🪤 *Wild pet encounter in progress!*\n\n"
+            "Use the Catch/Flee buttons on the encounter first.",
+            parse_mode='Markdown'
+        )
+        return
+
     existing = get_battle_state(user_id)
     if existing and existing.get('in_combat'):
+        enemy_name = existing.get('enemy_name', 'an enemy')
+        enemy_hp   = existing.get('enemy_hp', '?')
+        enemy_max  = existing.get('enemy_max_hp', '?')
+        await send(
+            f"âš”ï¸ *BATTLE IN PROGRESS!*\n"
+            f"â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\n"
+            f"You are currently fighting *{enemy_name}*\n"
+            f"â¤ï¸ Enemy HP: *{enemy_hp}/{enemy_max}*\n\n"
+            f"_Finish your current battle first!_\n"
+            f"Type `/unstuck` if you need to reset the battle.",
+            parse_mode='Markdown'
+        )
+        return
         # Only auto-unstuck when user TYPES /explore as a command
         # Button presses (from menu) show the active battle warning
         if update.message and update.effective_chat and update.effective_chat.type == 'private':
@@ -815,6 +846,12 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     attack_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
     base_dmg = calc_dmg(player, owned_skills=owned_skills, user_id=user_id, context=context)
     base_dmg = int(base_dmg * pressure['atk_mult'] * chaos_mod)
+    _pet_atk_applied = context.user_data.pop(f'pet_atk_boost_applied_{user_id}', 0)
+    if _pet_atk_applied:
+        log.append(f"ðŸ¾ Pet power: +{int(_pet_atk_applied * 100)}% ATK")
+    _pet_low_hp_applied = context.user_data.pop(f'pet_low_hp_boost_applied_{user_id}', 0)
+    if _pet_low_hp_applied:
+        log.append(f"ðŸº Death Howl: +{int(_pet_low_hp_applied * 100)}% ATK")
     def_reduce = attack_ctx.get('enemy_def_reduce', 0)
     if def_reduce > 0:
         base_dmg += def_reduce
@@ -823,8 +860,12 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         base_dmg = int(base_dmg * 1.25)
         log.append(f"COMBO x{combo}! +25% damage!")
     _pet_crit = context.user_data.pop(f'pet_crit_boost_{user_id}', 0)
-    crit_chance = 0.15 + bonuses.get('crit_bonus', 0) + _pet_crit
-    crit = random.random() < crit_chance
+    base_crit = 0.15 + bonuses.get('crit_bonus', 0)
+    crit_chance = base_crit + _pet_crit
+    crit_roll = random.random()
+    crit = crit_roll < crit_chance
+    if _pet_crit and crit and crit_roll >= base_crit:
+        log.append("ðŸ¾ Talon Strike triggered a critical hit!")
     if crit:
         base_dmg = int(base_dmg * 1.5)
     ctx_v = context.user_data.get(f'battle_ctx_{user_id}', {})
