@@ -539,7 +539,7 @@ def _apply_turn_end_player_sustain(user_id, player, current_hp, bonuses, context
         regen = int(bonuses['regen_hp'])
         if regen > 0:
             current_hp = min(player['max_hp'], current_hp + regen)
-            log.append(f"ðŸ§¬ *Demon Regen* â€" +{regen} HP")
+            log.append(f"🧬 *Demon Regen* — +{regen} HP")
 
     battle_ctx['used_once_skills'] = used_once
     context.user_data[f'battle_ctx_{user_id}'] = battle_ctx
