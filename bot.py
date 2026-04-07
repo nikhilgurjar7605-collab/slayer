@@ -960,35 +960,36 @@ if __name__ == '__main__':
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
-def do_GET(self):
-        env_ok = bool(os.environ.get("BOT_TOKEN")) and bool(os.environ.get("MONGO_URL"))
-        status = "RUNNING" if env_ok else "MISSING ENV VARS"
-        
-        if self.path in ("/", "/health", "/healthz", "/ready"):
-            if self.path == "/":
-                self._send_text(
-                    200,
-                    "\n".join([
-                        "Demon Slayer RPG Bot",
-                        f"Status: {status}",
-                        f"Host: {HOST}",
-                        f"Port: {PORT}",
-                        f"Render URL: {RENDER_URL or 'not set'}",
-                    ]),
-                )
+
+        def do_GET(self):  # <--- FIXED: Now perfectly aligned!
+            env_ok = bool(os.environ.get("BOT_TOKEN")) and bool(os.environ.get("MONGO_URL"))
+            status = "RUNNING" if env_ok else "MISSING ENV VARS"
+            
+            if self.path in ("/", "/health", "/healthz", "/ready"):
+                if self.path == "/":
+                    self._send_text(
+                        200,
+                        "\n".join([
+                            "Demon Slayer RPG Bot",
+                            f"Status: {status}",
+                            f"Host: {HOST}",
+                            f"Port: {PORT}",
+                            f"Render URL: {RENDER_URL or 'not set'}",
+                        ]),
+                    )
+                else:
+                    self._send_json(
+                        200,
+                        {
+                            "service": "demon-slayer-rpg-bot",
+                            "status": status.lower().replace(" ", "_"),
+                            "host": HOST,
+                            "port": PORT,
+                            "render_url": RENDER_URL or None,
+                        },
+                    )
             else:
-                self._send_json(
-                    200,
-                    {
-                        "service": "demon-slayer-rpg-bot",
-                        "status": status.lower().replace(" ", "_"),
-                        "host": HOST,
-                        "port": PORT,
-                        "render_url": RENDER_URL or None,
-                    },
-                )
-        else:
-            self._send_text(404, "Not Found")
+                self._send_text(404, "Not Found")
 
         def do_HEAD(self):
             self.send_response(200)
