@@ -376,14 +376,9 @@ async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAUL
 
     # Block all messages/commands with maintenance message
     maintenance_msg = (
-        "🔧 *Bot Under Maintenance*
-
-"
-        "The bot is currently undergoing scheduled maintenance.
-"
-        "Please try again later! 🙏
-
-"
+        "🔧 *Bot Under Maintenance*"
+        "The bot is currently undergoing scheduled maintenance."
+        "Please try again later! 🙏"
         "_We'll be back soon._"
     )
     if update.message:
@@ -418,14 +413,9 @@ async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reason = player.get('ban_reason', 'No reason given')
     msg = (
-        "🚫 *YOU ARE BANNED*
-"
-        "━━━━━━━━━━━━━━━━━━━━━
-
-"
-        f"❌ Reason: _{reason}_
-
-"
+        "🚫 *YOU ARE BANNED*"
+        "━━━━━━━━━━━━━━━━━━━━━"
+        f"❌ Reason: _{reason}_"
         "_Contact an admin if you believe this is a mistake._"
     )
     try:
