@@ -1,8 +1,10 @@
+import logging
 from telegram.error import BadRequest, TimedOut
 from datetime import datetime, date, timedelta
 from telegram import Update
 from telegram.ext import ContextTypes
 from utils.database import get_player, update_player, add_item
+log = logging.getLogger(__name__)
 
 async def _safe_edit(query, text, **kwargs):
     """Edit a message safely, falling back to reply on failure."""
@@ -15,8 +17,8 @@ async def _safe_edit(query, text, **kwargs):
         elif any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         else:
             raise
     except TimedOut:
@@ -81,8 +83,8 @@ async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     last_streak_day = player.get('last_streak_day','')
