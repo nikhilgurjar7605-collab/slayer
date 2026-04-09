@@ -1590,3 +1590,75 @@ PET_REGIONS = {
         "weights": [30, 40, 30],
     },
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ENEMY IMAGES  —  fill in Telegram file_id or URL after uploading images
+# ══════════════════════════════════════════════════════════════════════════
+# How to get a file_id:
+#   1. Send the image to your bot in DM
+#   2. Forward it to @getidsbot or use /imgupload command
+#   3. Paste the file_id string here
+# If left empty ("") the encounter shows as text only — no crash.
+
+ENEMY_IMAGES = {
+    # ── Asakusa enemies ───────────────────────────────────────────────────
+    "Stray Demon":          "",
+    "Lesser Demon":         "",
+    "Vampire":              "",
+    "Ghoul":                "",
+    "Cursed Spirit":        "",
+
+    # ── Butterfly Estate ─────────────────────────────────────────────────
+    "Forest Wraith":        "",
+    "Corrupted Beast":      "",
+    "Poisoned Wolf":        "",
+    "Insect Demon":         "",
+    "Afflicted Soldier":    "",
+
+    # ── Mt. Sagiri ────────────────────────────────────────────────────────
+    "Mountain Demon":       "",
+    "Frost Wraith":         "",
+    "Rock Golem":           "",
+    "Wind Specter":         "",
+    "Summit Guardian":      "",
+
+    # ── Swordsmith Village ────────────────────────────────────────────────
+    "Forge Demon":          "",
+    "Iron Golem":           "",
+    "Cursed Smith":         "",
+    "Fire Wraith":          "",
+    "Ore Guardian":         "",
+
+    # ── Yoshiwara ─────────────────────────────────────────────────────────
+    "Pleasure Demon":       "",
+    "Shadow Assassin":      "",
+    "Blood Dancer":         "",
+    "Illusion Demon":       "",
+    "Night Stalker":        "",
+
+    # ── Natagumo Mountain ─────────────────────────────────────────────────
+    "Spider Demon":         "",
+    "Rui":                  "",
+    "Spider Minion":        "",
+    "Cursed Puppet":        "",
+    "Webbed Wraith":        "",
+
+    # ── Infinity Castle ───────────────────────────────────────────────────
+    "Upper Moon Shade":     "",
+    "Infinity Guardian":    "",
+    "Castle Wraith":        "",
+    "Demon General":        "",
+    "Void Stalker":         "",
+
+    # ── Void Map ──────────────────────────────────────────────────────────
+    "Void Drifter":         "",
+    "Null Reaper":          "",
+    "Abyss Walker":         "",
+    "Lost Hashira Shade":   "",
+    "Void Tyrant":          "",
+
+    # ── Legendary Bosses ──────────────────────────────────────────────────
+    "Yoriichi Tsugikuni":   "",
+    "Kokushibo":            "",
+}
