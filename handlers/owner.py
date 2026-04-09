@@ -1,4 +1,6 @@
+import logging
 from telegram.error import BadRequest, TimedOut
+log = logging.getLogger(__name__)
 """
 /ownermode — Toggle owner god mode (bypasses all restrictions, cooldowns, costs)
 /owneraccess — Full overview of owner powers
@@ -29,8 +31,8 @@ async def _safe_edit(query, text, **kwargs):
         elif any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         else:
             raise
     except TimedOut:
@@ -212,8 +214,8 @@ async def ownersetlevel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"⚡ *Admin set your level to Lv.{new_level}!*\n\nYour stats have been updated.",
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 # ── /ownersetstyle ────────────────────────────────────────────────────────
@@ -268,8 +270,8 @@ async def ownersetstyle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"✨ *Your style has been changed!*\n\n{style['emoji']} *{style['name']}*\n{style['rarity']}",
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 # ── /ownergive ────────────────────────────────────────────────────────────
@@ -353,8 +355,8 @@ async def ownergive(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"🎁 *You received a gift from the admin!*\n\n{msg}",
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 # ── /ownerreset ───────────────────────────────────────────────────────────
