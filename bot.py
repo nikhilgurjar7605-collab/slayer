@@ -5,7 +5,7 @@ import logging
 # those loggers receive a NullHandler and produce zero output.
 
 _fmt_default = logging.Formatter('%(asctime)s [%(name)s] [%(levelname)s] "%(message)s"')
-_fmt_explore = logging.Formatter('%(asctime)s ⚔️  [EXPLORE] [%(levelname)s] "%(message)s"')
+_fmt_explore = logging.Formatter('%(asctime)s [EXPLORE] [%(levelname)s] "%(message)s"')
 
 # Root handler — catches everything at INFO+
 _root_handler = logging.StreamHandler()
@@ -43,7 +43,7 @@ from utils.database import init_db, get_player, col
 from handlers.start import (start, get_name, choose_faction, choose_story, captcha_callback,
                             WAITING_NAME, WAITING_CAPTCHA, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
-from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, banner_decision_callback, bannerpending
+from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, bannershow, banner_decision_callback, bannerpending
 from handlers.explore import (explore, fight, attack, technique, choose_art, use_form,
                                items_menu, use_item, party_battle, flee, prize, form_info,
                                switch_ally, dismiss_ally_callback, ally_fainted_callback)
@@ -444,18 +444,18 @@ async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reason = player.get('ban_reason', 'No reason given')
     msg = (
-        "🚫 *YOU ARE BANNED*"
-        "━━━━━━━━━━━━━━━━━━━━━"
-        f"❌ Reason: _{reason}_"
-        "_Contact an admin if you believe this is a mistake._"
+        "YOU ARE BANNED\n"
+        "----------------\n"
+        f"Reason: {reason}\n"
+        "Contact an admin if you believe this is a mistake."
     )
     try:
         if update.callback_query:
             await update.callback_query.answer(
-                "🚫 You are banned from this game.", show_alert=True
+                "You are banned from this game.", show_alert=True
             )
         elif update.message:
-            await update.message.reply_text(msg, parse_mode='Markdown')
+            await update.message.reply_text(msg, parse_mode=None)
     except Exception as e:
         log.error("[EXCEPTION] %s", e)
 
@@ -552,7 +552,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from telegram.constants import ChatType
     in_private = query.message.chat.type == ChatType.PRIVATE
     if not is_battle and not is_cross and in_private and query.from_user.id != query.message.chat_id:
-        await query.answer("❌ These buttons are not yours!", show_alert=True)
+        await query.answer("These buttons are not yours.", show_alert=True)
         return
 
     routes = {
@@ -657,7 +657,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
     else:
-        await query.answer("❓ Unknown action!", show_alert=True)
+        await query.answer("Unknown action.", show_alert=True)
 
 
 async def _end_conv_passthrough(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,7 +678,7 @@ def main():
     import sys
     missing = []
     if not BOT_TOKEN or BOT_TOKEN == 'YOUR_BOT_TOKEN_HERE' or ':' not in BOT_TOKEN:
-        missing.append("BOT_TOKEN (set in Render Dashboard → Environment)")
+        missing.append("BOT_TOKEN (set in Render Dashboard -> Environment)")
     from config import MONGO_URL
     if not MONGO_URL:
         missing.append("MONGO_URL (MongoDB connection string)")
@@ -686,9 +686,9 @@ def main():
         logger.error("=" * 60)
         logger.error("MISSING REQUIRED ENVIRONMENT VARIABLES:")
         for m in missing:
-            logger.error(f"  ❌ {m}")
+            logger.error(f"  - {m}")
         logger.error("=" * 60)
-        logger.error("Set these in Render Dashboard → Your Service → Environment")
+        logger.error("Set these in Render Dashboard -> Your Service -> Environment")
         sys.exit(1)
 
     init_db()
@@ -734,6 +734,7 @@ def main():
         ('profile',         profile),
         ('setbanner',       setbanner),
         ('clearbanner',     clearbanner),
+        ('bannershow',      bannershow),
         ('bannerpending',   bannerpending),
         ('rankings',        rankings),
         ('help',            help_command),
@@ -931,12 +932,12 @@ def main():
         """Route reply keyboard button presses to the right handler."""
         text = update.message.text.strip() if update.message and update.message.text else ""
         routes = {
-            "⚔️ Explore":    explore,
-            "📜 Profile":    profile,
-            "🎒 Inventory":  inventory,
-            "🏪 Shop":       shop,
-            "🌳 Skills":     skilltree,
-            "❌ Close Menu": close_menu,
+            "Explore":    explore,
+            "Profile":    profile,
+            "Inventory":  inventory,
+            "Shop":       shop,
+            "Skills":     skilltree,
+            "Close Menu": close_menu,
         }
         handler = routes.get(text)
         if handler:
@@ -1099,7 +1100,7 @@ if __name__ == '__main__':
             break
         except Exception as _exc:
             _restart_count += 1
-            print(f"[BOT] ❌ Crash #{_restart_count}: {_exc}", flush=True)
+            print(f"[BOT] Crash #{_restart_count}: {_exc}", flush=True)
             if _restart_count >= _MAX_RESTARTS:
                 print(f"[BOT] Too many crashes ({_MAX_RESTARTS}). Giving up.", flush=True)
                 raise
