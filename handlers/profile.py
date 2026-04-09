@@ -2,8 +2,9 @@ import logging
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from utils.database import get_player, get_arts, col, update_player
+from utils.database import get_player, get_arts, col, update_player, is_admin
 from utils.helpers import get_unlocked_forms, get_level, hp_bar
+from config import OWNER_ID
 log = logging.getLogger(__name__)
 
 
@@ -46,6 +47,43 @@ def _profile_banner_media(player: dict):
     return None
 
 
+def _is_owner_or_admin(user_id: int) -> bool:
+    """Return True if user is owner or a registered admin."""
+    if user_id == OWNER_ID:
+        return True
+    return is_admin(user_id)
+
+
+# ── Banner request helpers ─────────────────────────────────────────────────
+
+def _save_banner_request(user_id: int, file_id: str | None, url: str | None):
+    """Store a pending banner request in MongoDB."""
+    col("banner_requests").update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "user_id": user_id,
+            "file_id": file_id,
+            "url": url,
+            "status": "pending",
+        }},
+        upsert=True,
+    )
+
+
+def _get_banner_request(user_id: int) -> dict | None:
+    return col("banner_requests").find_one({"user_id": user_id})
+
+
+def _delete_banner_request(user_id: int):
+    col("banner_requests").delete_one({"user_id": user_id})
+
+
+def _pending_requests() -> list:
+    return list(col("banner_requests").find({"status": "pending"}))
+
+
+# ── Shared helpers ─────────────────────────────────────────────────────────
+
 async def _safe_edit(query, text, **kwargs):
     """Edit a message safely, falling back to reply on failure."""
     try:
@@ -60,8 +98,11 @@ async def _safe_edit(query, text, **kwargs):
             log.error("[EXCEPTION] %s", e)
 
 
+# ── /profile ──────────────────────────────────────────────────────────────
+
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    log.info("[PROFILE] user_id=%s", user_id)
     player  = get_player(user_id)
     if not player:
         msg = update.message or update.callback_query.message
@@ -77,7 +118,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p_bar    = hp_bar(player['hp'], player['max_hp'])
     s_bar    = hp_bar(player['sta'], player['max_sta'])
 
-    # Show faction-appropriate mark (Cleaned up emojis for the new design)
     if player.get('faction') == 'slayer':
         mark_label = "🔥 𝙎𝙡𝙖𝙮𝙚𝙧 𝙈𝙖𝙧𝙠"
         mark = "Active" if player.get('slayer_mark') else "Locked"
@@ -85,7 +125,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark_label = "🌑 𝘿𝙚𝙢𝙤𝙣 𝙈𝙖𝙧𝙠"
         mark = "Active" if player.get('demon_mark') else "Locked"
 
-    # Clan info adjusted for new design
     clan_line = "╰➤🏯 𝘾𝙡𝙖𝙣 : None\n"
     if player.get('clan_id'):
         clan = col("clans").find_one({"id": player['clan_id']})
@@ -100,7 +139,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ])
 
-    # NEW CLEAN AESTHETIC TEXT DESIGN
     text = (
         f"┏━━━━━━━━━━━━━━━━\n"
         f"┣ ✮ 𝙉𝙖𝙢𝙚 : {uname_display}\n"
@@ -136,6 +174,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(text, parse_mode=None, reply_markup=keyboard)
     else:
         await update.message.reply_text(text, parse_mode=None, reply_markup=keyboard)
+
 
 async def profile_techniques(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
@@ -194,9 +233,9 @@ async def profile_more_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔮  Potential: *{player.get('potential', 0)}%*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚔️  Sword:     _{player.get('equipped_sword','None')}_"
-        + (_sword_buff(player.get('equipped_sword','')) ) + "\n"
+        + (_sword_buff(player.get('equipped_sword',''))) + "\n"
         + f"👘  Armor:     _{player.get('equipped_armor','None')}_"
-        + (_armor_buff(player.get('equipped_armor','')) ) + "\n"
+        + (_armor_buff(player.get('equipped_armor',''))) + "\n"
         f"💠  Skill Pts: *{player.get('skill_points', 0)} SP*\n"
         f"🍖  Devour:    *{player.get('devour_stacks', 0)}/20*\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -206,19 +245,69 @@ async def profile_more_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _safe_edit(query, text, parse_mode='Markdown', reply_markup=keyboard)
 
 
+# ── /setbanner — requires admin/owner approval ────────────────────────────
+
 async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    log.info("[SETBANNER] user_id=%s", user_id)
     player = get_player(user_id)
     if not player:
         await update.message.reply_text("No character found. Use /start first.")
         return
 
-    if not update.message.photo and not context.args:
+    # ── Admins & owner: apply instantly without approval ─────────────────
+    if _is_owner_or_admin(user_id):
+        if not update.message.photo and not context.args:
+            await update.message.reply_text(
+                "📌 *SET PROFILE BANNER* _(Admin/Owner — instant)_\n\n"
+                "Send a photo with `/setbanner`\n"
+                "or `/setbanner https://example.com/image.jpg`",
+                parse_mode='Markdown'
+            )
+            return
+
+        url = None
+        if context.args:
+            maybe_url = context.args[-1].strip()
+            if maybe_url.startswith("http"):
+                url = maybe_url
+
+        update_fields = {}
+        if update.message.photo:
+            update_fields["profile_banner_file_id"] = update.message.photo[-1].file_id
+            update_fields["profile_banner_url"] = None
+        elif url:
+            update_fields["profile_banner_url"] = url
+            update_fields["profile_banner_file_id"] = None
+        else:
+            await update.message.reply_text("Send a photo or a direct http image URL.")
+            return
+
+        update_player(user_id, **update_fields)
+        log.info("[SETBANNER] Admin/owner banner set instantly: user_id=%s", user_id)
         await update.message.reply_text(
-            "*SET PROFILE BANNER*\n\n"
-            "Send a photo with `/setbanner`\n"
-            "or send `/setbanner https://example.com/banner.jpg`\n\n"
-            "Your banner will appear on `/profile`.",
+            "✅ Banner set instantly _(admin privilege)_.\nUse `/profile` to preview.",
+            parse_mode='Markdown'
+        )
+        return
+
+    # ── Regular players: submit for approval ─────────────────────────────
+    if not update.message.photo and not context.args:
+        # Check if they already have a pending request
+        existing = _get_banner_request(user_id)
+        if existing and existing.get("status") == "pending":
+            await update.message.reply_text(
+                "⏳ *Your banner request is already pending approval.*\n\n"
+                "An admin will review it soon. Please wait.",
+                parse_mode='Markdown'
+            )
+            return
+
+        await update.message.reply_text(
+            "🖼 *SET PROFILE BANNER*\n\n"
+            "Send a photo with `/setbanner` or\n"
+            "`/setbanner https://example.com/image.jpg`\n\n"
+            "⚠️ _Your banner must be approved by an admin before it appears on your profile._",
             parse_mode='Markdown'
         )
         return
@@ -229,23 +318,199 @@ async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if maybe_url.startswith("http"):
             url = maybe_url
 
-    update_fields = {}
+    file_id = None
     if update.message.photo:
-        update_fields["profile_banner_file_id"] = update.message.photo[-1].file_id
-        update_fields["profile_banner_url"] = None
+        file_id = update.message.photo[-1].file_id
     elif url:
-        update_fields["profile_banner_url"] = url
-        update_fields["profile_banner_file_id"] = None
+        pass  # url already set
     else:
         await update.message.reply_text("Send a photo or a direct http image URL.")
         return
 
-    update_player(user_id, **update_fields)
+    _save_banner_request(user_id, file_id=file_id, url=url)
+    log.info("[SETBANNER] Banner request submitted for approval: user_id=%s", user_id)
+
+    # Notify the owner via DM with approve/deny buttons
+    player_name = player.get("name", str(user_id))
+    tg_username = player.get("username") or update.effective_user.username or ""
+    user_display = f"{player_name}" + (f" (@{tg_username})" if tg_username else f" [ID: {user_id}]")
+
+    approve_btn = InlineKeyboardButton("✅ Approve", callback_data=f"banner_approve_{user_id}")
+    deny_btn    = InlineKeyboardButton("❌ Deny",    callback_data=f"banner_deny_{user_id}")
+    keyboard    = InlineKeyboardMarkup([[approve_btn, deny_btn]])
+
+    caption = (
+        f"🖼 *Banner Approval Request*\n\n"
+        f"👤 Player: {user_display}\n"
+        f"🆔 ID: `{user_id}`\n\n"
+        f"React below to approve or deny."
+    )
+
+    try:
+        if file_id:
+            await context.bot.send_photo(
+                chat_id=OWNER_ID,
+                photo=file_id,
+                caption=caption,
+                parse_mode='Markdown',
+                reply_markup=keyboard,
+            )
+        elif url:
+            await context.bot.send_photo(
+                chat_id=OWNER_ID,
+                photo=url,
+                caption=caption,
+                parse_mode='Markdown',
+                reply_markup=keyboard,
+            )
+    except Exception as e:
+        log.error("[SETBANNER] Failed to notify owner: %s", e)
+
+    # Also notify all admins
+    try:
+        admins = list(col("admins").find({}))
+        for admin_doc in admins:
+            admin_uid = admin_doc.get("user_id")
+            if not admin_uid or admin_uid == OWNER_ID:
+                continue
+            try:
+                if file_id:
+                    await context.bot.send_photo(
+                        chat_id=admin_uid,
+                        photo=file_id,
+                        caption=caption,
+                        parse_mode='Markdown',
+                        reply_markup=keyboard,
+                    )
+                elif url:
+                    await context.bot.send_photo(
+                        chat_id=admin_uid,
+                        photo=url,
+                        caption=caption,
+                        parse_mode='Markdown',
+                        reply_markup=keyboard,
+                    )
+            except Exception as e:
+                log.error("[SETBANNER] Failed to notify admin %s: %s", admin_uid, e)
+    except Exception as e:
+        log.error("[SETBANNER] Failed to fetch admins for notification: %s", e)
+
     await update.message.reply_text(
-        "Profile banner updated.\nUse `/profile` to see it.",
+        "📨 *Banner request submitted!*\n\n"
+        "An admin will review your banner shortly.\n"
+        "You'll be notified when it's approved or denied.",
         parse_mode='Markdown'
     )
 
+
+async def banner_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles ✅ Approve / ❌ Deny button presses from admin/owner."""
+    query   = update.callback_query
+    await query.answer()
+    reviewer_id = query.from_user.id
+
+    if not _is_owner_or_admin(reviewer_id):
+        await query.answer("❌ You are not authorized to approve banners.", show_alert=True)
+        return
+
+    data = query.data  # "banner_approve_<uid>" or "banner_deny_<uid>"
+    parts = data.split("_")
+    action  = parts[1]          # "approve" or "deny"
+    user_id = int(parts[2])
+
+    request = _get_banner_request(user_id)
+    if not request or request.get("status") != "pending":
+        await query.edit_message_caption(
+            caption="⚠️ This request has already been handled or expired.",
+            reply_markup=None,
+        )
+        return
+
+    player = get_player(user_id)
+    player_name = player.get("name", str(user_id)) if player else str(user_id)
+
+    if action == "approve":
+        # Apply the banner
+        update_fields = {}
+        if request.get("file_id"):
+            update_fields["profile_banner_file_id"] = request["file_id"]
+            update_fields["profile_banner_url"]     = None
+        elif request.get("url"):
+            update_fields["profile_banner_url"]     = request["url"]
+            update_fields["profile_banner_file_id"] = None
+
+        update_player(user_id, **update_fields)
+        _delete_banner_request(user_id)
+        log.info("[SETBANNER] Approved by reviewer=%s for user=%s", reviewer_id, user_id)
+
+        # Update reviewer's message
+        await query.edit_message_caption(
+            caption=f"✅ *Banner APPROVED* for {player_name} (ID: `{user_id}`)\n_Reviewed by: {reviewer_id}_",
+            parse_mode='Markdown',
+            reply_markup=None,
+        )
+
+        # Notify the player
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "✅ *Your profile banner has been approved!*\n\n"
+                    "Use `/profile` to see it live. 🎉"
+                ),
+                parse_mode='Markdown',
+            )
+        except Exception as e:
+            log.error("[SETBANNER] Could not notify player %s of approval: %s", user_id, e)
+
+    else:  # deny
+        _delete_banner_request(user_id)
+        log.info("[SETBANNER] Denied by reviewer=%s for user=%s", reviewer_id, user_id)
+
+        await query.edit_message_caption(
+            caption=f"❌ *Banner DENIED* for {player_name} (ID: `{user_id}`)\n_Reviewed by: {reviewer_id}_",
+            parse_mode='Markdown',
+            reply_markup=None,
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "❌ *Your profile banner request was denied.*\n\n"
+                    "Please submit a different image that follows the community guidelines."
+                ),
+                parse_mode='Markdown',
+            )
+        except Exception as e:
+            log.error("[SETBANNER] Could not notify player %s of denial: %s", user_id, e)
+
+
+# ── /bannerpending — list all pending requests (admin/owner only) ──────────
+
+async def bannerpending(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_owner_or_admin(user_id):
+        await update.message.reply_text("❌ Admin only command.")
+        return
+
+    requests = _pending_requests()
+    if not requests:
+        await update.message.reply_text("✅ No pending banner requests.")
+        return
+
+    lines = [f"🖼 *Pending Banner Requests* ({len(requests)})\n"]
+    for r in requests:
+        uid = r["user_id"]
+        p   = get_player(uid)
+        name = p.get("name", "?") if p else "?"
+        src  = "📷 Photo" if r.get("file_id") else f"🔗 URL"
+        lines.append(f"• {name} (ID: `{uid}`) — {src}")
+
+    await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+
+
+# ── /clearbanner ───────────────────────────────────────────────────────────
 
 async def clearbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -255,4 +520,5 @@ async def clearbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     update_player(user_id, profile_banner_file_id=None, profile_banner_url=None)
-    await update.message.reply_text("Profile banner cleared.")
+    _delete_banner_request(user_id)
+    await update.message.reply_text("🗑 Profile banner cleared.")
