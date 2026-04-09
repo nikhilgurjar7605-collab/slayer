@@ -1,8 +1,10 @@
+import logging
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import get_player, get_arts, col, update_player
 from utils.helpers import get_unlocked_forms, get_level, hp_bar
+log = logging.getLogger(__name__)
 
 
 SWORD_BONUSES = {
@@ -54,8 +56,8 @@ async def _safe_edit(query, text, **kwargs):
             return
         try:
             await query.message.reply_text(text, **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
