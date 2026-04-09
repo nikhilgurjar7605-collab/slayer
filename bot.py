@@ -101,6 +101,7 @@ from handlers.info_cmd import info, infoall, view_suggestion
 from handlers.know import know, know_callback
 from handlers.give import give
 from handlers.event import event_cmd, events, eventend, eventlist, event_callback
+log = logging.getLogger(__name__)
 try:
     from handlers.event import eventresults, vote_cmd, vote_callback
 except ImportError:
@@ -146,7 +147,7 @@ from handlers.coop import (
 )
 from handlers.admin_tools import get_media_file_id
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s [%(name)s] [%(levelname)s] "%(message)s"', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def post_init(application):
@@ -268,8 +269,8 @@ async def _notify_human_check(update: Update, reason: str | None = None, remaini
             await update.callback_query.answer(text[:180], show_alert=True)
         elif update.message:
             await update.message.reply_text(text)
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -370,8 +371,8 @@ async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAUL
                 "🔧 Bot is under maintenance. Please wait!",
                 show_alert=True
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
         raise ApplicationHandlerStop
 
     # Block all messages/commands with maintenance message
@@ -384,8 +385,8 @@ async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAUL
     if update.message:
         try:
             await update.message.reply_text(maintenance_msg, parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
     raise ApplicationHandlerStop
 
@@ -425,8 +426,8 @@ async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         elif update.message:
             await update.message.reply_text(msg, parse_mode='Markdown')
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
     raise ApplicationHandlerStop  # block all further handlers
 
@@ -1009,7 +1010,7 @@ if __name__ == '__main__':
                 print(f"[HEALTH] Health check: {RENDER_URL}/healthz", flush=True)
             srv.serve_forever()
         except Exception as e:
-            print(f"[HEALTH ERROR] {e}", flush=True)
+            log.error("[HEALTH ERROR] %s", e)
             _health_started.set()  # unblock main even if health fails
 
     t = threading.Thread(target=_run_health, daemon=True)
@@ -1040,7 +1041,7 @@ if __name__ == '__main__':
                 print(f"[KEEP-ALIVE] ⚠️  attempt {failures} failed: {exc.reason}", flush=True)
             except Exception as exc:
                 failures += 1
-                print(f"[KEEP-ALIVE] ⚠️  attempt {failures} error: {exc}", flush=True)
+                log.error("[KEEP-ALIVE] %s", exc)
 
             wait = min(_PING_INTERVAL, _PING_INTERVAL * (2 ** max(0, failures - 1)))
             wait = min(wait, 13 * 60)
