@@ -1,3 +1,5 @@
+import logging
+log = logging.getLogger(__name__)
 """
 handlers/pets.py — Full Pet System for Demon Slayer RPG Bot
 
@@ -260,8 +262,8 @@ async def send_egg_drop_message(context, chat_id: int, egg_name: str):
             parse_mode="Markdown",
             reply_markup=kb
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_name: str, location: str = "asakusa"):
@@ -304,8 +306,8 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
         try:
             await send.reply_photo(photo=img_url, caption=text, parse_mode="Markdown", reply_markup=kb)
             return
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
     await send.reply_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
@@ -317,11 +319,11 @@ async def _edit_wild_pet_message(query, text: str, **kwargs):
             await query.edit_message_caption(caption=text, **kwargs)
         else:
             await query.edit_message_text(text, **kwargs)
-    except Exception:
+    except Exception as e:
         try:
             await query.message.reply_text(text, **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 def _build_tool_buttons(user_id: int, base_rate: float):
@@ -714,8 +716,8 @@ async def _show_pet_stats(update: Update, user_id: int, pet_name: str):
         try:
             await update.message.reply_photo(photo=img_url, caption=text, parse_mode="Markdown")
             return
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
@@ -783,8 +785,8 @@ async def hatchegg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.message.reply_photo(photo=img_url, caption=hatch_text, parse_mode="Markdown")
             return
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
     await update.message.reply_text(hatch_text, parse_mode="Markdown")
 
 
