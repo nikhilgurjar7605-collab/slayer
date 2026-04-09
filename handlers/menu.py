@@ -1,3 +1,4 @@
+import logging
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -11,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from utils.database import get_player
 from utils.guards import dm_only
+log = logging.getLogger(__name__)
 
 
 async def _safe_edit(query, text, **kwargs):
@@ -24,8 +26,8 @@ async def _safe_edit(query, text, **kwargs):
         if any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
             return
         raise
     except TimedOut:
@@ -80,16 +82,16 @@ async def close_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         try:
             await query.delete_message()
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
         try:
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text="Menu closed.",
                 reply_markup=ReplyKeyboardRemove(),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
     elif update.message:
         await update.message.reply_text(
             "Menu closed.",
