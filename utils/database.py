@@ -1,3 +1,5 @@
+import logging
+log = logging.getLogger(__name__)
 """
 MongoDB database layer for Demon Slayer RPG Bot.
 Drop-in replacement for the SQLite version — all function signatures identical.
@@ -243,8 +245,8 @@ def init_db():
                 {"$setOnInsert": {"user_id": uid, "added_at": datetime.now()}},
                 upsert=True
             )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 def migrate_db():
@@ -425,7 +427,9 @@ def set_battle_state(user_id, enemy, in_combat=False):
     drops = enemy.get("drops", [])
     if isinstance(drops, str):
         try: drops = json.loads(drops)
-        except: drops = []
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            drops = []
     col("battle_state").update_one(
         {"user_id": user_id},
         {"$set": {
@@ -521,8 +525,8 @@ def get_battle_log(user_id):
     if doc and doc.get("battle_log"):
         try:
             return json.loads(doc["battle_log"])
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
     return []
 
 
@@ -641,7 +645,9 @@ def get_clan(clan_id):
         # Ensure members is a list
         if isinstance(doc.get("members"), str):
             try: doc["members"] = json.loads(doc["members"])
-            except: doc["members"] = []
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
+                doc["members"] = []
         return doc
     return None
 
@@ -652,7 +658,9 @@ def get_clan_by_name(name):
         doc.pop("_id", None)
         if isinstance(doc.get("members"), str):
             try: doc["members"] = json.loads(doc["members"])
-            except: doc["members"] = []
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
+                doc["members"] = []
         return doc
     return None
 
@@ -668,7 +676,9 @@ def get_clan_members(clan_data):
     members = clan_data.get("members", [])
     if isinstance(members, str):
         try: return json.loads(members)
-        except: return []
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            return []
     return members if isinstance(members, list) else []
 
 
@@ -681,7 +691,9 @@ def get_clan_treasury(clan_id):
     treasury = doc.get("treasury", [])
     if isinstance(treasury, str):
         try: return json.loads(treasury)
-        except: return []
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            return []
     return treasury if isinstance(treasury, list) else []
 
 
@@ -891,7 +903,7 @@ def get_market_listings(search=None):
 def get_listing(listing_id):
     try:
         lid = int(listing_id)
-    except Exception:
+    except Exception as e:
         lid = listing_id
     doc = col("market_listings").find_one({"id": lid})
     if not doc:
@@ -921,7 +933,7 @@ def add_referral(referrer_id, referred_id):
             "created_at": datetime.now()
         })
         return True
-    except Exception:
+    except Exception as e:
         return False
 
 
