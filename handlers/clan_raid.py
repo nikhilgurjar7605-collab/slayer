@@ -1,3 +1,5 @@
+import logging
+log = logging.getLogger(__name__)
 """
 Clan Raid System — Full explore-style combat.
 Each player gets a real battle screen (Attack/Technique/Items buttons)
@@ -137,7 +139,7 @@ async def _start_raid_turn(context, user_id: int, raid: dict, intro_text: str = 
         context.user_data["pressure"] = pressure
         context.user_data["combo"]    = 0
         skill_info = ""
-    except Exception:
+    except Exception as e:
         pdisp = ""
         skill_info = ""
 
@@ -215,8 +217,8 @@ async def _end_raid_turn(context, user_id: int, raid_clan_id: str, dmg_dealt: in
                     ),
                     parse_mode="Markdown"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         return
 
     # Notify next players
@@ -242,8 +244,8 @@ async def _end_raid_turn(context, user_id: int, raid_clan_id: str, dmg_dealt: in
                 text=notify,
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 # ── MAIN /clanraid COMMAND ────────────────────────────────────────────────
@@ -551,8 +553,8 @@ async def clanraid(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ),
                     parse_mode="Markdown"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
             lines.append(f"  {pdata['name']:15} *{pdata['damage']:,}* → *+{yen_reward:,}¥*" +
                          (f" + {item_name}" if item_name else ""))
 
@@ -614,7 +616,7 @@ async def raid_attack_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         if crit:
             base_dmg = int(base_dmg * 1.5)
             log.append("💥 *CRITICAL HIT!*")
-    except Exception:
+    except Exception as e:
         base_dmg = player["str_stat"] * 3 + random.randint(15, 40)
         crit     = False
 
@@ -660,8 +662,8 @@ async def raid_attack_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         context.user_data["combo"] = context.user_data.get("combo", 0) + 1
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
     log.insert(0, f"⚔️ You hit for *{base_dmg:,}*! Boss: *{boss_dmg}* back.")
     player_after = get_player(user_id)
@@ -763,7 +765,7 @@ async def raid_use_form_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         form_num = int(query.data.split("_")[2])
-    except Exception:
+    except Exception as e:
         await query.answer("Invalid form!", show_alert=True)
         return
 
@@ -1043,5 +1045,5 @@ async def clanrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"📢 Your clan role has been updated to {icons[new_role]} *{new_role.title()}* by {player['name']}.",
             parse_mode="Markdown"
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
