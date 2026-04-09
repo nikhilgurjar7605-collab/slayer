@@ -1,3 +1,4 @@
+import logging
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -9,6 +10,7 @@ from utils.helpers import get_level, hp_bar
 from utils.guards import group_only, no_button_spam
 from utils.pressure import calc_pressure, pressure_display
 from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS
+log = logging.getLogger(__name__)
 
 # ── PRESS‑FORMAT LOG HELPER (copied from explore.py) ─────────────────────
 def _fmt_press(lines: list) -> str:
@@ -59,8 +61,8 @@ async def _safe_edit(query, text, **kwargs):
         elif any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         else:
             raise
     except TimedOut:
@@ -731,8 +733,8 @@ async def duel_use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _send_art_image(context, query.message.chat_id, art_name,
                               caption=f"⚔️ *{art_name}* — Form {form_num}: *{form['name']}*",
                               form_num=form_num)
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
     # Build clean log — header line + damage + effects
     log_lines.extend([
@@ -1136,5 +1138,5 @@ async def duel_details_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     try:
         await _safe_edit(query, '\n'.join(lines), parse_mode='Markdown', reply_markup=kb)
-    except Exception:
+    except Exception as e:
         await query.answer('\n'.join(lines[:5]), show_alert=True)
