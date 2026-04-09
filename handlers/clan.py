@@ -1,3 +1,4 @@
+import logging
 from telegram.error import BadRequest, TimedOut
 import json
 import time
@@ -5,6 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import get_player, update_player, get_clan, get_clan_by_name, col
 from datetime import datetime
+log = logging.getLogger(__name__)
 
 CLAN_MAX_MEMBERS  = 20    # max players per clan
 CLAN_CREATE_COST  = 50000 # yen to create a clan
@@ -19,15 +21,17 @@ async def _safe_edit(query, text, **kwargs):
             return
         try:
             await query.message.reply_text(text, **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 def get_clan_members(clan_data):
     m = clan_data.get('members', [])
     if isinstance(m, str):
         try: return json.loads(m)
-        except: return []
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            return []
     return m if isinstance(m, list) else []
 
 
@@ -177,7 +181,7 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👥 Members: {len(members)}/{CLAN_MAX_MEMBERS}",
                 parse_mode='Markdown'
             )
-        except Exception:
+        except Exception as e:
             # Leader blocked the bot or hasn't DM'd it — let them know
             await update.message.reply_text(
                 f"❌ *Could not reach the clan leader!*\n\n"
@@ -216,7 +220,7 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard
             )
             await update.message.reply_text(f"✅ Invite sent to *{target['name']}*!", parse_mode='Markdown')
-        except Exception:
+        except Exception as e:
             await update.message.reply_text("❌ Could not reach that player.")
 
     elif sub == 'leave':
@@ -310,8 +314,8 @@ async def clan_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             ),
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 async def clan_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -559,8 +563,8 @@ async def clanannounce(update, context):
                 parse_mode='Markdown'
             )
             sent += 1
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
     await update.message.reply_text(f"✅ Announced to *{sent}* members.", parse_mode='Markdown')
 
 
