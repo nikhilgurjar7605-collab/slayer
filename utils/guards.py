@@ -1,3 +1,5 @@
+import logging
+log = logging.getLogger(__name__)
 """
 Guards: private-chat redirects and button ownership checks.
 """
@@ -77,8 +79,8 @@ def dm_only(func):
                         parse_mode="Markdown",
                         reply_markup=keyboard,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.error("[EXCEPTION] %s", e)
             elif update.message:
                 await update.message.reply_text(
                     dm_msg,
@@ -160,8 +162,8 @@ def no_button_spam(func):
             # Already processing — silently dismiss the duplicate tap
             try:
                 await query.answer()
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
             return
 
         async with lock:
