@@ -206,7 +206,10 @@ async def profile_techniques(update: Update, context: ContextTypes.DEFAULT_TYPE)
             lines.append(f"  {art['art_emoji']} *{art['art_name']}*  _({art['source']})_")
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='goto_profile')]])
-    await _safe_edit(query, '\n'.join(lines), parse_mode='Markdown', reply_markup=keyboard)
+    try:
+        await query.edit_message_caption(caption='\n'.join(lines), parse_mode='Markdown', reply_markup=keyboard)
+    except Exception:
+        await _safe_edit(query, '\n'.join(lines), parse_mode='Markdown', reply_markup=keyboard)
 
 
 async def profile_more_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -242,7 +245,10 @@ async def profile_more_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='goto_profile')]])
-    await _safe_edit(query, text, parse_mode='Markdown', reply_markup=keyboard)
+    try:
+        await query.edit_message_caption(caption=text, parse_mode='Markdown', reply_markup=keyboard)
+    except Exception:
+        await _safe_edit(query, text, parse_mode='Markdown', reply_markup=keyboard)
 
 
 # ── /setbanner — requires admin/owner approval ────────────────────────────
@@ -332,6 +338,8 @@ async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Notify the owner via DM with approve/deny buttons
     player_name = player.get("name", str(user_id))
+    player_username = player.get("username") or ""
+    player_display = f"{player_name}" + (f" (@{player_username})" if player_username else f" [ID: {user_id}]")
     tg_username = player.get("username") or update.effective_user.username or ""
     user_display = f"{player_name}" + (f" (@{tg_username})" if tg_username else f" [ID: {user_id}]")
 
@@ -450,6 +458,23 @@ async def banner_decision_callback(update: Update, context: ContextTypes.DEFAULT
             reply_markup=None,
         )
 
+        # Log approval to owner DM (include reviewer + requester)
+        try:
+            reviewer_name = query.from_user.full_name
+            reviewer_username = query.from_user.username or ""
+            reviewer_display = f"{reviewer_name}" + (f" (@{reviewer_username})" if reviewer_username else f" [ID: {reviewer_id}]")
+            await context.bot.send_message(
+                chat_id=OWNER_ID,
+                text=(
+                    "✅ *Banner Approved*\n\n"
+                    f"Reviewer: {reviewer_display} (ID: `{reviewer_id}`)\n"
+                    f"Requester: {player_display} (ID: `{user_id}`)"
+                ),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            log.error("[SETBANNER] Failed to log approval to owner: %s", e)
+
         # Notify the player
         try:
             await context.bot.send_message(
@@ -472,6 +497,23 @@ async def banner_decision_callback(update: Update, context: ContextTypes.DEFAULT
             parse_mode='Markdown',
             reply_markup=None,
         )
+
+        # Log denial to owner DM (include reviewer + requester)
+        try:
+            reviewer_name = query.from_user.full_name
+            reviewer_username = query.from_user.username or ""
+            reviewer_display = f"{reviewer_name}" + (f" (@{reviewer_username})" if reviewer_username else f" [ID: {reviewer_id}]")
+            await context.bot.send_message(
+                chat_id=OWNER_ID,
+                text=(
+                    "❌ *Banner Denied*\n\n"
+                    f"Reviewer: {reviewer_display} (ID: `{reviewer_id}`)\n"
+                    f"Requester: {player_display} (ID: `{user_id}`)"
+                ),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            log.error("[SETBANNER] Failed to log denial to owner: %s", e)
 
         try:
             await context.bot.send_message(
@@ -514,11 +556,28 @@ async def bannerpending(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clearbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    player = get_player(user_id)
+    target_id = None
+    if update.message.reply_to_message:
+        target_id = update.message.reply_to_message.from_user.id
+    elif context.args and context.args[0].isdigit():
+        target_id = int(context.args[0])
+
+    if target_id and not _is_owner_or_admin(user_id):
+        await update.message.reply_text("❌ Admin only command.")
+        return
+
+    if target_id is None:
+        target_id = user_id
+
+    player = get_player(target_id)
     if not player:
         await update.message.reply_text("No character found. Use /start first.")
         return
 
-    update_player(user_id, profile_banner_file_id=None, profile_banner_url=None)
-    _delete_banner_request(user_id)
-    await update.message.reply_text("🗑 Profile banner cleared.")
+    update_player(target_id, profile_banner_file_id=None, profile_banner_url=None)
+    _delete_banner_request(target_id)
+
+    if target_id == user_id:
+        await update.message.reply_text("🗑 Profile banner cleared.")
+    else:
+        await update.message.reply_text(f"🗑 Profile banner cleared for ID: {target_id}.")
