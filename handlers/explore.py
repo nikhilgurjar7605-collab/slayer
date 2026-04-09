@@ -19,7 +19,7 @@ from handlers.pets import (
     get_pet_passives, send_egg_drop_message,
 )
 from utils.pressure import calc_pressure, pressure_display, get_chaos_modifier
-from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS, SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES
+from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS, SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES, ENEMY_IMAGES
 from utils.effects import (apply_form_effect, process_dot_effects,
                             process_enemy_dots, is_enemy_frozen, is_enemy_staggered,
                             apply_enemy_context_effects)
@@ -159,6 +159,34 @@ async def _send_art_image(context, chat_id, art_name: str, caption: str = "", re
         # Neither option available — silently skip
     except Exception:
         pass  # Never crash — image is optional decoration
+
+
+async def _send_enemy_image(context, chat_id: int, enemy_name: str, caption: str = ""):
+    """
+    Send enemy image using file_id or URL from ENEMY_IMAGES config.
+    Falls back silently if no image is configured — never crashes.
+    Usage: await _send_enemy_image(context, chat_id, "Void Tyrant", caption)
+    """
+    try:
+        img = ENEMY_IMAGES.get(enemy_name, "").strip()
+        if not img:
+            return  # No image configured — silent skip
+        
+        send_kwargs = dict(
+            chat_id=chat_id,
+            caption=caption[:1024] if caption else enemy_name,
+            parse_mode="Markdown",
+        )
+        
+        # file_id: long alphanumeric string from Telegram
+        # URL: starts with http
+        if img.startswith("http"):
+            await context.bot.send_photo(photo=img, **send_kwargs)
+        else:
+            # Treat as Telegram file_id
+            await context.bot.send_photo(photo=img, **send_kwargs)
+    except Exception:
+        pass  # Image is decorative — never break the game over a missing image
 
 
 def get_enemies_for_region(player):
@@ -562,10 +590,12 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         user_id = query.from_user.id
+        _chat_id = query.message.chat_id
         async def send(text, **kwargs):
             return await query.message.reply_text(text, **kwargs)
     else:
         user_id = update.effective_user.id
+        _chat_id = update.message.chat_id
         async def send(text, **kwargs):
             return await update.message.reply_text(text, **kwargs)
 
@@ -706,6 +736,13 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"⭐ *Reward:* {enemy['xp']} XP | 💰 {enemy['yen']}¥\n\n"
         f"Press *Fight* to engage or *Find Different Enemy* to search again!"
+    )
+
+    # Send enemy image if configured
+    _enemy_img_caption = f"{enemy['emoji']} *{enemy['name']}*  {enemy['threat']}"
+    import asyncio as _asyncio
+    _asyncio.ensure_future(
+        _send_enemy_image(context, _chat_id, enemy['name'], _enemy_img_caption)
     )
 
     await send(encounter_text, parse_mode='Markdown', reply_markup=build_encounter_keyboard())
