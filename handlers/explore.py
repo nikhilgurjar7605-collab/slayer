@@ -65,17 +65,27 @@ MAX_DEVOUR_STACKS = 25
 
 # ── SAFE EDIT HELPER ──────────────────────────────────────────────────────
 async def safe_edit(query, text, **kwargs):
-    """Edit a message, falling back to reply_text on failure."""
+    """Edit a message, safely converting photos to text when needed."""
     try:
+        # If the message contains a photo/media, we can't 'edit' it into text.
+        # We must delete the old media message and send a fresh text message.
+        if query.message and (query.message.photo or query.message.document or query.message.video):
+            chat_id = query.message.chat_id
+            try: await query.message.delete()
+            except Exception: pass
+            await query.get_bot().send_message(chat_id=chat_id, text=text, **kwargs)
+            return
+            
         await query.edit_message_text(text, **kwargs)
     except BadRequest as e:
         err = str(e)
-        if "Message is not modified" in err:
+        if "not modified" in err:
             return  # Already showing this content — harmless
-        elif "Message can't be edited" in err or "message to edit not found" in err.lower():
-            await query.message.reply_text(text, **kwargs)
         else:
-            raise
+            # If editing fails for ANY reason, fallback to sending a new message
+            try: await query.message.delete()
+            except Exception: pass
+            await query.get_bot().send_message(chat_id=query.message.chat_id, text=text, **kwargs)
     except TimedOut:
         pass  # Transient network issue — safe to ignore
 
@@ -738,14 +748,40 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Press *Fight* to engage or *Find Different Enemy* to search again!"
     )
 
-    # Send enemy image if configured
-    _enemy_img_caption = f"{enemy['emoji']} *{enemy['name']}*  {enemy['threat']}"
-    import asyncio as _asyncio
-    _asyncio.ensure_future(
-        _send_enemy_image(context, _chat_id, enemy['name'], _enemy_img_caption)
-    )
-
-    await send(encounter_text, parse_mode='Markdown', reply_markup=build_encounter_keyboard())
+    # Combine image and text into a single message!
+    img_url = ENEMY_IMAGES.get(enemy['name'], "").strip()
+    sent_photo = False
+    
+    if img_url:
+        try:
+            # Delete previous message if clicking "Find Different Enemy" to avoid chat clutter
+            if update.callback_query:
+                try: await update.callback_query.message.delete()
+                except Exception: pass
+                
+            await context.bot.send_photo(
+                chat_id=_chat_id,
+                photo=img_url,
+                caption=encounter_text,
+                parse_mode='Markdown',
+                reply_markup=build_encounter_keyboard()
+            )
+            sent_photo = True
+        except Exception:
+            pass # Fall back to text if image is invalid or failed to send
+            
+    # Fallback to text-only if no image exists or photo sending failed
+    if not sent_photo:
+        if update.callback_query:
+            try: await update.callback_query.message.delete()
+            except Exception: pass
+            
+        await context.bot.send_message(
+            chat_id=_chat_id,
+            text=encounter_text,
+            parse_mode='Markdown',
+            reply_markup=build_encounter_keyboard()
+        )
 
 
 # ── PRIZE PREVIEW ─────────────────────────────────────────────────────────
