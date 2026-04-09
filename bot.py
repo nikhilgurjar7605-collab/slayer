@@ -1,4 +1,35 @@
 import logging
+
+# ── Configure logging FIRST — before any handler/util imports ──────────────
+# basicConfig must run before any module-level getLogger() calls, otherwise
+# those loggers receive a NullHandler and produce zero output.
+
+_fmt_default = logging.Formatter('%(asctime)s [%(name)s] [%(levelname)s] "%(message)s"')
+_fmt_explore = logging.Formatter('%(asctime)s ⚔️  [EXPLORE] [%(levelname)s] "%(message)s"')
+
+# Root handler — catches everything at INFO+
+_root_handler = logging.StreamHandler()
+_root_handler.setFormatter(_fmt_default)
+_root_handler.setLevel(logging.INFO)
+
+logging.root.setLevel(logging.INFO)
+logging.root.addHandler(_root_handler)
+
+# Silence noisy telegram/httpx libraries — keep only WARNING+
+for _noisy in ("httpx", "telegram", "apscheduler"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+# ── Explore-specific handler: prints with ⚔️ prefix so it stands out ────────
+class _ExploreFilter(logging.Filter):
+    def filter(self, record):
+        return record.name == "handlers.explore"
+
+_explore_handler = logging.StreamHandler()
+_explore_handler.setFormatter(_fmt_explore)
+_explore_handler.setLevel(logging.DEBUG)
+_explore_handler.addFilter(_ExploreFilter())
+logging.root.addHandler(_explore_handler)
+
 from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,7 +43,7 @@ from utils.database import init_db, get_player, col
 from handlers.start import (start, get_name, choose_faction, choose_story, captcha_callback,
                             WAITING_NAME, WAITING_CAPTCHA, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
-from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner
+from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, banner_decision_callback, bannerpending
 from handlers.explore import (explore, fight, attack, technique, choose_art, use_form,
                                items_menu, use_item, party_battle, flee, prize, form_info,
                                switch_ally, dismiss_ally_callback, ally_fainted_callback)
@@ -101,7 +132,6 @@ from handlers.info_cmd import info, infoall, view_suggestion
 from handlers.know import know, know_callback
 from handlers.give import give
 from handlers.event import event_cmd, events, eventend, eventlist, event_callback
-log = logging.getLogger(__name__)
 try:
     from handlers.event import eventresults, vote_cmd, vote_callback
 except ImportError:
@@ -147,7 +177,6 @@ from handlers.coop import (
 )
 from handlers.admin_tools import get_media_file_id
 
-logging.basicConfig(format='%(asctime)s [%(name)s] [%(levelname)s] "%(message)s"', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def post_init(application):
@@ -702,6 +731,7 @@ def main():
         ('profile',         profile),
         ('setbanner',       setbanner),
         ('clearbanner',     clearbanner),
+        ('bannerpending',   bannerpending),
         ('rankings',        rankings),
         ('help',            help_command),
         ('myid',            myid),
@@ -925,6 +955,7 @@ def main():
         doc_restore_handler
     ))
     app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
+    app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'))
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
