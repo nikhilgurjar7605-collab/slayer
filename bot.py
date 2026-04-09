@@ -35,7 +35,7 @@ from handlers.gift import gift
 from handlers.social import check, givesp as user_givesp
 from handlers.pets import (
     pets, pet, hatchegg, feedpet, petskill,
-    petbattle, releasepet,
+    petbattle, releasepet, catch,
     pet_catch_callback, pet_flee_callback, pet_hatch_callback,
 )
 from handlers.lottery import lottery, lottery_play
@@ -828,6 +828,7 @@ def main():
         ('givesp',          givesp),
         ('check',           check),
         ('pets',            pets),
+        ('catch',           catch),
         ('pet',             pet),
         ('hatchegg',        hatchegg),
         ('feedpet',         feedpet),
