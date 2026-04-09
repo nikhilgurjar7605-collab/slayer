@@ -1149,3 +1149,73 @@ async def releasepet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
   
+
+
+# ── /catch — redirect users who try to type it as a command ───────────────
+async def catch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /catch — Users who try to type this get a helpful redirect.
+    Wild pets appear automatically during /explore and show a Catch button.
+    """
+    user_id = update.effective_user.id
+    active_wild = context.user_data.get(f"wild_pet_{user_id}")
+    
+    if active_wild:
+        # There's actually an active wild encounter — show tool selection
+        from config import PETS, PET_RARITY_EMOJI
+        data = PETS.get(active_wild, {})
+        rarity_e = PET_RARITY_EMOJI.get(data.get("rarity", "common"), "⚪")
+        
+        # Build tool keyboard
+        CATCHING_TOOLS = [
+            ("Sacred Chain",  "⛓️",  0.40),
+            ("Demon Lure",    "🔴",  0.25),
+            ("Spirit Orb",    "🔵",  0.15),
+            ("Pet Trap",      "🪤",  0.00),
+        ]
+        from utils.database import col as _col
+        tool_buttons = []
+        for tool_name, emoji, bonus in CATCHING_TOOLS:
+            doc = _col("inventory").find_one(
+                {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
+            )
+            qty = doc.get("quantity", 0) if doc else 0
+            if qty > 0:
+                rate = int((data.get("catch_rate", 0.5) + bonus) * 100)
+                label = f"{emoji} {tool_name} ×{qty}  ({rate}% catch)"
+                tool_buttons.append([InlineKeyboardButton(label, callback_data=f"pet_catch_{user_id}_{tool_name.replace(' ','_')}")])
+        
+        if not tool_buttons:
+            await update.message.reply_text(
+                f"🌿 *{active_wild}* is nearby but you have no catching tools!\n\n"
+                "Buy from shop:\n"
+                "🪤 Pet Trap — 500¥\n"
+                "🔵 Spirit Orb — 1,500¥\n"
+                "🔴 Demon Lure — 3,000¥\n"
+                "⛓️ Sacred Chain — 8,000¥",
+                parse_mode="Markdown"
+            )
+            return
+        
+        tool_buttons.append([InlineKeyboardButton("🏃 Flee", callback_data=f"pet_flee_{user_id}")])
+        kb = InlineKeyboardMarkup(tool_buttons)
+        await update.message.reply_text(
+            f"🌿 *{active_wild}* {rarity_e} is still nearby!\n"
+            "Choose your catching tool:",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+    else:
+        # No active encounter — explain how it works
+        await update.message.reply_text(
+            "🌿 *How to catch pets:*\n\n"
+            "Wild pets appear randomly while you explore.\n"
+            "When one appears, a *🪤 Catch* button will show — tap it!\n\n"
+            "Make sure you have a catching tool:\n"
+            "🪤 *Pet Trap* — 500¥ (basic)\n"
+            "🔵 *Spirit Orb* — 1,500¥ (+15% catch rate)\n"
+            "🔴 *Demon Lure* — 3,000¥ (+25% catch rate)\n"
+            "⛓️ *Sacred Chain* — 8,000¥ (+40% catch rate)\n\n"
+            "Buy tools with /shop then go `/explore`!",
+            parse_mode="Markdown"
+        )
