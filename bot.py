@@ -617,6 +617,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('pet_catch_'): await pet_catch_callback(update, context)
     elif data.startswith('pet_flee_'):  await pet_flee_callback(update, context)
     elif data.startswith('pet_hatch_'): await pet_hatch_callback(update, context)
+    elif data.startswith('banner_approve_') or data.startswith('banner_deny_'):
+        await banner_decision_callback(update, context)
     elif data == 'noop':               await update.callback_query.answer()
     elif data.startswith('inv_materials'): await inv_materials_callback(update, context)
     elif data == 'inv_back':         await inv_back_callback(update, context)
