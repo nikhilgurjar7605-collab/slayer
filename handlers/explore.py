@@ -19,7 +19,7 @@ from handlers.pets import (
     get_pet_passives, send_egg_drop_message,
 )
 from utils.pressure import calc_pressure, pressure_display, get_chaos_modifier
-from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS, SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES, ENEMY_IMAGES
+from config import TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS, SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES
 from utils.effects import (apply_form_effect, process_dot_effects,
                             process_enemy_dots, is_enemy_frozen, is_enemy_staggered,
                             apply_enemy_context_effects)
@@ -65,29 +65,17 @@ MAX_DEVOUR_STACKS = 25
 
 # ── SAFE EDIT HELPER ──────────────────────────────────────────────────────
 async def safe_edit(query, text, **kwargs):
-    """Edit a message, safely converting photos to text when needed."""
+    """Edit a message, falling back to reply_text on failure."""
     try:
-        bot = query.bot
-        chat_id = query.message.chat_id
-        
-        # If the message contains a photo/media, we can't 'edit' it into text.
-        # We must delete the old media message and send a fresh text message.
-        if query.message and (query.message.photo or query.message.document or query.message.video):
-            try: await query.message.delete()
-            except Exception: pass
-            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-            return
-            
         await query.edit_message_text(text, **kwargs)
     except BadRequest as e:
         err = str(e)
-        if "not modified" in err.lower():
+        if "Message is not modified" in err:
             return  # Already showing this content — harmless
+        elif "Message can't be edited" in err or "message to edit not found" in err.lower():
+            await query.message.reply_text(text, **kwargs)
         else:
-            # If editing fails for ANY reason, fallback to sending a new message
-            try: await query.message.delete()
-            except Exception: pass
-            await query.bot.send_message(chat_id=query.message.chat_id, text=text, **kwargs)
+            raise
     except TimedOut:
         pass  # Transient network issue — safe to ignore
 
@@ -171,34 +159,6 @@ async def _send_art_image(context, chat_id, art_name: str, caption: str = "", re
         # Neither option available — silently skip
     except Exception:
         pass  # Never crash — image is optional decoration
-
-
-async def _send_enemy_image(context, chat_id: int, enemy_name: str, caption: str = ""):
-    """
-    Send enemy image using file_id or URL from ENEMY_IMAGES config.
-    Falls back silently if no image is configured — never crashes.
-    Usage: await _send_enemy_image(context, chat_id, "Void Tyrant", caption)
-    """
-    try:
-        img = ENEMY_IMAGES.get(enemy_name, "").strip()
-        if not img:
-            return  # No image configured — silent skip
-        
-        send_kwargs = dict(
-            chat_id=chat_id,
-            caption=caption[:1024] if caption else enemy_name,
-            parse_mode="Markdown",
-        )
-        
-        # file_id: long alphanumeric string from Telegram
-        # URL: starts with http
-        if img.startswith("http"):
-            await context.bot.send_photo(photo=img, **send_kwargs)
-        else:
-            # Treat as Telegram file_id
-            await context.bot.send_photo(photo=img, **send_kwargs)
-    except Exception:
-        pass  # Image is decorative — never break the game over a missing image
 
 
 def get_enemies_for_region(player):
@@ -419,13 +379,10 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         _pet_atk = get_pet_passives(user_id).get('atk_pct', 0)
         if _pet_atk:
             dmg = int(dmg * (1 + _pet_atk))
-            if context is not None:
-                context.user_data[f'pet_atk_boost_applied_{user_id}'] = _pet_atk
         # Pet skill: Death Howl low-HP ATK boost
         if context and context.user_data.get(f'pet_low_hp_boost_{user_id}'):
             _boost = context.user_data.pop(f'pet_low_hp_boost_{user_id}')
             dmg = int(dmg * (1 + _boost))
-            context.user_data[f'pet_low_hp_boost_applied_{user_id}'] = _boost
         # Pet skill: Talon Strike crit boost (applied via crit_chance in attack handler)
     return dmg
 
@@ -497,13 +454,6 @@ def _calculate_form_hit_damage(player, form, state, owned_skills=None, user_id=N
         user_id=user_id,
         context=context,
     )
-    if context and user_id:
-        _pet_atk_applied = context.user_data.pop(f'pet_atk_boost_applied_{user_id}', 0)
-        if _pet_atk_applied:
-            log.append(f"ðŸ¾ Pet power: +{int(_pet_atk_applied * 100)}% ATK")
-        _pet_low_hp_applied = context.user_data.pop(f'pet_low_hp_boost_applied_{user_id}', 0)
-        if _pet_low_hp_applied:
-            log.append(f"ðŸº Death Howl: +{int(_pet_low_hp_applied * 100)}% ATK")
     dmg = int(dmg * _technique_level_scale(player))
 
     combo = context.user_data.get('combo', 0) if context else 0
@@ -602,12 +552,10 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         user_id = query.from_user.id
-        _chat_id = query.message.chat_id
         async def send(text, **kwargs):
             return await query.message.reply_text(text, **kwargs)
     else:
         user_id = update.effective_user.id
-        _chat_id = update.message.chat_id
         async def send(text, **kwargs):
             return await update.message.reply_text(text, **kwargs)
 
@@ -619,29 +567,8 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send("❌ You are banned from this game.")
         return
 
-    if context.user_data.get(f"wild_pet_active_{user_id}"):
-        await send(
-            "🪤 *Wild pet encounter in progress!*\n\n"
-            "Use the Catch/Flee buttons on the encounter first.",
-            parse_mode='Markdown'
-        )
-        return
-
     existing = get_battle_state(user_id)
     if existing and existing.get('in_combat'):
-        enemy_name = existing.get('enemy_name', 'an enemy')
-        enemy_hp   = existing.get('enemy_hp', '?')
-        enemy_max  = existing.get('enemy_max_hp', '?')
-        await send(
-            f"âš”ï¸ *BATTLE IN PROGRESS!*\n"
-            f"â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\n"
-            f"You are currently fighting *{enemy_name}*\n"
-            f"â¤ï¸ Enemy HP: *{enemy_hp}/{enemy_max}*\n\n"
-            f"_Finish your current battle first!_\n"
-            f"Type `/unstuck` if you need to reset the battle.",
-            parse_mode='Markdown'
-        )
-        return
         # Only auto-unstuck when user TYPES /explore as a command
         # Button presses (from menu) show the active battle warning
         if update.message and update.effective_chat and update.effective_chat.type == 'private':
@@ -750,58 +677,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Press *Fight* to engage or *Find Different Enemy* to search again!"
     )
 
-    # Combine image and text into a single message!
-    img_url = ENEMY_IMAGES.get(enemy['name'], "").strip()
-    sent_photo = False
-    
-    if img_url:
-        try:
-            # Delete previous message if clicking "Find Different Enemy" to avoid chat clutter
-            if update.callback_query:
-                try: await update.callback_query.message.delete()
-                except Exception: pass
-
-            import os
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            full_path = os.path.join(base_dir, img_url)
-            
-            # Check if it's a local file (e.g. 'images/enemies/demon.jpg')
-            if os.path.isfile(full_path):
-                with open(full_path, 'rb') as f:
-                    await context.bot.send_photo(
-                        chat_id=_chat_id,
-                        photo=f,
-                        caption=encounter_text,
-                        parse_mode='Markdown',
-                        reply_markup=build_encounter_keyboard()
-                    )
-                sent_photo = True
-            else:
-                # It's an HTTP URL or a Telegram file_id
-                await context.bot.send_photo(
-                    chat_id=_chat_id,
-                    photo=img_url,
-                    caption=encounter_text,
-                    parse_mode='Markdown',
-                    reply_markup=build_encounter_keyboard()
-                )
-                sent_photo = True
-        except Exception as e:
-            print(f"[Explore Error] Failed to send image: {e}")
-            pass # Fall back to text if image is invalid or failed to send
-            
-    # Fallback to text-only if no image exists or photo sending failed
-    if not sent_photo:
-        if update.callback_query:
-            try: await update.callback_query.message.delete()
-            except Exception: pass
-            
-        await context.bot.send_message(
-            chat_id=_chat_id,
-            text=encounter_text,
-            parse_mode='Markdown',
-            reply_markup=build_encounter_keyboard()
-        )
+    await send(encounter_text, parse_mode='Markdown', reply_markup=build_encounter_keyboard())
 
 
 # ── PRIZE PREVIEW ─────────────────────────────────────────────────────────
@@ -939,12 +815,6 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     attack_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
     base_dmg = calc_dmg(player, owned_skills=owned_skills, user_id=user_id, context=context)
     base_dmg = int(base_dmg * pressure['atk_mult'] * chaos_mod)
-    _pet_atk_applied = context.user_data.pop(f'pet_atk_boost_applied_{user_id}', 0)
-    if _pet_atk_applied:
-        log.append(f"ðŸ¾ Pet power: +{int(_pet_atk_applied * 100)}% ATK")
-    _pet_low_hp_applied = context.user_data.pop(f'pet_low_hp_boost_applied_{user_id}', 0)
-    if _pet_low_hp_applied:
-        log.append(f"ðŸº Death Howl: +{int(_pet_low_hp_applied * 100)}% ATK")
     def_reduce = attack_ctx.get('enemy_def_reduce', 0)
     if def_reduce > 0:
         base_dmg += def_reduce
@@ -953,12 +823,8 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         base_dmg = int(base_dmg * 1.25)
         log.append(f"COMBO x{combo}! +25% damage!")
     _pet_crit = context.user_data.pop(f'pet_crit_boost_{user_id}', 0)
-    base_crit = 0.15 + bonuses.get('crit_bonus', 0)
-    crit_chance = base_crit + _pet_crit
-    crit_roll = random.random()
-    crit = crit_roll < crit_chance
-    if _pet_crit and crit and crit_roll >= base_crit:
-        log.append("ðŸ¾ Talon Strike triggered a critical hit!")
+    crit_chance = 0.15 + bonuses.get('crit_bonus', 0) + _pet_crit
+    crit = random.random() < crit_chance
     if crit:
         base_dmg = int(base_dmg * 1.5)
     ctx_v = context.user_data.get(f'battle_ctx_{user_id}', {})
