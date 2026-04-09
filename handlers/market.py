@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime
 from telegram.error import BadRequest, TimedOut
@@ -7,6 +8,7 @@ from utils.guards import dm_only
 from utils.database import (get_player, update_player, col,
                              get_inventory, remove_item, add_item,
                              get_market_listings, get_listing_by_index)
+log = logging.getLogger(__name__)
 
 LISTING_FEE_PCT = 0.05
 TYPE_EMOJI = {
@@ -35,8 +37,8 @@ async def _safe_edit(query, text, **kwargs):
         elif any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         else:
             raise
     except TimedOut:
@@ -74,13 +76,13 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         _seed_npc_market()
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
     search = ' '.join(context.args) if context.args else None
     try:
         listings = get_market_listings(search)
-    except Exception:
+    except Exception as e:
         await msg.reply_text("❌ Market temporarily unavailable. Try again.")
         return
 
@@ -461,8 +463,8 @@ async def market_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ),
                         parse_mode='Markdown'
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.error("[EXCEPTION] %s", e)
 
         add_item(user_id, listing['item_name'], listing.get('item_type', 'material'))
 
