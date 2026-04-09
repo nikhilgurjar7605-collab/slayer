@@ -67,25 +67,27 @@ MAX_DEVOUR_STACKS = 25
 async def safe_edit(query, text, **kwargs):
     """Edit a message, safely converting photos to text when needed."""
     try:
+        bot = query.bot
+        chat_id = query.message.chat_id
+        
         # If the message contains a photo/media, we can't 'edit' it into text.
         # We must delete the old media message and send a fresh text message.
         if query.message and (query.message.photo or query.message.document or query.message.video):
-            chat_id = query.message.chat_id
             try: await query.message.delete()
             except Exception: pass
-            await query.get_bot().send_message(chat_id=chat_id, text=text, **kwargs)
+            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
             return
             
         await query.edit_message_text(text, **kwargs)
     except BadRequest as e:
         err = str(e)
-        if "not modified" in err:
+        if "not modified" in err.lower():
             return  # Already showing this content — harmless
         else:
             # If editing fails for ANY reason, fallback to sending a new message
             try: await query.message.delete()
             except Exception: pass
-            await query.get_bot().send_message(chat_id=query.message.chat_id, text=text, **kwargs)
+            await query.bot.send_message(chat_id=query.message.chat_id, text=text, **kwargs)
     except TimedOut:
         pass  # Transient network issue — safe to ignore
 
@@ -758,16 +760,34 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if update.callback_query:
                 try: await update.callback_query.message.delete()
                 except Exception: pass
-                
-            await context.bot.send_photo(
-                chat_id=_chat_id,
-                photo=img_url,
-                caption=encounter_text,
-                parse_mode='Markdown',
-                reply_markup=build_encounter_keyboard()
-            )
-            sent_photo = True
-        except Exception:
+
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            full_path = os.path.join(base_dir, img_url)
+            
+            # Check if it's a local file (e.g. 'images/enemies/demon.jpg')
+            if os.path.isfile(full_path):
+                with open(full_path, 'rb') as f:
+                    await context.bot.send_photo(
+                        chat_id=_chat_id,
+                        photo=f,
+                        caption=encounter_text,
+                        parse_mode='Markdown',
+                        reply_markup=build_encounter_keyboard()
+                    )
+                sent_photo = True
+            else:
+                # It's an HTTP URL or a Telegram file_id
+                await context.bot.send_photo(
+                    chat_id=_chat_id,
+                    photo=img_url,
+                    caption=encounter_text,
+                    parse_mode='Markdown',
+                    reply_markup=build_encounter_keyboard()
+                )
+                sent_photo = True
+        except Exception as e:
+            print(f"[Explore Error] Failed to send image: {e}")
             pass # Fall back to text if image is invalid or failed to send
             
     # Fallback to text-only if no image exists or photo sending failed
