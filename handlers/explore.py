@@ -221,89 +221,103 @@ def build_encounter_keyboard():
 
 def _fmt_press(lines: list) -> str:
     """
-    Collapse a raw log list into ONE compact press-format summary line.
-    Used to build the battle ticker shown in combat_status.
+    Collapse a raw log list into one press-format ticker line per turn.
+    Captures: who acted, what form, damage dealt, special effects.
     """
     if not lines:
         return ""
-    # Key lines we want to surface (in priority order)
-    priority_keywords = [
-        ("💀", "☠️ Defeat"),
-        ("CRITICAL", "⚡ Crit"),
-        ("PHOENIX REBIRTH", "🔥 Rebirth"),
-        ("RESISTS", "🌙 Resisted"),
-        ("BURN", "🔥 Burn"),
-        ("FREEZE", "❄️ Freeze"),
-        ("POISON", "☠️ Poison"),
-        ("STAGGERED", "💥 Stagger"),
-        ("INTIMIDATED", "😨 Intimidate"),
-        ("HOWL", "🐺 Howl"),
-        ("Barrier", "🛡️ Barrier"),
-        ("Rebirth", "🔥 Rebirth"),
-        ("evolved", "✨ Evolved"),
-    ]
-    # Find damage numbers
     import re as _re
-    dmg_nums = _re.findall(r'\b(\d+) damage', " ".join(lines))
-    total_dmg = sum(int(x) for x in dmg_nums) if dmg_nums else 0
+    combined = " ".join(str(l) for l in lines)
 
-    # Find heal numbers
-    heal_nums = _re.findall(r'\+(\d+) HP', " ".join(lines))
-    total_heal = sum(int(x) for x in heal_nums) if heal_nums else 0
+    # Who acted + what move
+    actor = ""
+    move  = ""
+    # Technique pattern: "Name → Art F3: Form Name"
+    m = _re.search(r'\*([^*]+)\* → \*([^*]+)\* F(\d+): \*([^*]+)\*', combined)
+    if m:
+        actor = m.group(1)
+        move  = f"{m.group(2)} F{m.group(3)}"
+    else:
+        # Attack pattern
+        m2 = _re.search(r'\*([^*]+)\* strikes', combined)
+        if m2:
+            actor = m2.group(1)
+            move  = "Attack"
 
-    # Build tag list
-    tags = []
-    combined = " ".join(lines)
-    for kw, label in priority_keywords:
-        if kw.lower() in combined.lower():
-            tags.append(label)
-            break  # only top priority tag
+    # Total damage (all numbers before "dmg" or "damage")
+    dmg_nums = _re.findall(r'(\d[\d,]*) (?:dmg|damage)', combined)
+    total_dmg = sum(int(x.replace(',','')) for x in dmg_nums) if dmg_nums else 0
 
-    dmg_part = f"*{total_dmg:,} dmg*" if total_dmg else ""
-    heal_part = f"+{total_heal} HP" if total_heal else ""
-    tag_part  = tags[0] if tags else ""
+    # Status tags
+    effects = []
+    for kw, tag in [
+        ("CRIT",        "⚡Crit"),
+        ("CRITICAL",    "⚡Crit"),
+        ("BURN",        "🔥Burn"),
+        ("FREEZE",      "❄️Freeze"),
+        ("POISON",      "☠️Poison"),
+        ("STAGGER",     "💥Stagger"),
+        ("INTIMIDAT",   "😨Intimidate"),
+        ("HOWL",        "🐺Howl"),
+        ("BARRIER",     "🛡️Barrier"),
+        ("REBIRTH",     "🔥Rebirth"),
+        ("RESIST",      "🌙Resist"),
+        ("DODGE",       "💨Dodge"),
+        ("COUNTER",     "🔁Counter"),
+    ]:
+        if kw in combined.upper():
+            effects.append(tag)
+            break
 
-    parts = [p for p in [dmg_part, heal_part, tag_part] if p]
-    return "  ".join(parts) if parts else lines[-1][:60]
+    # Build line
+    parts = []
+    if actor and move:
+        parts.append(f"*{actor}*: {move}")
+    if total_dmg:
+        parts.append(f"💥 *{total_dmg:,}*")
+    if effects:
+        parts.extend(effects)
+
+    return "  ".join(parts) if parts else (lines[-1][:50] if lines else "")
 
 
 def combat_status(player, state, ally=None, log_lines=None, press_turns=None):
     """
-    Build the battle HUD. Shows last 3 turns as press-format ticker lines.
-    press_turns: list of pre-built press strings (preferred).
-    log_lines: raw log fallback if press_turns not available.
+    Battle HUD. press_turns = last-N turn summaries stored in DB.
+    log_lines = raw log fallback (used for frozen/skip scenarios).
     """
     p_bar = hp_bar(player['hp'], player['max_hp'])
     e_bar = hp_bar(state['enemy_hp'], state['enemy_max_hp'])
+    p_pct = int(player['hp'] / max(player['max_hp'], 1) * 100)
+    e_pct = int(state['enemy_hp'] / max(state['enemy_max_hp'], 1) * 100)
 
     ally_line = ""
     if ally and state.get('active_ally_id') and state.get('ally_hp') is not None:
         a_bar = hp_bar(state.get('ally_hp', 0), state.get('ally_max_hp', 1) or 1)
         ally_line = (
-            f"\n👥 *{ally['name']}* (Ally)\n"
-            f"❤️ HP: {state.get('ally_hp',0)}/{state.get('ally_max_hp',0)} {a_bar}"
+            f"\n👥 *{ally['name']}* — ❤️ {state.get('ally_hp',0):,}/{state.get('ally_max_hp',0):,} {a_bar}"
         )
 
-    # Build ticker from press_turns or raw log_lines
+    # Battle log section — last 3 press-turn summaries
     log_section = ""
     if press_turns:
         recent = press_turns[-3:]
-        ticker_lines = []
+        icons  = ["·", "•", "→"]   # oldest → newest (🕐 = most recent)
+        lines  = []
         for i, pt in enumerate(recent):
-            age_icon = ["🕐", "🕑", "🕒"][min(i, 2)]
-            ticker_lines.append(f"{age_icon} {pt}")
-        log_section = "📋 *BATTLE LOG*\n" + "\n".join(ticker_lines) + "\n━━━━━━━━━━━━━━━━━━━━━\n"
+            lines.append(f"{icons[i]} {pt}")
+        log_section = "📋 *COMBAT LOG*\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━━━━━━━━\n"
     elif log_lines:
         recent = log_lines[-3:] if len(log_lines) > 3 else log_lines
-        log_section = '\n'.join(recent) + "\n\n"
+        log_section = "📋 *LOG*\n" + "\n".join(f"  {l}" for l in recent) + "\n━━━━━━━━━━━━━━━━━━━━━\n"
 
     return (
         f"{log_section}"
-        f"{state['enemy_emoji']} *{state['enemy_name']}*\n"
-        f"❤️ {state['enemy_hp']:,}/{state['enemy_max_hp']:,} {e_bar}\n"
+        f"{state['enemy_emoji']} *{state['enemy_name']}*  {e_pct}%\n"
+        f"❤️ {state['enemy_hp']:,}/{state['enemy_max_hp']:,}  {e_bar}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🗡️ *{player['name']}*\n"
-        f"❤️ {player['hp']:,}/{player['max_hp']:,} {p_bar}\n"
+        f"🗡️ *{player['name']}*  {p_pct}%\n"
+        f"❤️ {player['hp']:,}/{player['max_hp']:,}  {p_bar}\n"
         f"🌀 STA: {player['sta']}/{player['max_sta']}"
         f"{ally_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -552,10 +566,12 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         user_id = query.from_user.id
+        _chat_id = query.message.chat_id
         async def send(text, **kwargs):
             return await query.message.reply_text(text, **kwargs)
     else:
         user_id = update.effective_user.id
+        _chat_id = update.message.chat_id
         async def send(text, **kwargs):
             return await update.message.reply_text(text, **kwargs)
 
@@ -677,7 +693,25 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Press *Fight* to engage or *Find Different Enemy* to search again!"
     )
 
-    await send(encounter_text, parse_mode='Markdown', reply_markup=build_encounter_keyboard())
+    # Send enemy image attached to encounter message, or fall back to text
+    _enc_img_sent = False
+    try:
+        from config import ENEMY_IMAGES as _EI
+        _enc_img = _EI.get(enemy.get('name', ''), '').strip()
+        if _enc_img:
+            await context.bot.send_photo(
+                chat_id=_chat_id,
+                photo=_enc_img,
+                caption=encounter_text[:1024],
+                parse_mode='Markdown',
+                reply_markup=build_encounter_keyboard(),
+            )
+            _enc_img_sent = True
+    except Exception:
+        pass
+
+    if not _enc_img_sent:
+        await send(encounter_text, parse_mode='Markdown', reply_markup=build_encounter_keyboard())
 
 
 # ── PRIZE PREVIEW ─────────────────────────────────────────────────────────
@@ -1094,9 +1128,7 @@ async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(buttons)
     )
-    # Send art image in background (non-blocking, won't crash if missing)
-    await _send_art_image(context, query.message.chat_id, art_name,
-                          caption=f"✨ *{art_name}* — Select your form")
+    # No image on form selection screen — image only shows when form is USED
 
 
 # ── FORM INFO ─────────────────────────────────────────────────────────────
@@ -1162,6 +1194,8 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ally = get_active_ally(state)
     log = []
     log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
+    _tech_art_name  = art_name
+    _tech_form_num  = form_num
     hits = form.get('hits', 1)
     total_dmg = 0
     for i in range(hits):
@@ -1180,13 +1214,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.append(f"Hit {i + 1} -> {hit_dmg} damage!")
         total_dmg += hit_dmg
     log.append(f"{total_dmg} damage!" if hits == 1 else f"Total: {total_dmg} damage!")
-    await _send_art_image(
-        context,
-        query.message.chat_id,
-        art_name,
-        caption=f"{art_name} - Form {form_num}: {form['name']}",
-        form_num=form_num,
-    )
     ctx = context.user_data.setdefault(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = state.get('enemy_hp', 0)
     ctx['enemy_max_hp'] = state.get('enemy_max_hp', state.get('enemy_hp', 1000))
@@ -1348,12 +1375,57 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state_updated = get_battle_state(user_id)
     ally_updated = get_active_ally(state_updated)
     press_turns = get_press_log(user_id)
-    await safe_edit(
-        query,
-        combat_status(player, state_updated, ally_updated, press_turns=press_turns),
-        parse_mode='Markdown',
-        reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
-    )
+    _status_text = combat_status(player, state_updated, ally_updated, press_turns=press_turns)
+    _kb = build_combat_keyboard(has_ally=bool(ally_updated))
+
+    # Build per-turn detail log (last 5 lines of raw log, prepended to HUD)
+    _turn_log = "\n".join(f"  {l}" for l in log[-5:] if l.strip())
+    _full_text = f"{_turn_log}\n\n{_status_text}" if _turn_log else _status_text
+
+    # Try to send technique image WITH battle text as caption (attached, not separate)
+    _img_sent = False
+    try:
+        _img_doc = col("style_images").find_one({"style_name": f"{_tech_art_name}#{_tech_form_num}"})                    or col("style_images").find_one({"style_name": _tech_art_name})                    or {}
+        _file_id = str(_img_doc.get('file_id') or '').strip()
+        if not _file_id:
+            # try local image file
+            import os
+            from config import TECHNIQUES as _T
+            _form_data = next((f for f in _T.get(_tech_art_name, []) if f.get('form') == _tech_form_num), {})
+            _local = str(_form_data.get('image') or '').strip()
+            if _local:
+                _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                _fpath = os.path.join(_base, _local)
+                if os.path.isfile(_fpath):
+                    with open(_fpath, 'rb') as _f:
+                        await context.bot.send_photo(
+                            chat_id=query.message.chat_id,
+                            photo=_f,
+                            caption=_full_text[:1024],
+                            parse_mode='Markdown',
+                            reply_markup=_kb,
+                        )
+                    _img_sent = True
+        if _file_id and not _img_sent:
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=_file_id,
+                caption=_full_text[:1024],
+                parse_mode='Markdown',
+                reply_markup=_kb,
+            )
+            _img_sent = True
+    except Exception:
+        pass
+
+    if not _img_sent:
+        # No image — send as text edit (standard behaviour)
+        await safe_edit(
+            query,
+            _full_text,
+            parse_mode='Markdown',
+            reply_markup=_kb
+        )
 
 
 @owner_only_button
