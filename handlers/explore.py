@@ -911,8 +911,8 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_combat_keyboard(has_ally=bool(ally_s))
         )
         return
-    log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}*")
-    log.append("💥 *" + (f'CRIT! {base_dmg:,} dmg*' if crit else f'{base_dmg:,} dmg*'))
+    crit_text = "CRIT! " if crit else ""
+    log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}* — 💥 {crit_text}{base_dmg:,} damage!")
     if new_enemy_hp <= 0:
         await handle_victory(query, user_id, player, state, log, context)
         return
@@ -1194,8 +1194,8 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ally = get_active_ally(state)
     log = []
     log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
-    _tech_art_name  = art_name
-    _tech_form_num  = form_num
+    _tech_art_name = art_name
+    _tech_form_num = form_num
     hits = form.get('hits', 1)
     total_dmg = 0
     for i in range(hits):
@@ -1210,10 +1210,11 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log=log if i == 0 else None,
         )
         hit_dmg = int(hit_dmg * pressure['tech_mult'])
-        if hits > 1:
-            log.append(f"Hit {i + 1} -> {hit_dmg} damage!")
         total_dmg += hit_dmg
-    log.append(f"{total_dmg} damage!" if hits == 1 else f"Total: {total_dmg} damage!")
+    
+    # Single log line for the entire technique - no per-hit messages
+    log.append(f"💥 {total_dmg:,} damage!" + (f" ({hits} hits)" if hits > 1 else ""))
+    
     ctx = context.user_data.setdefault(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = state.get('enemy_hp', 0)
     ctx['enemy_max_hp'] = state.get('enemy_max_hp', state.get('enemy_hp', 1000))
@@ -1385,7 +1386,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Try to send technique image WITH battle text as caption (attached, not separate)
     _img_sent = False
     try:
-        _img_doc = col("style_images").find_one({"style_name": f"{_tech_art_name}#{_tech_form_num}"})                    or col("style_images").find_one({"style_name": _tech_art_name})                    or {}
+        _img_doc = col("style_images").find_one({"style_name": f"{_tech_art_name}#{_tech_form_num}"}) or col("style_images").find_one({"style_name": _tech_art_name}) or {}
         _file_id = str(_img_doc.get('file_id') or '').strip()
         if not _file_id:
             # try local image file
@@ -1426,7 +1427,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=_kb
         )
-
 
 @owner_only_button
 async def items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
