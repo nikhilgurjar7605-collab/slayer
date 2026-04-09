@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 from telegram import Update
@@ -5,6 +6,7 @@ from telegram.ext import ContextTypes
 
 from handlers.logs import log_action
 from utils.database import col, get_player
+log = logging.getLogger(__name__)
 
 MAX_GIVE_PER_DAY = 20
 
@@ -193,5 +195,5 @@ async def _give_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode="Markdown",
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
