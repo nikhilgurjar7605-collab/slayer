@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import html
 import time
@@ -7,6 +8,7 @@ from telegram.ext import ContextTypes
 
 from handlers.admin import has_admin_access
 from utils.database import get_all_players
+log = logging.getLogger(__name__)
 
 
 broadcast_status = {}
@@ -37,13 +39,13 @@ async def _send_payload(bot, user_id: int, mode: str, content: dict) -> None:
         caption = content.get("caption", "")
         try:
             await bot.send_photo(chat_id=user_id, photo=content["photo_id"], caption=caption, parse_mode="HTML")
-        except Exception:
+        except Exception as e:
             await bot.send_photo(chat_id=user_id, photo=content["photo_id"], caption=caption)
         return
     if mode == "direct_text":
         try:
             await bot.send_message(chat_id=user_id, text=content["text"], parse_mode="HTML", disable_web_page_preview=True)
-        except Exception:
+        except Exception as e:
             await bot.send_message(chat_id=user_id, text=content["text"], disable_web_page_preview=True)
         return
     raise ValueError("Unknown broadcast mode.")
@@ -165,8 +167,8 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
         await query.answer("Broadcast cancellation requested.", show_alert=True)
         try:
             await query.edit_message_text("🛑 Broadcast cancellation requested.")
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
         return
 
     cached = broadcast_reply_cache.get(admin_id)
