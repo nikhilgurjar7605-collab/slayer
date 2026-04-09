@@ -1,3 +1,5 @@
+import logging
+log = logging.getLogger(__name__)
 CLAN_MAX_MEMBERS = 30
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,7 +17,9 @@ def _get_member_list(clan):
     m = clan.get('members', [])
     if isinstance(m, str):
         try: return json.loads(m)
-        except: return []
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            return []
     return m if isinstance(m, list) else []
 
 
@@ -157,8 +161,8 @@ async def claninfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown', reply_markup=kb
             )
             return
-        except Exception:
-            pass  # fall through to text
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)  # fall through to text
 
     await msg.reply_text(text, parse_mode='Markdown', reply_markup=kb)
 
@@ -180,11 +184,11 @@ async def _edit_msg(query, text, reply_markup=None):
             await query.edit_message_text(
                 text, parse_mode='Markdown', reply_markup=reply_markup
             )
-    except Exception:
+    except Exception as e:
         try:
             await query.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 async def claninfo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -355,7 +359,7 @@ async def claninfo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]])
             )
             await query.answer("✅ Join request sent to the clan leader!", show_alert=True)
-        except Exception:
+        except Exception as e:
             await query.answer("❌ Could not reach clan leader.", show_alert=True)
         return
 
