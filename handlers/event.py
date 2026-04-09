@@ -1,3 +1,5 @@
+import logging
+log = logging.getLogger(__name__)
 """
 /event - Admin creates customisable events (voting, polls, giveaways, etc.)
 /events - Players view active events
@@ -26,8 +28,8 @@ async def _safe_edit(query, text, **kwargs):
         if any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
             return
         raise
     except TimedOut:
@@ -174,7 +176,7 @@ async def event_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             desc = parts[1].strip()
             opts = [o.strip() for o in parts[2].split(",")]
             reward = parts[3].strip() if len(parts) > 3 else ""
-        except Exception:
+        except Exception as e:
             await update.message.reply_text(
                 "❌ Format: `/event vote [hours] [title] | [desc] | opt1, opt2 | [reward]`",
                 parse_mode="Markdown",
@@ -213,7 +215,7 @@ async def event_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = " ".join(parts[0].strip().split()[1:])
             desc = parts[1].strip()
             reward = parts[2].strip() if len(parts) > 2 else "Surprise!"
-        except Exception:
+        except Exception as e:
             await update.message.reply_text(
                 "❌ Format: `/event giveaway [hours] [title] | [desc] | [reward]`",
                 parse_mode="Markdown",
@@ -244,7 +246,7 @@ async def event_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = rest.split("|", 1)
             title = parts[0].strip()
             desc = parts[1].strip() if len(parts) > 1 else ""
-        except Exception:
+        except Exception as e:
             await update.message.reply_text(
                 "❌ Format: `/event announce [title] | [message]`",
                 parse_mode="Markdown",
@@ -312,8 +314,8 @@ async def event_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ev_updated:
             try:
                 await _send_event_card(query.message, ev_updated, context)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         return
 
     if action == "enter":
@@ -384,8 +386,8 @@ async def eventend(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ),
                     parse_mode="Markdown",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         else:
             result_msg += "😔 No entries - no winner."
 
