@@ -1,3 +1,4 @@
+import logging
 import random
 import re
 from datetime import datetime, time, timedelta
@@ -9,6 +10,7 @@ from telegram.ext import ContextTypes
 from handlers.admin import has_admin_access
 from handlers.logs import log_action
 from utils.database import col, get_player, update_player
+log = logging.getLogger(__name__)
 
 BANK_TAX_RATE = 0.0
 TAX_POOL_DOC_ID = "bank_tax_pool"
@@ -131,8 +133,8 @@ async def _announce_result(application, giveaway: dict, text: str) -> None:
     if chat_id:
         try:
             await application.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 async def finalize_bank_giveaway(application, giveaway_id: int) -> None:
@@ -196,8 +198,8 @@ async def finalize_bank_giveaway(application, giveaway_id: int) -> None:
             ),
             parse_mode="Markdown",
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 async def _finish_bank_giveaway_job(context: ContextTypes.DEFAULT_TYPE) -> None:
