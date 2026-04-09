@@ -1,3 +1,5 @@
+import logging
+log = logging.getLogger(__name__)
 """
 Co-op Battle System — MongoDB version
 """
@@ -25,8 +27,8 @@ async def _safe_edit(query, text, **kwargs):
         elif any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         else:
             raise
     except TimedOut:
@@ -37,7 +39,9 @@ def get_party_member_ids(party):
     raw = party.get('members', [])
     if isinstance(raw, str):
         try: return json.loads(raw)
-        except: return []
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            return []
     return raw if isinstance(raw, list) else []
 
 
@@ -175,8 +179,8 @@ async def joinbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"👥 *{player['name']}* joined your battle as an ally!",
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 # ── ATTACK ────────────────────────────────────────────────────────────────
