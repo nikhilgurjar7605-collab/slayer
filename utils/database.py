@@ -496,30 +496,43 @@ def clear_ally(user_id):
     )
 
 
-def get_press_log(user_id: int, limit: int = 5) -> list:
-    """Retrieve the last `limit` press‑format log lines for a user."""
-    col_press = col("press_logs")
-    docs = col_press.find({"user_id": user_id}).sort("timestamp", -1).limit(limit)
-    return [doc["press_line"] for doc in docs][::-1]   # oldest first
+def append_battle_log(user_id: int, lines, press_line: str = "") -> None:
+    """Append one or more lines to the battle log stored in battle_state,
+    and optionally write a press-format line to the press_logs collection."""
+    # Normalise: accept a single string or a list of strings
+    if isinstance(lines, str):
+        lines = [lines]
 
-def append_press_turn(user_id: int, press_line: str) -> None:
-    """Store one press‑format log line for a user."""
-    col_press = col("press_logs")
-    col_press.insert_one({
-        "user_id": user_id,
-        "press_line": press_line,
-        "timestamp": datetime.utcnow()
-    })
-    # Keep only last 50 logs per user to save space
-    col_press.delete_many({
-        "user_id": user_id,
-        "timestamp": {"$lt": datetime.utcnow() - timedelta(days=1)}
-    })
+    # Append to the JSON-encoded battle_log field inside battle_state
+    doc = col("battle_state").find_one({"user_id": user_id})
+    if doc:
+        try:
+            existing = json.loads(doc.get("battle_log", "[]") or "[]")
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            existing = []
+        existing.extend(lines)
+        # Keep only the last 100 entries to avoid unbounded growth
+        existing = existing[-100:]
+        col("battle_state").update_one(
+            {"user_id": user_id},
+            {"$set": {"battle_log": json.dumps(existing)}}
+        )
 
-def clear_battle_log(user_id: int) -> None:
-    """Clear both the old battle log and the press logs for a user."""
-    col("battle_state").update_one({"user_id": user_id}, {"$set": {"battle_log": "[]"}})
-    col("press_logs").delete_many({"user_id": user_id})
+    # Write press-format line if provided
+    if press_line:
+        col_press = col("press_logs")
+        col_press.insert_one({
+            "user_id": user_id,
+            "press_line": press_line,
+            "timestamp": datetime.utcnow()
+        })
+        col_press.delete_many({
+            "user_id": user_id,
+            "timestamp": {"$lt": datetime.utcnow() - timedelta(days=1)}
+        })
+
+
 def get_battle_log(user_id):
     doc = col("battle_state").find_one({"user_id": user_id, "active": 1})
     if doc and doc.get("battle_log"):
@@ -531,24 +544,20 @@ def get_battle_log(user_id):
 
 
 def get_press_log(user_id: int, limit: int = 5) -> list:
-    """
-    Retrieve the last `limit` press‑format log lines for a user.
-    Stored in a separate collection 'press_logs'.
-    """
+    """Retrieve the last `limit` press-format log lines for a user."""
     col_press = col("press_logs")
     docs = col_press.find({"user_id": user_id}).sort("timestamp", -1).limit(limit)
-    return [doc["press_line"] for doc in docs][::-1]   # oldest first
+    return [doc["press_line"] for doc in docs][::-1]  # oldest first
 
 
 def append_press_turn(user_id: int, press_line: str) -> None:
-    """Store one press‑format log line for a user."""
+    """Store one press-format log line for a user."""
     col_press = col("press_logs")
     col_press.insert_one({
         "user_id": user_id,
         "press_line": press_line,
         "timestamp": datetime.utcnow()
     })
-    # Optional: keep only last 50 logs per user to save space
     col_press.delete_many({
         "user_id": user_id,
         "timestamp": {"$lt": datetime.utcnow() - timedelta(days=1)}
@@ -557,9 +566,7 @@ def append_press_turn(user_id: int, press_line: str) -> None:
 
 def clear_battle_log(user_id: int) -> None:
     """Clear both the old battle log and the press logs for a user."""
-    # Clear regular battle log (stored inside battle_state)
     col("battle_state").update_one({"user_id": user_id}, {"$set": {"battle_log": "[]"}})
-    # Clear press logs
     col("press_logs").delete_many({"user_id": user_id})
 
 
