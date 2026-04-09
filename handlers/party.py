@@ -1,3 +1,4 @@
+import logging
 from telegram.error import BadRequest, TimedOut
 from utils.guards import dm_only
 import json
@@ -7,6 +8,7 @@ from utils.database import (get_player, get_party, update_player, col,
                              create_party, add_to_party, send_party_invite,
                              get_pending_invite, resolve_invite)
 from utils.helpers import get_level
+log = logging.getLogger(__name__)
 
 async def _safe_edit(query, text, **kwargs):
     """Edit a message safely, falling back to reply on failure."""
@@ -18,15 +20,15 @@ async def _safe_edit(query, text, **kwargs):
             return
         try:
             await query.message.reply_text(text, **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 def get_party_member_ids(party):
     raw = party.get('members', [])
     try:
         return json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except Exception as e:
         return []
 
 
@@ -223,7 +225,7 @@ async def party_invite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard
         )
         await update.message.reply_text(f"✅ Invite sent to *{target['name']}*!", parse_mode='Markdown')
-    except Exception:
+    except Exception as e:
         await update.message.reply_text("❌ Could not reach that player. They may have blocked the bot.")
 
 
@@ -271,8 +273,8 @@ async def alliance_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"✅ *{player['name']}* accepted your party invite!\nUse /party to see your alliance.",
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 async def alliance_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -290,8 +292,8 @@ async def alliance_decline(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"❌ *{decliner['name'] if decliner else 'The player'}* declined your party invite.",
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 async def choose_ally(update: Update, context: ContextTypes.DEFAULT_TYPE):
