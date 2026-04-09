@@ -1,7 +1,9 @@
+import logging
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import get_player, get_inventory
+log = logging.getLogger(__name__)
 
 PAGE_SIZE = 10   # materials shown per page
 
@@ -16,8 +18,8 @@ async def _safe_edit(query, text, **kwargs):
             return
         try:
             await query.message.reply_text(text, **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -150,4 +152,3 @@ async def inv_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await inventory(update, context)
-    
