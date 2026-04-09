@@ -1,4 +1,6 @@
+import logging
 from telegram.error import BadRequest, TimedOut
+log = logging.getLogger(__name__)
 """
 /offer — Admin creates time-limited shop offers
 /offers — Players view active offers and buy
@@ -19,8 +21,8 @@ async def _safe_edit(query, text, **kwargs):
             return
         try:
             await query.message.reply_text(text, **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
 
 
 def get_active_offers():
