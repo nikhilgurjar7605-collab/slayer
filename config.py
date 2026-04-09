@@ -61,6 +61,9 @@ DB_PATH = None  # Legacy — not used with MongoDB
 #   SUDO_ADMIN_IDS = [987654321, 111222333]
 #
 OWNER_ID = int(os.environ.get("OWNER_ID", 1214273889))  # Set env var or replace 0
+# Optional: banner approval requests will be sent here (e.g., group ID).
+# If 0, falls back to OWNER_ID.
+BANNER_APPROVAL_CHAT_ID = int(os.environ.get("BANNER_APPROVAL_CHAT_ID", -1003810191728))
 SUDO_ADMIN_IDS = []     # <-- Add trusted admin IDs here, e.g. [123456789, 987654321]
 # ═══════════════════════════════════════════════════
 
@@ -1523,7 +1526,7 @@ PET_EGGS = {
 }
 
 # Wild encounter settings
-PET_WILD_ENCOUNTER_CHANCE = 0.01   # 1% per explore — ~100 explores average
+PET_WILD_ENCOUNTER_CHANCE = 0.01   # 1% per explore ~100 explores average
 PET_TRAP_CATCH_BONUS      = 0.0    # base bonus from trap (trap itself enables catching)
 
 # Egg drop chances from enemy kills
