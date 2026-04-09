@@ -1608,7 +1608,7 @@ ENEMY_IMAGES = {
     "Vampire":              "",
     "Ghoul":                "",
     "Cursed Spirit":        "",
-    "Rogue Demon":          "AgACAgUAAxkBAAECA5tp10HwkzDRkwbnQ2BqWLsQ7Erz2wAClA1rG_HjwVZnGsCqn7RDIAEAAwIAA3kAAzsE",
+    "Rogue Demon":          "",
 
     # ── Butterfly Estate ─────────────────────────────────────────────────
     "Forest Wraith":        "",
