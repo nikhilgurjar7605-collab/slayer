@@ -302,7 +302,7 @@ def combat_status(player, state, ally=None, log_lines=None, press_turns=None):
     log_section = ""
     if press_turns:
         recent = press_turns[-3:]
-        icons  = ["·", "•", "→"]   # oldest → newest (🕐 = most recent)
+        icons  = ["·", "·", "·"]   # oldest → newest (🕐 = most recent)
         lines  = []
         for i, pt in enumerate(recent):
             lines.append(f"{icons[i]} {pt}")
