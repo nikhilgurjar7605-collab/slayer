@@ -1,8 +1,10 @@
+import logging
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import col, get_player
 from utils.helpers import get_level
+log = logging.getLogger(__name__)
 
 async def _safe_edit(query, text, **kwargs):
     """Edit a message safely, falling back to reply on failure."""
@@ -15,8 +17,8 @@ async def _safe_edit(query, text, **kwargs):
         elif any(x in err.lower() for x in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
         else:
             raise
     except TimedOut:
@@ -70,7 +72,9 @@ async def clan_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if isinstance(members, str):
             import json
             try: members = json.loads(members)
-            except: members = []
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
+                members = []
         badge    = rank_badge(clan.get('xp', 0))
         leader   = get_player(clan.get('leader_id'))
         lname    = leader['name'] if leader else "Unknown"
