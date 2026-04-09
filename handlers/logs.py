@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -6,6 +7,7 @@ from telegram.ext import ContextTypes
 
 from config import OWNER_ID
 from utils.database import col, get_player
+log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
@@ -23,8 +25,8 @@ async def _safe_edit(query, text, **kwargs):
         if any(token in err for token in ("can't be edited", "message to edit not found", "not found")):
             try:
                 await query.message.reply_text(text, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
             return
         raise
     except TimedOut:
