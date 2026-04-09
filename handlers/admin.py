@@ -1,3 +1,4 @@
+import logging
 import json
 import asyncio
 import html
@@ -10,6 +11,7 @@ from telegram.ext import ContextTypes
 from utils.database import get_player, update_player, get_all_players, get_inventory, add_item, col, get_bot_counters, get_total_yen_circulated
 from handlers.logs import log_action
 from config import OWNER_ID, SUDO_ADMIN_IDS
+log = logging.getLogger(__name__)
 
 broadcast_status = {}
 broadcast_reply_cache = {}
@@ -23,7 +25,7 @@ def is_owner(user_id):
     try:
         from handlers.temp_owner import is_temp_owner
         return is_temp_owner(user_id)
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -323,7 +325,7 @@ async def announce(update: Update, context):
                 ),
             )
             sent += 1
-        except Exception:
+        except Exception as e:
             failed += 1
         # Rate limit: 30 msgs/sec max, stay safe at 25
         if sent % 25 == 0:
@@ -333,7 +335,7 @@ async def announce(update: Update, context):
             f"✅ *Announced!*\n\n📊 Sent: *{sent}*\n❌ Failed: *{failed}*\n🚫 Skipped (banned): *{len(players)-len(active_players)}*",
             parse_mode='Markdown'
         )
-    except Exception:
+    except Exception as e:
         await update.message.reply_text(f"✅ Announced to *{sent}/{len(active_players)}* players.", parse_mode='Markdown')
 
 
@@ -404,7 +406,7 @@ async def startraid(update: Update, context):
                 parse_mode='Markdown'
             )
             sent += 1
-        except Exception:
+        except Exception as e:
             failed += 1
 
     await update.message.reply_text(
@@ -692,8 +694,8 @@ async def giveultimate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 async def admin_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -745,8 +747,8 @@ async def admin_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 
@@ -856,8 +858,8 @@ async def givesp(update, context):
                         parse_mode='Markdown'
                     )
                     sent += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.error("[EXCEPTION] %s", e)
             await update.message.reply_text(f"📨 Notified *{sent}/{count}* players.", parse_mode='Markdown')
         except Exception as e:
             await update.message.reply_text(f"⚠️ Could not notify players: {e}")
@@ -895,8 +897,8 @@ async def givesp(update, context):
             ),
             parse_mode='Markdown'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
 
 
 # ── BACKUP / RESTORE ──────────────────────────────────────────────────────
@@ -932,7 +934,9 @@ async def giveslayermark(update, context):
             "✅ STR +20 | SPD +15 | Max HP +50\n"
             "💨 Technique DMG +25%",
             parse_mode='Markdown')
-    except Exception: pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
+        pass
     await update.message.reply_text(
         f"✅ Slayer Mark granted to *{target['name']}*.",
         parse_mode='Markdown')
@@ -970,7 +974,9 @@ async def givedemonmark(update, context):
             "✅ STR +25 | SPD +18 | Max HP +60\n"
             "🔴 Combat DMG +20%",
             parse_mode='Markdown')
-    except Exception: pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
+        pass
     await update.message.reply_text(
         f"✅ Demon Mark granted to *{target['name']}*.",
         parse_mode='Markdown')
@@ -1075,7 +1081,9 @@ async def master(update, context):
                 f"📦 *{real_name}* × {amount}\n"
                 f"_Check your /inventory_",
                 parse_mode='Markdown')
-        except Exception: pass
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
+            pass
 
         await update.message.reply_text(
             f"✅ Gave *{real_name}* × *{amount}* to *{target['name']}*\n"
@@ -1139,7 +1147,9 @@ async def master(update, context):
             f"✅ All *{len(all_skill_names)}* skills unlocked\n"
             f"🎒 Full item kit granted",
             parse_mode='Markdown')
-    except Exception: pass
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
+        pass
 
     await update.message.reply_text(
         f"👑 *MASTER granted to {target['name']}* ({faction})\n"
@@ -1175,7 +1185,7 @@ async def backup(update, context):
             docs = list(col(cname).find({}, {"_id": 0}))
             backup_data["collections"][cname] = docs
             total_docs += len(docs)
-        except Exception:
+        except Exception as e:
             backup_data["collections"][cname] = []
 
     import io
@@ -1270,7 +1280,7 @@ async def restore(update, context):
                 if docs:
                     col(cname).insert_many(docs)
             restored += len(docs)
-        except Exception:
+        except Exception as e:
             skipped += 1
 
     await update.message.reply_text(
