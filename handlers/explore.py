@@ -220,104 +220,40 @@ def build_encounter_keyboard():
 
 
 def _fmt_press(lines: list) -> str:
+    """Kept for compatibility — returns joined log lines as-is."""
+    return "\n".join(str(l) for l in lines if str(l).strip())
+
+
+def combat_status(player, state, ally=None, log_lines=None, log_lines=log):
     """
-    Collapse a raw log list into one press-format ticker line per turn.
-    Captures: who acted, what form, damage dealt, special effects.
-    """
-    if not lines:
-        return ""
-    import re as _re
-    combined = " ".join(str(l) for l in lines)
-
-    # Who acted + what move
-    actor = ""
-    move  = ""
-    # Technique pattern: "Name → Art F3: Form Name"
-    m = _re.search(r'\*([^*]+)\* → \*([^*]+)\* F(\d+): \*([^*]+)\*', combined)
-    if m:
-        actor = m.group(1)
-        move  = f"{m.group(2)} F{m.group(3)}"
-    else:
-        # Attack pattern
-        m2 = _re.search(r'\*([^*]+)\* strikes', combined)
-        if m2:
-            actor = m2.group(1)
-            move  = "Attack"
-
-    # Total damage (all numbers before "dmg" or "damage")
-    dmg_nums = _re.findall(r'(\d[\d,]*) (?:dmg|damage)', combined)
-    total_dmg = sum(int(x.replace(',','')) for x in dmg_nums) if dmg_nums else 0
-
-    # Status tags
-    effects = []
-    for kw, tag in [
-        ("CRIT",        "⚡Crit"),
-        ("CRITICAL",    "⚡Crit"),
-        ("BURN",        "🔥Burn"),
-        ("FREEZE",      "❄️Freeze"),
-        ("POISON",      "☠️Poison"),
-        ("STAGGER",     "💥Stagger"),
-        ("INTIMIDAT",   "😨Intimidate"),
-        ("HOWL",        "🐺Howl"),
-        ("BARRIER",     "🛡️Barrier"),
-        ("REBIRTH",     "🔥Rebirth"),
-        ("RESIST",      "🌙Resist"),
-        ("DODGE",       "💨Dodge"),
-        ("COUNTER",     "🔁Counter"),
-    ]:
-        if kw in combined.upper():
-            effects.append(tag)
-            break
-
-    # Build line
-    parts = []
-    if actor and move:
-        parts.append(f"*{actor}*: {move}")
-    if total_dmg:
-        parts.append(f"💥 *{total_dmg:,}*")
-    if effects:
-        parts.extend(effects)
-
-    return "  ".join(parts) if parts else (lines[-1][:50] if lines else "")
-
-
-def combat_status(player, state, ally=None, log_lines=None, press_turns=None):
-    """
-    Battle HUD. press_turns = last-N turn summaries stored in DB.
-    log_lines = raw log fallback (used for frozen/skip scenarios).
+    Battle HUD with actual action log for the current turn.
+    log_lines — the raw events from this turn (what actually happened).
+    press_turns param kept for call-site compatibility but ignored.
     """
     p_bar = hp_bar(player['hp'], player['max_hp'])
     e_bar = hp_bar(state['enemy_hp'], state['enemy_max_hp'])
-    p_pct = int(player['hp'] / max(player['max_hp'], 1) * 100)
-    e_pct = int(state['enemy_hp'] / max(state['enemy_max_hp'], 1) * 100)
 
     ally_line = ""
     if ally and state.get('active_ally_id') and state.get('ally_hp') is not None:
         a_bar = hp_bar(state.get('ally_hp', 0), state.get('ally_max_hp', 1) or 1)
         ally_line = (
-            f"\n👥 *{ally['name']}* — ❤️ {state.get('ally_hp',0):,}/{state.get('ally_max_hp',0):,} {a_bar}"
+            f"\n👥 *{ally['name']}* (Ally)\n"
+            f"❤️ {state.get('ally_hp',0):,}/{state.get('ally_max_hp',0):,} {a_bar}"
         )
 
-    # Battle log section — last 3 press-turn summaries
+    # Show the actual event lines from this turn — clean, no ticker
     log_section = ""
-    if press_turns:
-        recent = press_turns[-3:]
-        icons  = ["  ", "  ", "⚡"]   # oldest → newest (🕐 = most recent)
-        lines  = []
-        for i, pt in enumerate(recent):
-            lines.append(f"{icons[i]} {pt}")
-        log_section = "📋 *COMBAT LOG*\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━━━━━━━━\n"
-    elif log_lines:
-        recent = log_lines[-3:] if len(log_lines) > 3 else log_lines
-        log_section = "📋 *LOG*\n" + "\n".join(f"  {l}" for l in recent) + "\n━━━━━━━━━━━━━━━━━━━━━\n"
+    if log_lines:
+        log_section = "\n".join(f"• {l}" for l in log_lines if str(l).strip()) + "\n\n"
 
     return (
         f"{log_section}"
-        f"{state['enemy_emoji']} *{state['enemy_name']}*  {e_pct}%\n"
-        f"❤️ {state['enemy_hp']:,}/{state['enemy_max_hp']:,}  {e_bar}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🗡️ *{player['name']}*  {p_pct}%\n"
-        f"❤️ {player['hp']:,}/{player['max_hp']:,}  {p_bar}\n"
+        f"{state['enemy_emoji']} *{state['enemy_name']}*\n"
+        f"❤️ {state['enemy_hp']:,}/{state['enemy_max_hp']:,} {e_bar}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🗡️ *{player['name']}*\n"
+        f"❤️ {player['hp']:,}/{player['max_hp']:,} {p_bar}\n"
         f"🌀 STA: {player['sta']}/{player['max_sta']}"
         f"{ally_line}\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -566,12 +502,10 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         user_id = query.from_user.id
-        _chat_id = query.message.chat_id
         async def send(text, **kwargs):
             return await query.message.reply_text(text, **kwargs)
     else:
         user_id = update.effective_user.id
-        _chat_id = update.message.chat_id
         async def send(text, **kwargs):
             return await update.message.reply_text(text, **kwargs)
 
@@ -693,25 +627,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Press *Fight* to engage or *Find Different Enemy* to search again!"
     )
 
-    # Send enemy image attached to encounter message, or fall back to text
-    _enc_img_sent = False
-    try:
-        from config import ENEMY_IMAGES as _EI
-        _enc_img = _EI.get(enemy.get('name', ''), '').strip()
-        if _enc_img:
-            await context.bot.send_photo(
-                chat_id=_chat_id,
-                photo=_enc_img,
-                caption=encounter_text[:1024],
-                parse_mode='Markdown',
-                reply_markup=build_encounter_keyboard(),
-            )
-            _enc_img_sent = True
-    except Exception:
-        pass
-
-    if not _enc_img_sent:
-        await send(encounter_text, parse_mode='Markdown', reply_markup=build_encounter_keyboard())
+    await send(encounter_text, parse_mode='Markdown', reply_markup=build_encounter_keyboard())
 
 
 # ── PRIZE PREVIEW ─────────────────────────────────────────────────────────
@@ -762,7 +678,6 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_battle_state_in_combat(user_id)
     ally = get_active_ally(state)
-    press_turns_init = get_press_log(user_id)
 
     location = player.get('location', 'asakusa')
     pressure = calc_pressure(player, location)
@@ -821,7 +736,7 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await safe_edit(
         query,
-        f"{intro}\n\n{combat_status(player, state, ally, press_turns=press_turns_init)}",
+        f"{intro}\n\n{combat_status(player, state, ally, log_lines=None)}",
         parse_mode='Markdown',
         reply_markup=build_combat_keyboard(has_ally=bool(ally))
     )
@@ -902,17 +817,16 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if skip_turn:
         state_s = get_battle_state(user_id)
         ally_s = get_active_ally(state_s)
-        press_turns_s = get_press_log(user_id)
-        append_battle_log(user_id, log, press_line=_fmt_press(log))
+        append_battle_log(user_id, log)
         await safe_edit(
             query,
-            combat_status(player, state_s, ally_s, press_turns=press_turns_s),
+            combat_status(player, state_s, ally_s, log_lines=log),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_s))
         )
         return
-    crit_text = "CRIT! " if crit else ""
-    log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}* — 💥 {crit_text}{base_dmg:,} damage!")
+    log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}*")
+    log.append("💥 *" + (f'CRIT! {base_dmg:,} dmg*' if crit else f'{base_dmg:,} dmg*'))
     if new_enemy_hp <= 0:
         await handle_victory(query, user_id, player, state, log, context)
         return
@@ -949,14 +863,13 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         end_turn_hp = _apply_turn_end_player_sustain(user_id, player, player['hp'], bonuses, context, log)
         if end_turn_hp != player['hp']:
             update_player(user_id, hp=end_turn_hp)
-        append_battle_log(user_id, log, press_line=_fmt_press(log))
+        append_battle_log(user_id, log)
         player = get_player(user_id)
         state_upd = get_battle_state(user_id)
         ally_upd = get_active_ally(state_upd)
-        press_turns = get_press_log(user_id)
         await safe_edit(
             query,
-            combat_status(player, state_upd, ally_upd, press_turns=press_turns),
+            combat_status(player, state_upd, ally_upd, log_lines=log),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_upd))
         )
@@ -1021,17 +934,16 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     new_player_hp = _apply_turn_end_player_sustain(user_id, player, new_player_hp, bonuses, context, log)
     update_player(user_id, hp=max(0, new_player_hp))
-    append_battle_log(user_id, log, press_line=_fmt_press(log))
+    append_battle_log(user_id, log)
     if new_player_hp <= 0:
         await handle_defeat(query, user_id, player, log, context)
         return
     player = get_player(user_id)
     state_updated = get_battle_state(user_id)
     ally_updated = get_active_ally(state_updated)
-    press_turns = get_press_log(user_id)
     await safe_edit(
         query,
-        combat_status(player, state_updated, ally_updated, press_turns=press_turns),
+        combat_status(player, state_updated, ally_updated, log_lines=log),
         parse_mode='Markdown',
         reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
     )
@@ -1128,7 +1040,6 @@ async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(buttons)
     )
-    # No image on form selection screen — image only shows when form is USED
 
 
 # ── FORM INFO ─────────────────────────────────────────────────────────────
@@ -1194,8 +1105,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ally = get_active_ally(state)
     log = []
     log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
-    _tech_art_name = art_name
-    _tech_form_num = form_num
     hits = form.get('hits', 1)
     total_dmg = 0
     for i in range(hits):
@@ -1210,11 +1119,10 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log=log if i == 0 else None,
         )
         hit_dmg = int(hit_dmg * pressure['tech_mult'])
+        if hits > 1:
+            log.append(f"Hit {i + 1} -> {hit_dmg} damage!")
         total_dmg += hit_dmg
-    
-    # Single log line for the entire technique - no per-hit messages
-    log.append(f"💥 {total_dmg:,} damage!" + (f" ({hits} hits)" if hits > 1 else ""))
-    
+    log.append(f"{total_dmg} damage!" if hits == 1 else f"Total: {total_dmg} damage!")
     ctx = context.user_data.setdefault(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = state.get('enemy_hp', 0)
     ctx['enemy_max_hp'] = state.get('enemy_max_hp', state.get('enemy_hp', 1000))
@@ -1231,25 +1139,23 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         skip_turn, no_tech = False, False
     if no_tech:
-        append_battle_log(user_id, log, press_line=_fmt_press(log))
+        append_battle_log(user_id, log)
         state_fr = get_battle_state(user_id)
         ally_fr = get_active_ally(state_fr)
-        press_turns_fr = get_press_log(user_id)
         await safe_edit(
             query,
-            "Frozen! Cannot use techniques this turn!\n\n" + combat_status(player, state_fr, ally_fr, press_turns=press_turns_fr),
+            "Frozen! Cannot use techniques this turn!\n\n" + combat_status(player, state_fr, ally_fr, log_lines=log),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_fr))
         )
         return
     if skip_turn:
-        append_battle_log(user_id, log, press_line=_fmt_press(log))
+        append_battle_log(user_id, log)
         state_sk = get_battle_state(user_id)
         ally_sk = get_active_ally(state_sk)
-        press_turns_sk = get_press_log(user_id)
         await safe_edit(
             query,
-            combat_status(player, state_sk, ally_sk, press_turns=press_turns_sk),
+            combat_status(player, state_sk, ally_sk, log_lines=log),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_sk))
         )
@@ -1296,14 +1202,13 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         end_turn_hp = _apply_turn_end_player_sustain(user_id, player, player['hp'], bonuses, context, log)
         if end_turn_hp != player['hp']:
             update_player(user_id, hp=end_turn_hp)
-        append_battle_log(user_id, log, press_line=_fmt_press(log))
+        append_battle_log(user_id, log)
         player = get_player(user_id)
         state_updated = get_battle_state(user_id)
         ally_updated = get_active_ally(state_updated)
-        press_turns = get_press_log(user_id)
         await safe_edit(
             query,
-            combat_status(player, state_updated, ally_updated, press_turns=press_turns),
+            combat_status(player, state_updated, ally_updated, log_lines=log),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
         )
@@ -1368,65 +1273,20 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     new_player_hp = _apply_turn_end_player_sustain(user_id, player, new_player_hp, bonuses, context, log)
     update_player(user_id, hp=max(0, new_player_hp))
-    append_battle_log(user_id, log, press_line=_fmt_press(log))
+    append_battle_log(user_id, log)
     if new_player_hp <= 0:
         await handle_defeat(query, user_id, player, log, context)
         return
     player = get_player(user_id)
     state_updated = get_battle_state(user_id)
     ally_updated = get_active_ally(state_updated)
-    press_turns = get_press_log(user_id)
-    _status_text = combat_status(player, state_updated, ally_updated, press_turns=press_turns)
-    _kb = build_combat_keyboard(has_ally=bool(ally_updated))
+    await safe_edit(
+        query,
+        combat_status(player, state_updated, ally_updated, log_lines=log),
+        parse_mode='Markdown',
+        reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
+    )
 
-    # Build per-turn detail log (last 5 lines of raw log, prepended to HUD)
-    _turn_log = "\n".join(f"  {l}" for l in log[-5:] if l.strip())
-    _full_text = f"{_turn_log}\n\n{_status_text}" if _turn_log else _status_text
-
-    # Try to send technique image WITH battle text as caption (attached, not separate)
-    _img_sent = False
-    try:
-        _img_doc = col("style_images").find_one({"style_name": f"{_tech_art_name}#{_tech_form_num}"}) or col("style_images").find_one({"style_name": _tech_art_name}) or {}
-        _file_id = str(_img_doc.get('file_id') or '').strip()
-        if not _file_id:
-            # try local image file
-            import os
-            from config import TECHNIQUES as _T
-            _form_data = next((f for f in _T.get(_tech_art_name, []) if f.get('form') == _tech_form_num), {})
-            _local = str(_form_data.get('image') or '').strip()
-            if _local:
-                _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                _fpath = os.path.join(_base, _local)
-                if os.path.isfile(_fpath):
-                    with open(_fpath, 'rb') as _f:
-                        await context.bot.send_photo(
-                            chat_id=query.message.chat_id,
-                            photo=_f,
-                            caption=_full_text[:1024],
-                            parse_mode='Markdown',
-                            reply_markup=_kb,
-                        )
-                    _img_sent = True
-        if _file_id and not _img_sent:
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=_file_id,
-                caption=_full_text[:1024],
-                parse_mode='Markdown',
-                reply_markup=_kb,
-            )
-            _img_sent = True
-    except Exception:
-        pass
-
-    if not _img_sent:
-        # No image — send as text edit (standard behaviour)
-        await safe_edit(
-            query,
-            _full_text,
-            parse_mode='Markdown',
-            reply_markup=_kb
-        )
 
 @owner_only_button
 async def items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1896,7 +1756,7 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         if drops_list and random.random() < 0.30:
             add_to_clan_treasury(player_now['clan_id'], drops_list[0], 1)
 
-    append_battle_log(user_id, log, press_line=_fmt_press(log))
+    append_battle_log(user_id, log)
     clear_battle_state(user_id)
     clear_status_effects(user_id)
 
@@ -1916,11 +1776,10 @@ async def handle_defeat(query, user_id, player, log, context=None):
         log.append(f'🔥 *PHOENIX REBIRTH!* Survived with {revive_hp} HP!')
         state_r  = get_battle_state(user_id)
         ally_r   = get_active_ally(state_r)
-        press_turns_r = get_press_log(user_id)
-        append_battle_log(user_id, log, press_line=_fmt_press(log))
+        append_battle_log(user_id, log)
         await safe_edit(
             query,
-            combat_status(player, state_r, ally_r, press_turns=press_turns_r),
+            combat_status(player, state_r, ally_r, log_lines=log),
             parse_mode='Markdown',
             reply_markup=build_combat_keyboard(has_ally=bool(ally_r))
         )
@@ -1930,7 +1789,7 @@ async def handle_defeat(query, user_id, player, log, context=None):
     new_deaths = player['deaths'] + 1
     new_hp     = int(player['max_hp'] * 0.5)
     update_player(user_id, hp=new_hp, sta=player['max_sta'], xp=xp_loss, deaths=new_deaths)
-    append_battle_log(user_id, log, press_line=_fmt_press(log))
+    append_battle_log(user_id, log)
     clear_battle_state(user_id)
     clear_status_effects(user_id)
     if hasattr(context, 'user_data'):
