@@ -173,7 +173,6 @@ async def hybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @dm_only
 async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Change hybrid style - one-time use"""
     user_id = update.effective_user.id
     player = get_player(user_id)
     
@@ -189,7 +188,6 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Check if player has hybrid mode
     if not player.get('hybrid_style'):
         await update.message.reply_text(
             "❌ *No hybrid mode detected.*\n\n"
@@ -198,7 +196,6 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Check if already used rehybrid
     if player.get('has_rehybrid_used', False):
         await update.message.reply_text(
             "❌ *You have already changed your hybrid style once!*\n\n"
@@ -209,10 +206,11 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     faction = player['faction']
     
-    # Choose new hybrid style — opposite faction
     if not context.args:
         pool = DEMON_ARTS if faction == 'slayer' else BREATHING_STYLES
         label = "Demon Art" if faction == 'slayer' else "Breathing Style"
+        
+        available = [s for s in pool if '⭐⭐' in s.get('rarity', '') or '⭐⭐⭐ RARE' in s.get('rarity', '')]
         
         lines = [
             f"╔══════════════════════╗",
@@ -222,8 +220,7 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"\n✅ Choose your NEW hybrid *{label}*:\n",
             f"━━━━━━━━━━━━━━━━━━━━━\n",
         ]
-        # Show only common/rare (no legendary for hybrid)
-        available = [s for s in pool if '⭐⭐' in s.get('rarity','') or '⭐⭐⭐ RARE' in s.get('rarity','')]
+        
         for s in available:
             lines.append(f"╰➤ {s['emoji']} *{s['name']}*  {s['rarity']}")
         
@@ -239,18 +236,17 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     style_name = ' '.join(context.args)
     pool = DEMON_ARTS if faction == 'slayer' else BREATHING_STYLES
-    available = [s for s in pool if '⭐⭐' in s.get('rarity','') or '⭐⭐⭐ RARE' in s.get('rarity','')]
+    available = [s for s in pool if '⭐⭐' in s.get('rarity', '') or '⭐⭐⭐ RARE' in s.get('rarity', '')]
     chosen = next((s for s in available if s['name'].lower() == style_name.lower()), None)
     
     if not chosen:
         await update.message.reply_text(
             f"❌ *{style_name}* not available for hybrid.\n"
-            f"Use `/rehybrid` to see options.",
+            f"Use `/rehybrid` to see available options.",
             parse_mode='Markdown'
         )
         return
     
-    # Check if same as current
     if chosen['name'].lower() == player['hybrid_style'].lower():
         await update.message.reply_text(
             f"❌ *{chosen['name']}* is already your hybrid style!\n"
@@ -262,7 +258,6 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     old_style = player['hybrid_style']
     old_emoji = player.get('hybrid_emoji', '')
     
-    # Update hybrid style and mark as used
     update_player(
         user_id, 
         hybrid_style=chosen['name'], 
@@ -276,7 +271,7 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"╔══════════════════════╗\n"
         f"      🔄 𝙃𝙔𝘽𝙍𝙄𝘿 𝘾𝙃𝘼𝙉𝙂𝙀𝘿!\n"
         f"╚══════════════════════╝\n\n"
-        f"{fe} Primary: *{player['style']}* {player.get('style_emoji','')}\n\n"
+        f"{fe} Primary: *{player['style']}* {player.get('style_emoji', '')}\n\n"
         f"❌ OLD Hybrid: *{old_style}* {old_emoji}\n"
         f"✅ NEW Hybrid: *{chosen['name']}* {chosen['emoji']}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -285,8 +280,7 @@ async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"_Your new techniques will appear in /explore!_",
         parse_mode='Markdown'
     )
-
-
+#
 async def demonmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Demon equivalent of slayer mark."""
     user_id = update.effective_user.id
