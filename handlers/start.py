@@ -313,9 +313,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player = get_player(user_id)
     if player:
         await update.message.reply_text(
-            f"⚔️ Welcome back, *{player['name']}*!\n\n"
-            "Your journey continues...\n\n"
-            "/menu — Return to main hub",
+            f"*{player['name']}*!,\n"
+            "You Have Already Started Your Journey ✨\n💡 Use /explore to fight with monsters",
             parse_mode='Markdown'
         )
         return ConversationHandler.END
