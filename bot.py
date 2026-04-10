@@ -71,6 +71,7 @@ from handlers.pets import (
 )
 from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
+from handlers.hybrid import hybrid, rehybrid, demonmark, hybridtoggle
 from handlers.clan import (clan, createclan, joinclan, leaveclan, setclanlink, clandisband,
                             clanmembers, promotevice, demote, kick,
                             renameclan, clanannounce, clanleaderboard,
