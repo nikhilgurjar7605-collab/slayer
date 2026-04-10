@@ -54,8 +54,7 @@ async def hybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔥 Slayer Mark: {s_mark}\n"
             f"🔴 Demon Mark:  {d_mark}\n\n"
             f"_Both arts available in /explore techniques_\n"
-            f"💡 `/info` to see your forms\n"
-            f"🔄 To change hybrid style: `/rehybrid`",
+            f"💡 `/info` to see your forms",
             parse_mode='Markdown'
         )
         return
