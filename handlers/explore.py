@@ -63,6 +63,59 @@ DEVOUR_STATS = {
 MAX_DEVOUR_STACKS = 25
 
 
+# ── BUSY STATE HELPERS ────────────────────────────────────────────────────
+def is_in_battle(user_id) -> bool:
+    """True if player has an active PvE battle in progress."""
+    state = get_battle_state(user_id)
+    return bool(state and state.get('in_combat'))
+
+
+def is_in_challenge(user_id) -> bool:
+    """True if player is currently in a PvP challenge/duel."""
+    try:
+        doc = col("challenges").find_one(
+            {"$or": [{"challenger_id": user_id}, {"target_id": user_id}],
+             "status": "active"}
+        )
+        return doc is not None
+    except Exception:
+        return False
+
+
+def is_busy(user_id) -> bool:
+    """True if player is in ANY active combat (PvE battle OR PvP challenge)."""
+    return is_in_battle(user_id) or is_in_challenge(user_id)
+
+
+async def send_busy_message(send_fn, user_id, parse_mode='Markdown'):
+    """
+    Send the appropriate 'you are busy' message.
+    send_fn — an async callable: send_fn(text, **kwargs)
+    """
+    if is_in_battle(user_id):
+        state = get_battle_state(user_id)
+        enemy_name = state.get('enemy_name', 'an enemy') if state else 'an enemy'
+        enemy_hp   = state.get('enemy_hp', '?') if state else '?'
+        enemy_max  = state.get('enemy_max_hp', '?') if state else '?'
+        await send_fn(
+            f"⚔️ *BATTLE IN PROGRESS!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"You are currently fighting *{enemy_name}*\n"
+            f"❤️ Enemy HP: *{enemy_hp}/{enemy_max}*\n\n"
+            f"_Finish your current battle first!_\n"
+            f"Type `/explore` to unstuck if needed.",
+            parse_mode=parse_mode
+        )
+    elif is_in_challenge(user_id):
+        await send_fn(
+            f"🥊 *CHALLENGE IN PROGRESS!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"You are currently in a PvP duel.\n\n"
+            f"_Finish your challenge first before exploring!_",
+            parse_mode=parse_mode
+        )
+
+
 # ── SAFE EDIT HELPER ──────────────────────────────────────────────────────
 async def safe_edit(query, text, **kwargs):
     """Edit a message, falling back to reply_text on failure."""
@@ -228,7 +281,6 @@ def combat_status(player, state, ally=None, log_lines=None):
     """
     Battle HUD with actual action log for the current turn.
     log_lines — the raw events from this turn (what actually happened).
-    press_turns param kept for call-site compatibility but ignored.
     """
     p_bar = hp_bar(player['hp'], player['max_hp'])
     e_bar = hp_bar(state['enemy_hp'], state['enemy_max_hp'])
@@ -462,7 +514,6 @@ def _try_counter_strike(user_id, player, owned_skills, bonuses, context, log):
     return new_enemy_hp <= 0
 
 
-# ── EXPLORE ───────────────────────────────────────────────────────────────
 def _apply_turn_end_player_sustain(user_id, player, current_hp, bonuses, context, log):
     battle_ctx = context.user_data.setdefault(f'battle_ctx_{user_id}', {})
     used_once = battle_ctx.setdefault('used_once_skills', [])
@@ -471,19 +522,19 @@ def _apply_turn_end_player_sustain(user_id, player, current_hp, bonuses, context
         if 'Second Wind' not in used_once and random.random() < bonuses['second_wind']:
             current_hp = 1
             used_once.append('Second Wind')
-            log.append(f"ðŸ'ª *Second Wind!* Survived with 1 HP! _(used for this battle)_")
+            log.append(f"💪 *Second Wind!* Survived with 1 HP! _(used for this battle)_")
 
     if current_hp <= 0 and bonuses.get('last_stand'):
         if 'Last Stand' not in used_once:
             current_hp = 1
             used_once.append('Last Stand')
-            log.append("ðŸ'€ *LAST STAND!* Survived with 1 HP! _(used for this battle)_")
+            log.append("💀 *LAST STAND!* Survived with 1 HP! _(used for this battle)_")
 
     if bonuses.get('regen_pct') and current_hp > 0:
         regen_pct_hp = int(player['max_hp'] * bonuses['regen_pct'])
         if regen_pct_hp > 0:
             current_hp = min(player['max_hp'], current_hp + regen_pct_hp)
-            log.append(f"ðŸ'š *Regeneration* +{regen_pct_hp} HP")
+            log.append(f"💚 *Regeneration* +{regen_pct_hp} HP")
 
     if 'regen_hp' in bonuses and current_hp > 0:
         regen = int(bonuses['regen_hp'])
@@ -496,6 +547,7 @@ def _apply_turn_end_player_sustain(user_id, player, current_hp, bonuses, context
     return max(0, current_hp)
 
 
+# ── EXPLORE ───────────────────────────────────────────────────────────────
 @dm_only
 async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -517,6 +569,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send("❌ You are banned from this game.")
         return
 
+    # ── Block if player is already busy (battle OR challenge) ───────────────
     existing = get_battle_state(user_id)
     if existing and existing.get('in_combat'):
         # Only auto-unstuck when user TYPES /explore as a command
@@ -543,6 +596,17 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
             return
+
+    # Block if in an active PvP challenge
+    if is_in_challenge(user_id):
+        await send(
+            f"🥊 *CHALLENGE IN PROGRESS!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"You are currently in a PvP duel.\n\n"
+            f"_Finish your challenge first before exploring!_",
+            parse_mode='Markdown'
+        )
+        return
 
     if existing and not existing.get('in_combat'):
         clear_battle_state(user_id)
@@ -1621,7 +1685,7 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         if 'Demon Blood' not in ' '.join(drop_lines):
             drop_lines.append(f"🩸 Demon Blood _(found in {_region_label})_")
 
-    # Demons fighting slayers → Slayer Badge drop  
+    # Demons fighting slayers → Slayer Badge drop
     if player_faction == 'demon' and enemy_faction == 'slayer' and random.random() < 0.75:
         add_item(user_id, 'Slayer Badge', 'material')
         drop_lines.append(f"🏅 Slayer Badge _(found in {_region_label})_")
