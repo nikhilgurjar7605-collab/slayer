@@ -1603,12 +1603,12 @@ PET_REGIONS = {
 
 ENEMY_IMAGES = {
     # ── Asakusa enemies ───────────────────────────────────────────────────
-    "Stray Demon":          "",
-    "Lesser Demon":         "",
-    "Vampire":              "",
-    "Ghoul":                "",
-    "Cursed Spirit":        "",
-    "Rogue Demon":          "",
+    "Stray Demon":          "AgACAgUAAxkBAAECHZ5p2R9URjDntsF_swPFGE3Jm464_QAC-hFrG-pKyVZ_Mi4B4vQO-gEAAwIAA3kAAzsE",
+    "Lesser Demon":         "AgACAgUAAxkBAAECHaBp2R97vlZ1T7sT9PNQVN--EojJXQAC-xFrG-pKyVaNN6_JCCXhPgEAAwIAA3kAAzsE",
+    "Vampire":              "AgACAgUAAxkBAAECHaRp2R-pPAfdrzts4fkHH_7jKZ9aEQAC_BFrG-pKyVZJ3Ay3LSAMMgEAAwIAA3kAAzsE",
+    "Ghoul":                "AgACAgUAAxkBAAECHa5p2R_RukjQ70L1fy0p-IVa87z4pQAC_RFrG-pKyVYdiEclYRAJrwEAAwIAA3kAAzsE",
+    "Cursed Spirit":        "AgACAgUAAxkBAAECHblp2R_1iaOIrHxUBGNGdBJNvOJT-QAC_hFrG-pKyVbumO1QgH5WwAEAAwIAA3kAAzsE",
+    "Rogue Demon":          "AgACAgUAAxkBAAECHb1p2SAObD1tvn8-3wkWdRkpmd8MPAAC_xFrG-pKyVZOPl5ejrM2pwEAAwIAA3kAAzsE",
 
     # ── Butterfly Estate ─────────────────────────────────────────────────
     "Forest Wraith":        "",
