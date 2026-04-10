@@ -224,7 +224,7 @@ def _fmt_press(lines: list) -> str:
     return "\n".join(str(l) for l in lines if str(l).strip())
 
 
-def combat_status(player, state, ally=None, log_lines=None, log_lines=log):
+def combat_status(player, state, ally=None, log_lines=None):
     """
     Battle HUD with actual action log for the current turn.
     log_lines — the raw events from this turn (what actually happened).
