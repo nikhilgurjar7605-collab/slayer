@@ -8,7 +8,6 @@ from utils.helpers import get_level
 from config import SLAYER_MISSIONS, DEMON_MISSIONS
 
 async def _safe_edit(query, text, **kwargs):
-    """Edit a message safely, falling back to reply on failure."""
     try:
         await query.edit_message_text(text, **kwargs)
     except Exception as e:
@@ -19,7 +18,6 @@ async def _safe_edit(query, text, **kwargs):
             await query.message.reply_text(text, **kwargs)
         except Exception:
             pass
-
 
 def _custom_missions():
     missions = []
@@ -41,37 +39,37 @@ def _custom_missions():
         })
     return missions
 
-
 def get_missions(faction):
     base = SLAYER_MISSIONS if faction == 'slayer' else DEMON_MISSIONS
     return list(base) + _custom_missions()
 
-
 @dm_only
 async def mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    player  = get_player(user_id)
+    player = get_player(user_id)
     if not player:
         await (update.message or update.callback_query.message).reply_text("❌ No character found.")
         return
 
-    # Check active mission
     if player.get('active_mission'):
         try:
             import json
-            am = json.loads(player['active_mission']) if isinstance(player['active_mission'], str) else player['active_mission']
+            if isinstance(player['active_mission'], str):
+                am = json.loads(player['active_mission'])
+            else:
+                am = player['active_mission']
         except Exception:
             am = None
 
         if am:
             progress = am.get('progress', 0)
             required = am.get('required', 5)
-            pct      = int(progress / required * 100)
-            bar      = '█' * int(pct/10) + '░' * (10 - int(pct/10))
+            pct = int(progress / required * 100) if required > 0 else 0
+            bar = '█' * int(pct/10) + '░' * (10 - int(pct/10))
 
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton("⚔️ Go Fight!", callback_data='goto_explore'),
-                InlineKeyboardButton("❌ Abandon",   callback_data='mission_abandon'),
+                InlineKeyboardButton("❌ Abandon", callback_data='mission_abandon'),
             ]])
             msg = update.message or update.callback_query.message
             await msg.reply_text(
@@ -89,7 +87,7 @@ async def mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     missions = get_missions(player['faction'])
-    fe       = '🗡️' if player['faction'] == 'slayer' else '👹'
+    fe = '🗡️' if player['faction'] == 'slayer' else '👹'
     faction_label = 'SLAYER' if player['faction'] == 'slayer' else 'DEMON'
 
     lines = [
@@ -122,17 +120,17 @@ async def mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(buttons)
         )
 
-
 async def select_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query      = update.callback_query
+    query = update.callback_query
     await query.answer()
-    user_id    = query.from_user.id
-    player     = get_player(user_id)
+    user_id = query.from_user.id
+    player = get_player(user_id)
     if not player:
         await query.answer("❌ No character found!", show_alert=True)
         return
+    
     mission_id = int(query.data.split('_')[-1])
-    missions   = get_missions(player['faction'])
+    missions = get_missions(player['faction'])
     m = next((x for x in missions if x['id'] == mission_id), None)
     if not m:
         await query.answer("❌ Mission not found!", show_alert=True)
@@ -143,7 +141,7 @@ async def select_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Accept", callback_data='mission_confirm'),
-        InlineKeyboardButton("🔙 Back",   callback_data='mission_back'),
+        InlineKeyboardButton("🔙 Back", callback_data='mission_back'),
     ]])
 
     await _safe_edit(query, 
@@ -160,16 +158,19 @@ async def select_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard
     )
 
-
 async def confirm_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query   = update.callback_query
+    query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    player  = get_player(user_id)
+    player = get_player(user_id)
+
+    if not player:
+        await _safe_edit(query, "❌ Player data not found.")
+        return
 
     mission_id = context.user_data.get('selected_mission')
     if not mission_id:
-        await _safe_edit(query, "❌ No mission selected.")
+        await _safe_edit(query, "❌ No mission selected. Please choose a mission again.")
         return
 
     missions = get_missions(player['faction'])
@@ -178,17 +179,21 @@ async def confirm_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit(query, "❌ Mission not found.")
         return
 
+    if player.get('active_mission'):
+        await _safe_edit(query, "❌ You already have an active mission! Complete or abandon it first.")
+        return
+
     import json
     mission_data = {
-        "id":       m['id'],
-        "name":     m['name'],
-        "emoji":    m['emoji'],
-        "xp":       m['xp'],
-        "yen":      m['yen'],
+        "id": m['id'],
+        "name": m['name'],
+        "emoji": m['emoji'],
+        "xp": m['xp'],
+        "yen": m['yen'],
         "difficulty": m['difficulty'],
         "required": m.get('kills_required', 5),
         "progress": 0,
-        "desc":     m['desc'],
+        "desc": m['desc'],
     }
     update_player(user_id, active_mission=json.dumps(mission_data))
 
@@ -200,14 +205,24 @@ async def confirm_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-
 async def abandon_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query   = update.callback_query
+    query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    player = get_player(user_id)
+    
+    if not player:
+        await _safe_edit(query, "❌ Player data not found.")
+        return
+    
+    if not player.get('active_mission'):
+        await _safe_edit(query, "❌ You don't have an active mission to abandon.")
+        return
+    
     update_player(user_id, active_mission=None)
+    context.user_data.pop('selected_mission', None)
+    
     await _safe_edit(query, "❌ Mission abandoned.\nUse /mission to pick a new one.")
-
 
 async def mission_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
