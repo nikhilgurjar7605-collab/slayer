@@ -1,6 +1,7 @@
 """
 /hybrid — Unlock hybrid mode: use both breathing + demon art
 Admin can enable/disable. Requires Slayer Mark + high rank.
+/rehybrid — Change your hybrid style (one-time change)
 """
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -53,7 +54,8 @@ async def hybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔥 Slayer Mark: {s_mark}\n"
             f"🔴 Demon Mark:  {d_mark}\n\n"
             f"_Both arts available in /explore techniques_\n"
-            f"💡 `/info` to see your forms",
+            f"💡 `/info` to see your forms\n"
+            f"🔄 To change hybrid style: `/rehybrid`",
             parse_mode='Markdown'
         )
         return
@@ -163,7 +165,124 @@ async def hybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔥 Slayer Mark: {s_mark}\n"
         f"🔴 Demon Mark:  {d_mark}\n\n"
         f"_Both arts are now available in /explore!_\n"
-        f"_Tap Technique in battle → both styles appear._",
+        f"_Tap Technique in battle → both styles appear._\n\n"
+        f"🔄 *Want to change later?* Use `/rehybrid` (one-time change)",
+        parse_mode='Markdown'
+    )
+
+
+@dm_only
+async def rehybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Change hybrid style - one-time use"""
+    user_id = update.effective_user.id
+    player = get_player(user_id)
+    
+    if not player:
+        await update.message.reply_text("❌ No character found.")
+        return
+    
+    if not is_hybrid_enabled():
+        await update.message.reply_text(
+            "🔒 *Hybrid mode is not yet available.*\n\n"
+            "_This feature requires admin activation._",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Check if player has hybrid mode
+    if not player.get('hybrid_style'):
+        await update.message.reply_text(
+            "❌ *No hybrid mode detected.*\n\n"
+            "Use `/hybrid` first to unlock hybrid mode.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Check if already used rehybrid
+    if player.get('has_rehybrid_used', False):
+        await update.message.reply_text(
+            "❌ *You have already changed your hybrid style once!*\n\n"
+            "Hybrid style can only be changed once. Choose wisely next time!",
+            parse_mode='Markdown'
+        )
+        return
+    
+    faction = player['faction']
+    
+    # Choose new hybrid style — opposite faction
+    if not context.args:
+        pool = DEMON_ARTS if faction == 'slayer' else BREATHING_STYLES
+        label = "Demon Art" if faction == 'slayer' else "Breathing Style"
+        
+        lines = [
+            f"╔══════════════════════╗",
+            f"      🔄 𝘾𝙃𝘼𝙉𝙂𝙀 𝙃𝙔𝘽𝙍𝙄𝘿",
+            f"╚══════════════════════╝\n",
+            f"⚡ Current Hybrid: *{player['hybrid_style']}* {player.get('hybrid_emoji', '')}\n",
+            f"\n✅ Choose your NEW hybrid *{label}*:\n",
+            f"━━━━━━━━━━━━━━━━━━━━━\n",
+        ]
+        # Show only common/rare (no legendary for hybrid)
+        available = [s for s in pool if '⭐⭐' in s.get('rarity','') or '⭐⭐⭐ RARE' in s.get('rarity','')]
+        for s in available:
+            lines.append(f"╰➤ {s['emoji']} *{s['name']}*  {s['rarity']}")
+        
+        lines += [
+            f"\n━━━━━━━━━━━━━━━━━━━━━",
+            f"💡 `/rehybrid [name]` to change",
+            f"_Example: `/rehybrid Shadow Dance`_",
+            f"\n⚠️ *You can only change ONCE!*",
+            f"⚠️ _Legendary styles cannot be hybridized_",
+        ]
+        await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+        return
+    
+    style_name = ' '.join(context.args)
+    pool = DEMON_ARTS if faction == 'slayer' else BREATHING_STYLES
+    available = [s for s in pool if '⭐⭐' in s.get('rarity','') or '⭐⭐⭐ RARE' in s.get('rarity','')]
+    chosen = next((s for s in available if s['name'].lower() == style_name.lower()), None)
+    
+    if not chosen:
+        await update.message.reply_text(
+            f"❌ *{style_name}* not available for hybrid.\n"
+            f"Use `/rehybrid` to see options.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Check if same as current
+    if chosen['name'].lower() == player['hybrid_style'].lower():
+        await update.message.reply_text(
+            f"❌ *{chosen['name']}* is already your hybrid style!\n"
+            f"Use `/rehybrid` to choose a different one.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    old_style = player['hybrid_style']
+    old_emoji = player.get('hybrid_emoji', '')
+    
+    # Update hybrid style and mark as used
+    update_player(
+        user_id, 
+        hybrid_style=chosen['name'], 
+        hybrid_emoji=chosen['emoji'],
+        has_rehybrid_used=True
+    )
+    
+    fe = '🗡️' if faction == 'slayer' else '👹'
+    
+    await update.message.reply_text(
+        f"╔══════════════════════╗\n"
+        f"      🔄 𝙃𝙔𝘽𝙍𝙄𝘿 𝘾𝙃𝘼𝙉𝙂𝙀𝘿!\n"
+        f"╚══════════════════════╝\n\n"
+        f"{fe} Primary: *{player['style']}* {player.get('style_emoji','')}\n\n"
+        f"❌ OLD Hybrid: *{old_style}* {old_emoji}\n"
+        f"✅ NEW Hybrid: *{chosen['name']}* {chosen['emoji']}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ *This change is permanent!*\n"
+        f"_You cannot change your hybrid style again._\n\n"
+        f"_Your new techniques will appear in /explore!_",
         parse_mode='Markdown'
     )
 
