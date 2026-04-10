@@ -798,6 +798,7 @@ def main():
         ('is',              view_suggestion),
         ('upgrade',         upgrade),
         ('hybrid',          hybrid),
+        ('re_hybrid',       rehybrid),
         ('offers',          offers),
         ('addoffer',        addoffer),
         ('setimage',        setimage),
