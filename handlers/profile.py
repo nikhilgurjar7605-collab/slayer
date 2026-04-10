@@ -152,7 +152,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"╰➤🧭 𝘾𝙪𝙧𝙧𝙚𝙣𝙩 𝙇𝙤𝙘𝙖𝙩𝙞𝙤𝙣 : 「{location}」\n"
         f"╰➤📖 𝙊𝙧𝙞𝙜𝙞𝙣 : {player.get('story', '—')}\n"
         f"{clan_line}"
-        f"▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
         #f"❤️ 𝗛𝗣 : {player['hp']}/{player['max_hp']}\n"
         #f"{p_bar}\n"
         #f"🌀 𝗦𝗧𝗔 : {player['sta']}/{player['max_sta']}\n"
