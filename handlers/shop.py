@@ -1,6 +1,8 @@
 """
-Shop — paginated, 10 items per page, inline Prev/Next buttons.
-Also supports category filter buttons.
+Shop — one dedicated page per category tab.
+Tabs: ⚔️ Weapons | 🛡️ Armor | 🧪 Items | ⬆️ Upgrades
+Each tab shows ALL items of that category (no cross-category pagination).
+Prev/Next only appear when a single category has > PAGE_SIZE items.
 """
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,14 +12,25 @@ from config import SHOP_ITEMS
 
 PAGE_SIZE = 10
 
-CAT_ICONS = {
-    "swords":   "⚔️",
-    "armor":    "🛡️",
-    "items":    "🧪",
-    "potions":  "🔮",
-    "upgrades": "⬆️",
+# ── Tab definitions ────────────────────────────────────────────────────────
+# Each tab can cover one or more SHOP_ITEMS categories.
+TABS = [
+    {"id": "weapons",  "label": "⚔️ Weapons",  "cats": ["swords"],           "icon": "⚔️"},
+    {"id": "armor",    "label": "🛡️ Armor",    "cats": ["armor"],            "icon": "🛡️"},
+    {"id": "items",    "label": "🧪 Items",    "cats": ["items", "potions"], "icon": "🧪"},
+    {"id": "upgrades", "label": "⬆️ Upgrades", "cats": ["upgrades"],         "icon": "⬆️"},
+]
+
+CAT_FONTS = {
+    "swords":   "⚔️ 𝙒𝙀𝘼𝙋𝙊𝙉  𝘼𝙍𝙈𝙊𝙍𝙔 ⚔️",
+    "armor":    "🛡️ 𝘼𝙍𝙈𝙊𝙍  𝙎𝙏𝘼𝙉𝘿 🛡️",
+    "items":    "🧪 𝙄𝙏𝙀𝙈𝙎  &amp;  𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎 🧪",
+    "potions":  "🔮 𝘼𝙇𝘾𝙃𝙀𝙈𝙔  𝙋𝙊𝙏𝙄𝙊𝙉𝙎 🔮",
+    "upgrades": "⬆️ 𝙋𝙇𝘼𝙔𝙀𝙍  𝙐𝙋𝙂𝙍𝘼𝘿𝙀𝙎 ⬆️",
 }
 
+
+# ── Helpers ────────────────────────────────────────────────────────────────
 
 async def _safe_edit(query, text, **kwargs):
     try:
@@ -55,13 +68,20 @@ def find_item(query_str):
     return None, None
 
 
-def _flat_items(cat_filter="all"):
-    """All shop items as flat list, optionally filtered by category."""
+def _get_tab(tab_id):
+    """Return the tab dict for a given tab_id (defaults to first tab)."""
+    for t in TABS:
+        if t["id"] == tab_id:
+            return t
+    return TABS[0]
+
+
+def _tab_items(tab):
+    """Flat list of (cat, item) for all categories in this tab."""
     flat = []
-    for cat, items in SHOP_ITEMS.items():
-        if cat_filter == "all" or cat_filter == cat:
-            for item in items:
-                flat.append((cat, item))
+    for cat in tab["cats"]:
+        for item in SHOP_ITEMS.get(cat, []):
+            flat.append((cat, item))
     return flat
 
 
@@ -76,8 +96,11 @@ def _item_detail(cat, item, player):
     elif cat == "upgrades":
         detail = item.get('desc', '')[:40]
     else:
-        basic = {'wisteria': 'Cures status effects',
-                 'stamina':  '+50 STA', 'gourd': 'Full HP restore'}
+        basic = {
+            'wisteria': 'Cures status effects',
+            'stamina':  '+50 STA',
+            'gourd':    'Full HP restore',
+        }
         detail = basic.get(item.get('code', ''), 'Special Item')
 
     eq_mark = ""
@@ -89,14 +112,17 @@ def _item_detail(cat, item, player):
     return (
         f"❖ <b>{item['name']}</b>{eq_mark}\n"
         f"   ├─ 💰 Cost : ¥ <b>{item['price']:,}</b>\n"
-        f"   ├─ 🏷️ Code : <code>{item.get('code','—')}</code>\n"
+        f"   ├─ 🏷️ Code : <code>{item.get('code', '—')}</code>\n"
         f"   └─ 📝 Info : <i>{detail}</i>"
     )
 
 
-def _build_shop_page(player, page, cat_filter="all"):
-    """Build text + keyboard for one shop page."""
-    flat        = _flat_items(cat_filter)
+# ── Page builder ───────────────────────────────────────────────────────────
+
+def _build_shop_page(player, tab_id="weapons", page=0):
+    """Build text + keyboard for one category tab page."""
+    tab         = _get_tab(tab_id)
+    flat        = _tab_items(tab)
     total_pages = max(1, (len(flat) + PAGE_SIZE - 1) // PAGE_SIZE)
     page        = max(0, min(page, total_pages - 1))
     page_items  = flat[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
@@ -105,24 +131,23 @@ def _build_shop_page(player, page, cat_filter="all"):
     eq_s = player.get('equipped_sword', 'None') if player else 'None'
     eq_a = player.get('equipped_armor', 'None') if player else 'None'
 
+    # ── Header ────────────────────────────────────────────────────────────
     lines = [
         "╔═════════════════╗",
         "     ⛩️ <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> ⛩️",
         "          <b>𝙈𝙀𝙍𝘾𝙃𝘼𝙉𝙏 𝙎𝙃𝙊𝙋</b>",
         "╚═════════════════╝\n",
-        f"👛 <b>Balance:</b> {bal}  |  📄 Page <b>{page+1}/{total_pages}</b>",
-        f"⚔️ <b>{eq_s}</b>  |  🛡️ <b>{eq_a}</b>\n"
+        f"👛 <b>Balance:</b> {bal}",
+        f"⚔️ <b>{eq_s}</b>  |  🛡️ <b>{eq_a}</b>",
     ]
 
-    CAT_FONTS = {
-        "swords":   "⚔️ 𝙒𝙀𝘼𝙋𝙊𝙉  𝘼𝙍𝙈𝙊𝙍𝙔 ⚔️",
-        "armor":    "🛡️ 𝘼𝙍𝙈𝙊𝙍  𝙎𝙏𝘼𝙉𝘿 🛡️",
-        # Notice the &amp; below! This stops Telegram from crashing in HTML mode.
-        "items":    "🧪 𝙄𝙏𝙀𝙈𝙎  &amp;  𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎 🧪",
-        "potions":  "🔮 𝘼𝙇𝘾𝙃𝙀𝙈𝙔  𝙋𝙊𝙏𝙄𝙊𝙉𝙎 🔮",
-        "upgrades": "⬆️ 𝙋𝙇𝘼𝙔𝙀𝙍  𝙐𝙋𝙂𝙍𝘼𝘿𝙀𝙎 ⬆️"
-    }
+    # Show page indicator only when there's more than one page
+    if total_pages > 1:
+        lines.append(f"📄 Page <b>{page + 1}/{total_pages}</b>")
 
+    lines.append("")
+
+    # ── Items ─────────────────────────────────────────────────────────────
     cur_cat = None
     for cat, item in page_items:
         if cat != cur_cat:
@@ -131,34 +156,43 @@ def _build_shop_page(player, page, cat_filter="all"):
             lines.append("━━━━━━━━━━━━━━━━━━━")
         lines.append(_item_detail(cat, item, player) + "\n")
 
-    if lines[-1].endswith("\n"):
+    if lines and lines[-1].endswith("\n"):
         lines[-1] = lines[-1].rstrip("\n")
 
     lines += [
         "━━━━━━━━━━━━━━━━━━━",
         "<blockquote>🛒 <b>Purchase Command</b>",
         "└ Use: <code>/buy [code]</code> or <code>/buy [name]</code></blockquote>",
-        "━━━━━━━━━━━━━━━━━━━"
+        "━━━━━━━━━━━━━━━━━━━",
     ]
 
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"shop_{page-1}_{cat_filter}"))
-    nav.append(InlineKeyboardButton(f"📄 {page+1}/{total_pages}", callback_data="shop_noop"))
-    if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"shop_{page+1}_{cat_filter}"))
+    # ── Keyboard ──────────────────────────────────────────────────────────
+    buttons = []
 
-    cats = [("All","all"),("⚔️","swords"),("🛡️","armor"),
-            ("🧪","items"),("🔮","potions"),("⬆️","upgrades")]
-    cat_row = [
-        InlineKeyboardButton(
-            f"{'✓ ' if (cf=='all' and cat_filter=='all') or cat_filter==cf else ''}{emoji}",
-            callback_data=f"shop_0_{cf}"
+    # Row 1 – tab buttons (one per category page)
+    tab_row = []
+    for t in TABS:
+        active = "✦ " if t["id"] == tab_id else ""
+        tab_row.append(
+            InlineKeyboardButton(
+                f"{active}{t['label']}",
+                callback_data=f"shop_{t['id']}_0",
+            )
         )
-        for emoji, cf in cats
-    ]
+    # Split into two rows of 2 so they fit on mobile
+    buttons.append(tab_row[:2])
+    buttons.append(tab_row[2:])
 
-    buttons = [nav, cat_row]
+    # Row 3 – Prev / page indicator / Next (only when needed)
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"shop_{tab_id}_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"📄 {page + 1}/{total_pages}", callback_data="shop_noop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"shop_{tab_id}_{page + 1}"))
+        buttons.append(nav)
+
     kb = InlineKeyboardMarkup(buttons)
     return "\n".join(lines), kb
 
@@ -168,31 +202,37 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     player  = get_player(user_id)
 
-    text, kb = _build_shop_page(player, 0, "all")
+    text, kb = _build_shop_page(player, tab_id="weapons", page=0)
 
-    msg = update.message if update.message else update.callback_query.message
     if update.callback_query:
         await _safe_edit(update.callback_query, text, parse_mode='HTML', reply_markup=kb)
     else:
+        msg = update.message
         await msg.reply_text(text, parse_mode='HTML', reply_markup=kb)
 
 
-# ── Shop page callback ─────────────────────────────────────────────────────
+# ── Shop callback (tab switch + pagination) ────────────────────────────────
 async def shop_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query   = update.callback_query
+    """
+    Callback data format:
+        shop_noop               – page indicator button, do nothing
+        shop_<tab_id>_<page>   – switch tab and/or page
+    """
+    query = update.callback_query
     await query.answer()
-    data    = query.data   # shop_N_catfilter  or  shop_noop
+    data = query.data
 
     if data == "shop_noop":
         return
 
-    parts      = data.split("_", 2)
-    page       = int(parts[1]) if len(parts) > 1 else 0
-    cat_filter = parts[2] if len(parts) > 2 else "all"
+    # shop_<tab_id>_<page>
+    parts  = data.split("_", 2)          # ["shop", tab_id, page]
+    tab_id = parts[1] if len(parts) > 1 else "weapons"
+    page   = int(parts[2]) if len(parts) > 2 else 0
 
     user_id = query.from_user.id
     player  = get_player(user_id)
-    text, kb = _build_shop_page(player, page, cat_filter)
+    text, kb = _build_shop_page(player, tab_id=tab_id, page=page)
     await _safe_edit(query, text, parse_mode='HTML', reply_markup=kb)
 
 
@@ -216,11 +256,11 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  `/buy spscroll` — +3 Skill Points\n"
             "  `/buy scarlet` — Scarlet Crimson Blade\n\n"
             "Use /shop to browse all items.",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
         )
         return
 
-    args = context.args
+    args   = context.args
     amount = 1
     if len(args) >= 2:
         try:
@@ -237,7 +277,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not item:
         await update.message.reply_text(
             f"❌ *Item not found:* `{query_str}`\n\nUse /shop to browse items and codes.",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
         )
         return
 
@@ -254,7 +294,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 Total:   *{total_cost:,}¥*\n"
             f"👛 Balance: *{player['yen']:,}¥*\n"
             f"💸 Need:    *{needed:,}¥ more*",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
         )
         return
 
@@ -267,9 +307,14 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if category == 'swords':
         add_item(user_id, item['name'], 'sword')
         current = player.get('equipped_sword', 'None')
-        tier    = {'Basic Nichirin Blade':1,'Crimson Nichirin Blade':2,
-                   'Jet Black Nichirin Blade':3,'Scarlet Crimson Blade':4,
-                   'Transparent Nichirin Blade':5,'Sun Nichirin Blade':6}
+        tier    = {
+            'Basic Nichirin Blade':       1,
+            'Crimson Nichirin Blade':     2,
+            'Jet Black Nichirin Blade':   3,
+            'Scarlet Crimson Blade':      4,
+            'Transparent Nichirin Blade': 5,
+            'Sun Nichirin Blade':         6,
+        }
         if tier.get(item['name'], 0) > tier.get(current, 0) or current == 'None':
             update_player(user_id, equipped_sword=item['name'])
             equip_note = f"\n⚔️ *Auto-equipped!*"
@@ -280,8 +325,14 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif category == 'armor':
         add_item(user_id, item['name'], 'armor')
         current = player.get('equipped_armor', 'None')
-        tier    = {'Corps Uniform':1,'Reinforced Haori':2,'Hashira Haori':3,
-                   'Demon Slayer Uniform EX':4,'Flame Haori':5,'Yoriichi Haori':6}
+        tier    = {
+            'Corps Uniform':          1,
+            'Reinforced Haori':       2,
+            'Hashira Haori':          3,
+            'Demon Slayer Uniform EX':4,
+            'Flame Haori':            5,
+            'Yoriichi Haori':         6,
+        }
         if tier.get(item['name'], 0) > tier.get(current, 0) or current == 'None':
             update_player(user_id, equipped_armor=item['name'])
             equip_note = f"\n🛡️ *Auto-equipped!*"
@@ -312,9 +363,14 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'skill_points+10':[('skill_points', 10)],
         }
         stat_labels = {
-            'str_stat':'💪 STR','spd':'⚡ SPD','def_stat':'🛡️ DEF',
-            'max_hp':'❤️ MaxHP','hp':'❤️ HP','max_sta':'🌀 MaxSTA',
-            'sta':'🌀 STA','skill_points':'💠 SP',
+            'str_stat':    '💪 STR',
+            'spd':         '⚡ SPD',
+            'def_stat':    '🛡️ DEF',
+            'max_hp':      '❤️ MaxHP',
+            'hp':          '❤️ HP',
+            'max_sta':     '🌀 MaxSTA',
+            'sta':         '🌀 STA',
+            'skill_points':'💠 SP',
         }
         ups = {}
         for stat, val in mapping.get(effect, []):
@@ -327,7 +383,10 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Potions + basic items — add to inventory ───────────────────────────
     else:
         add_item(user_id, item['name'], 'item', amount)
-        equip_note = f"\n📦 Added to inventory × {amount}" if amount > 1 else "\n📦 Added to inventory"
+        equip_note = (
+            f"\n📦 Added to inventory × {amount}" if amount > 1
+            else "\n📦 Added to inventory"
+        )
 
     qty_str = f" × {amount}" if amount > 1 else ""
     await update.message.reply_text(
@@ -336,7 +395,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💸 Spent:   *{total_cost:,}¥*\n"
         f"💰 Balance: *{new_yen:,}¥*"
         f"{equip_note}{extra_note}",
-        parse_mode='Markdown'
+        parse_mode='Markdown',
     )
 
 
@@ -347,7 +406,7 @@ async def sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/list [item name] [price]`\n\n"
         "Example: `/list Demon Blood 500`\n\n"
         "Use /market to browse listings.",
-        parse_mode='Markdown'
+        parse_mode='Markdown',
     )
 
 
@@ -381,10 +440,14 @@ async def equip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     item_name = ' '.join(context.args)
     inv       = get_inventory(user_id)
-    sword = next((i for i in inv if i['item_name'].lower() == item_name.lower()
-                  and i['item_type'] == 'sword'), None)
-    armor = next((i for i in inv if i['item_name'].lower() == item_name.lower()
-                  and i['item_type'] == 'armor'), None)
+    sword = next(
+        (i for i in inv if i['item_name'].lower() == item_name.lower()
+         and i['item_type'] == 'sword'), None
+    )
+    armor = next(
+        (i for i in inv if i['item_name'].lower() == item_name.lower()
+         and i['item_type'] == 'armor'), None
+    )
 
     if sword:
         update_player(user_id, equipped_sword=sword['item_name'])
@@ -395,7 +458,7 @@ async def equip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(
             f"❌ *{item_name}* not found in inventory.\nUse /inventory to see your items.",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
         )
 
 
