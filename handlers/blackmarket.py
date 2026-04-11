@@ -29,7 +29,7 @@ def get_bm_stock():
     result = []
     for i, item in enumerate(items, 1):
         d = {k: v for k, v in item.items() if k != "_id"}
-        d["_id"]        = item["_id"]   # keep real _id for atomic updates
+        d["_id"]        = item["_id"]
         d["display_id"] = i
         result.append(d)
     return result
@@ -45,54 +45,66 @@ async def blackmarket(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_black_market_open():
         await update.message.reply_text(
-            "🌑 *BLACK MARKET*\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🔒 *The market is CLOSED.*\n\n"
-            "_The hooded figure is nowhere to be seen..._\n\n"
-            "🕙 Open between *10pm — 6am UTC*\n"
+            "╔═════════════════╗\n"
+            "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+            "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+            "╚═════════════════╝\n\n"
+            "🔒 <b>The market is CLOSED.</b>\n\n"
+            "<i>The hooded figure is nowhere to be seen...</i>\n\n"
+            "🕙 Open between <b>10pm — 6am UTC</b>\n"
             "🌕 Or when admin opens it manually",
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
         return
 
     stock = get_bm_stock()
     if not stock:
         await update.message.reply_text(
-            "🌑 *BLACK MARKET*\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "_The hooded figure eyes you carefully..._\n\n"
-            "📦 *No stock tonight.* Check back later.\n"
-            "_Rare items appear randomly each night._\n\n"
-            "💡 Admin: `/addblackmarket [price] [stock] [item name]`",
-            parse_mode='Markdown'
+            "╔═════════════════╗\n"
+            "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+            "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+            "╚═════════════════╝\n\n"
+            "<i>The hooded figure eyes you carefully...</i>\n\n"
+            "📦 <b>No stock tonight.</b> Check back later.\n"
+            "<i>Rare items appear randomly each night.</i>\n\n"
+            "💡 Admin: <code>/addblackmarket [price] [stock] [item name]</code>",
+            parse_mode='HTML'
         )
         return
 
+    bal = f"¥ {player['yen']:,}"
+
     lines = [
-        "🌑 *BLACK MARKET*",
-        "━━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "_The hooded figure eyes you carefully..._",
-        "",
-        "🎭 *Tonight's Stock:*",
-        "━━━━━━━━━━━━━━━━━━━━━",
+        "╔═════════════════╗",
+        "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑",
+        "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>",
+        "╚═════════════════╝\n",
+        f"👛 <b>Balance:</b> {bal}\n",
+        f"     🎭 𝙏𝙊𝙉𝙄𝙂𝙃𝙏'𝙎  𝙎𝙏𝙊𝘾𝙆 🎭",
+        "━━━━━━━━━━━━━━━━━━━",
     ]
+
     for item in stock:
-        stock_warn = " ⚠️ _Last one!_" if item.get('stock') == 1 else ""
+        stock_warn = "  ⚠️ <i>Last one!</i>" if item.get('stock') == 1 else ""
         lines.append(
-            f"🔹 *[{item['display_id']}]* {item['item_name']}\n"
-            f"      💰 *{item['price']:,}¥*  •  📦 Stock: {item.get('stock', 1)}{stock_warn}"
+            f"❖ <b>[{item['display_id']}] {item['item_name']}</b>\n"
+            f"   ├─ 💰 Cost  : ¥ <b>{item['price']:,}</b>\n"
+            f"   └─ 📦 Stock : {item.get('stock', 1)}{stock_warn}\n"
         )
 
+    if lines[-1].endswith("\n"):
+        lines[-1] = lines[-1].rstrip("\n")
+
     lines += [
-        "━━━━━━━━━━━━━━━━━━━━━",
-        f"💰 *Your wallet:* {player['yen']:,}¥",
-        "",
-        "💡 `/bmbuy [id]` — Buy by number",
-        "💡 `/bmbuy [item name]` — Buy by name",
-        "_Stock refreshes at dawn._",
+        "━━━━━━━━━━━━━━━━━━━",
+        "<blockquote>🛒 <b>Purchase Command</b>\n"
+        "├ Use: <code>/bmbuy [id]</code> — Buy by number\n"
+        "└ Use: <code>/bmbuy [item name]</code> — Buy by name</blockquote>",
+        "━━━━━━━━━━━━━━━━━━━",
+        "<i>Stock refreshes at dawn.</i>",
     ]
-    await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+
+    await update.message.reply_text('\n'.join(lines), parse_mode='HTML')
 
 
 @dm_only
@@ -105,8 +117,8 @@ async def bm_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_black_market_open():
         await update.message.reply_text(
-            "🔒 *The Black Market is closed!*\n\n_Come back between 10pm — 6am UTC._",
-            parse_mode='Markdown'
+            "🔒 <b>The Black Market is closed!</b>\n\n<i>Come back between 10pm — 6am UTC.</i>",
+            parse_mode='HTML'
         )
         return
 
@@ -118,14 +130,14 @@ async def bm_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         await update.message.reply_text(
             "💡 Usage:\n"
-            "  `/bmbuy [id]` — Buy by number\n"
-            "  `/bmbuy [item name]` — Buy by name\n\n"
+            "  <code>/bmbuy [id]</code> — Buy by number\n"
+            "  <code>/bmbuy [item name]</code> — Buy by name\n\n"
             "Use /blackmarket to see available items.",
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
         return
 
-    stock     = get_bm_stock()
+    stock = get_bm_stock()
     if not stock:
         await update.message.reply_text("❌ No stock available right now. Use /blackmarket to check.")
         return
@@ -143,21 +155,21 @@ async def bm_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not item or item.get('stock', 0) <= 0:
         await update.message.reply_text(
-            f"❌ *Item not found or sold out.*\n\n"
+            f"❌ <b>Item not found or sold out.</b>\n\n"
             f"Use /blackmarket to see current stock.\n"
-            f"Buy by number: `/bmbuy 1` or by name: `/bmbuy Boss Shard`",
-            parse_mode='Markdown'
+            f"Buy by number: <code>/bmbuy 1</code> or by name: <code>/bmbuy Boss Shard</code>",
+            parse_mode='HTML'
         )
         return
 
     if player['yen'] < item['price']:
         needed = item['price'] - player['yen']
         await update.message.reply_text(
-            f"❌ *Not enough Yen!*\n\n"
-            f"💰 Item price:  *{item['price']:,}¥*\n"
-            f"👛 Your wallet: *{player['yen']:,}¥*\n"
-            f"💸 Need:        *{needed:,}¥ more*",
-            parse_mode='Markdown'
+            f"❌ <b>Not enough Yen!</b>\n\n"
+            f"💰 Item price:  <b>{item['price']:,}¥</b>\n"
+            f"👛 Your wallet: <b>{player['yen']:,}¥</b>\n"
+            f"💸 Need:        <b>{needed:,}¥ more</b>",
+            parse_mode='HTML'
         )
         return
 
@@ -188,25 +200,31 @@ async def bm_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _wb_log(user_id, "bm_purchase", 1,
                 f"bought 1 SP from blackmarket for {item['price']:,}¥")
         await update.message.reply_text(
-            f"✅ *PURCHASED!*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💠 *+1 Skill Point* added!\n"
-            f"💸 Spent:    *{item['price']:,}¥*\n"
-            f"💰 Balance:  *{player['yen'] - item['price']:,}¥*\n"
-            f"💠 Your SP:  *{player.get('skill_points', 0) + 1}*\n\n"
-            f"_Use /skilltree to spend your SP._",
-            parse_mode='Markdown'
+            "╔═════════════════╗\n"
+            "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+            "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+            "╚═════════════════╝\n\n"
+            f"✅ <b>Purchase Successful!</b>\n\n"
+            f"💠 <b>+1 Skill Point</b> added!\n"
+            f"💸 Spent:   <b>{item['price']:,}¥</b>\n"
+            f"💰 Balance: <b>{player['yen'] - item['price']:,}¥</b>\n"
+            f"💠 Your SP: <b>{player.get('skill_points', 0) + 1}</b>\n\n"
+            f"<i>Use /skilltree to spend your SP.</i>",
+            parse_mode='HTML'
         )
         return
 
     add_item(user_id, item['item_name'], itype)
 
     await update.message.reply_text(
-        f"✅ *PURCHASED!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎭 *{item['item_name']}*\n"
-        f"💸 Spent:    *{item['price']:,}¥*\n"
-        f"💰 Balance:  *{player['yen'] - item['price']:,}¥*\n\n"
-        f"_Use /inventory to see your items._",
-        parse_mode='Markdown'
+        "╔═════════════════╗\n"
+        "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+        "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+        "╚═════════════════╝\n\n"
+        f"✅ <b>Purchase Successful!</b>\n\n"
+        f"🎭 <b>{item['item_name']}</b>\n"
+        f"💸 Spent:   <b>{item['price']:,}¥</b>\n"
+        f"💰 Balance: <b>{player['yen'] - item['price']:,}¥</b>\n\n"
+        f"<i>Use /inventory to see your items.</i>",
+        parse_mode='HTML'
     )
