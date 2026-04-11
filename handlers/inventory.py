@@ -37,22 +37,22 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     materials = [i for i in inv if i["item_type"] == "material"]
 
     lines = [
-        f"╔══════════════════════╗",
-        f"      🎒 𝙄𝙉𝙑𝙀𝙉𝙏𝙊𝙍𝙔",
-        f"        「 {player['name'].upper()} 」",
-        f"╚══════════════════════╝",
+        f"=======================",
+        f"=      🎒 𝙄𝙉𝙑𝙀𝙉𝙏𝙊𝙍𝙔           =",
+        f"=======================",
         f"",
-        f"💠 𝙎𝙠𝙞𝙡𝙡 𝙋𝙩𝙨    : {player.get('skill_points', 0)} SP",
-        f"💰 𝘽𝙖𝙡𝙖𝙣𝙘𝙚     : {player.get('yen', 0):,}¥",
+        f"𝙎𝙠𝙞𝙡𝙡 𝙋𝙩𝙨    : {player.get('skill_points', 0)} SP ",
+        f"𝘽𝙖𝙡𝙖𝙣𝙘𝙚     : {player.get('yen', 0):,}¥",
         f"",
-        f"🗡️ 𝙀𝙌𝙐𝙄𝙋𝙋𝙀𝘿",
+        f"𝙀𝙌𝙐𝙄𝙋𝙋𝙀𝘿",
+        f" |",
         f"╰➤ ⚔️ 𝙎𝙬𝙤𝙧𝙙   : {player.get('equipped_sword', 'None')}",
-        f"╰➤ 🛡️ 𝘼𝙧𝙢𝙤𝙧   : {player.get('equipped_armor', 'None')}",
+        f"╰➤ 🛡 𝘼𝙧𝙢𝙤𝙧   : {player.get('equipped_armor', 'None')}",
+        f"",
+        f"𝙄𝙏𝙀𝙈𝙎  🧪 ",
+        f" |",
     ]
 
-    lines.append("")
-    lines.append("━━━━━━━━ 🧪 ━━━━━━━")
-    lines.append("𝙄𝙏𝙀𝙈𝙎   ( /use )")
     if items:
         for i in items:
             lines.append(f"╰➤ {i['item_name']}   × {i['quantity']}")
@@ -60,18 +60,19 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("╰➤ _No items_")
 
     lines.append("")
-    lines.append("━━━━━━━━ ⚔️ ━━━━━━━")
-    lines.append("𝙎𝙒𝙊𝙍𝘿𝙎   ( /equip )")
+    lines.append("𝙎𝙒𝙊𝙍𝘿𝙎   ⚔️ ")
+    lines.append(" |")
+
     if swords:
         for i in swords:
             lines.append(f"╰➤ {i['item_name']}")
     else:
-        lines.append("╰➤ _No swords_")
+        lines.append("╰➤ No swords")
 
     if armor_inv:
         lines.append("")
-        lines.append("━━━━━━━━ 🛡️ ━━━━━━━")
-        lines.append("𝘼𝙍𝙈𝙊𝙍")
+        lines.append("𝘼𝙍𝙈𝙊𝙍   🛡")
+        lines.append(" |")
         for i in armor_inv:
             lines.append(f"╰➤ {i['item_name']}")
 
@@ -116,13 +117,12 @@ async def inv_materials_callback(update: Update, context: ContextTypes.DEFAULT_T
     page_items = materials[start:start + PAGE_SIZE]
 
     lines = [
-        f"╔══════════════════════╗",
-        f"      🎁 𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎",
-        f"        「 {player['name'].upper()} 」",
-        f"╚══════════════════════╝",
+        f"=======================",
+        f"=      🎁 𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎           =",
+        f"=======================",
         f"",
-        f"━━━━━━━ 🎁 ━━━━━━━━",
-        f"𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎   ( /sell )  • Page {page+1}/{total_pages}",
+        f"𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎  🎁   ( /sell )  • Page {page+1}/{total_pages}",
+        f" |",
     ]
 
     if page_items:
