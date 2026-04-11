@@ -20,10 +20,19 @@ TYPE_EMOJI = {
     'misc':     '📦',
 }
 
+TYPE_HEADERS = {
+    'sword':    '⚔️  𝑾𝒆𝒂𝒑𝒐𝒏𝒔',
+    'armor':    '🛡️  𝑨𝒓𝒎𝒐𝒖𝒓',
+    'item':     '🧪  𝑰𝒕𝒆𝒎𝒔',
+    'material': '🎁  𝑴𝒂𝒕𝒆𝒓𝒊𝒂𝒍𝒔',
+    'scroll':   '📜  𝑺𝒄𝒓𝒐𝒍𝒍𝒔',
+    'misc':     '📦  𝑴𝒊𝒔𝒄',
+    'potion':   '🔮  𝑷𝒐𝒕𝒊𝒐𝒏𝒔',
+}
+
 
 def _escape(text: str) -> str:
     """Escape special Markdown v1 characters in dynamic text."""
-    # In Markdown v1, these break formatting: _ * ` [
     return str(text).replace('_', '\\_').replace('*', '\\*').replace('`', '\\`').replace('[', '\\[')
 
 
@@ -89,8 +98,9 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not listings:
         note = f"for *{_escape(search)}*" if search else ""
         await msg.reply_text(
-            f"🏪 *PLAYER MARKET*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"╔══════════════════╗\n"
+            f"  🏮 𝑷𝑳𝑨𝒀𝑬𝑹 𝑴𝑨𝑹𝑲𝑬𝑻 🏮\n"
+            f"╚══════════════════╝\n\n"
             f"_No listings found {note}._\n\n"
             f"💡 `/list [item] [price]` — Sell your items\n"
             f"🔍 `/market [search]` — Search listings",
@@ -98,43 +108,83 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Group listings by type
+    grouped = {}
+    for item in listings[:20]:
+        itype = item.get('item_type', 'misc')
+        grouped.setdefault(itype, []).append(item)
+
     lines = [
-        "🏪 *PLAYER MARKET*",
-        "━━━━━━━━━━━━━━━━━━━━━",
-        f"📊 *{len(listings)} listings*  •  💰 Balance: *{player['yen']:,}¥*",
+        "╔══════════════════╗",
+        "  🏮 𝑷𝑳𝑨𝒀𝑬𝑹 𝑴𝑨𝑹𝑲𝑬𝑻 🏮",
+        "╚══════════════════╝",
+        "",
+        f"👛 Balance: ¥ {player['yen']:,}  |  📋 {len(listings)} Listing(s)",
         "",
     ]
-    for i, item in enumerate(listings[:20], 1):
-        emoji = TYPE_EMOJI.get(item.get('item_type', 'misc'), '📦')
-        if item.get('seller_id', 0) == 0:
-            sname = "🏪 Shop"
-        else:
-            seller = get_player(item['seller_id'])
-            # ✅ fix: escape username — underscores break Markdown
-            raw_name = f"@{seller['username']}" if seller and seller.get('username') else "Player"
-            sname = _escape(raw_name)
-        qty     = item.get('quantity', 1)
-        qty_txt = f" ×{qty}" if qty > 1 else ""
-        # ✅ fix: escape item name — special chars break Markdown
-        safe_name = _escape(item['item_name'])
-        lines.append(
-            f"  `[{i}]` {emoji} *{safe_name}*{qty_txt}"
-            f" — *{item['price']:,}¥*  _{sname}_"
-        )
+
+    for itype, items in grouped.items():
+        header = TYPE_HEADERS.get(itype, f"📦  {itype.capitalize()}")
+        lines.append(f"     {header}")
+        lines.append("━━━━━━━━━━━━━━━━━━━")
+        for item in items:
+            emoji = TYPE_EMOJI.get(itype, '📦')
+            if item.get('seller_id', 0) == 0:
+                sname = "🏪 Shop"
+            else:
+                seller = get_player(item['seller_id'])
+                raw_name = f"@{seller['username']}" if seller and seller.get('username') else "Player"
+                sname = _escape(raw_name)
+            qty = item.get('quantity', 1)
+            qty_txt = f" ×{qty}" if qty > 1 else ""
+            safe_name = _escape(item['item_name'])
+            lines += [
+                f"❖ {emoji} *{safe_name}*{qty_txt}",
+                f"   ├─ 💰 Price  : ¥ {item['price']:,}",
+                f"   └─ 🏷️ Seller : {sname}",
+                "",
+            ]
+        lines.append("")
 
     lines += [
-        "",
-        "━━━━━━━━━━━━━━━━━━━━━",
-        "💡 `/buy market [item name] [amount]` — Buy items",
-        "📦 `/list [item] [price]` — List your item",
+        "━━━━━━━━━━━━━━━━━━━",
     ]
-    # ✅ fix: wrap send in try/except with fallback to plain text
+
+    # Purchase command as blockquote (Telegram MarkdownV2 blockquote)
+    # Using expandable blockquote for the purchase commands
+    purchase_block = (
+        "**blockquote**\n"
+        "🛒 Purchase Command\n"
+        "└ Use: /buy market [item name] [amount]\n"
+        "📦 List Command\n"
+        "└ Use: /list [item] [price]"
+    )
+
+    main_text = '\n'.join(lines)
+
+    # Send main body with Markdown, then blockquote separately using MarkdownV2
     try:
-        await msg.reply_text('\n'.join(lines), parse_mode='Markdown')
+        await msg.reply_text(main_text, parse_mode='Markdown')
     except BadRequest:
-        # Strip markdown and retry as plain text
-        plain = '\n'.join(lines).replace('*', '').replace('_', '').replace('`', '')
+        plain = main_text.replace('*', '').replace('_', '').replace('`', '')
         await msg.reply_text(plain)
+
+    # Send purchase command as a Telegram blockquote using MarkdownV2
+    blockquote_text = (
+        ">🛒 *Purchase Command*\n"
+        ">└ Use: `/buy market \\[item name\\] \\[amount\\]`\n"
+        ">📦 *List Command*\n"
+        ">└ Use: `/list \\[item\\] \\[price\\]`"
+    )
+    try:
+        await msg.reply_text(blockquote_text, parse_mode='MarkdownV2')
+    except BadRequest:
+        await msg.reply_text(
+            "🛒 Purchase Command\n"
+            "└ Use: /buy market [item name] [amount]\n"
+            "📦 List Command\n"
+            "└ Use: /list [item] [price]"
+        )
 
 
 # ── /list — list an item for sale ─────────────────────────────────────────
@@ -178,7 +228,6 @@ async def market_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for item in listable[:20]:
             icon = TYPE_ICONS.get(item.get('item_type', 'material'), '📦')
             qty  = item.get('quantity', 1)
-            # ✅ fix: escape item name
             lines.append(f"  {icon} *{_escape(item['item_name'])}* × {qty}")
         lines += [
             "",
