@@ -1,13 +1,9 @@
 import logging
 
 # ── Configure logging FIRST — before any handler/util imports ──────────────
-# basicConfig must run before any module-level getLogger() calls, otherwise
-# those loggers receive a NullHandler and produce zero output.
-
 _fmt_default = logging.Formatter('%(asctime)s [%(name)s] [%(levelname)s] "%(message)s"')
 _fmt_explore = logging.Formatter('%(asctime)s [EXPLORE] [%(levelname)s] "%(message)s"')
 
-# Root handler — catches everything at INFO+
 _root_handler = logging.StreamHandler()
 _root_handler.setFormatter(_fmt_default)
 _root_handler.setLevel(logging.INFO)
@@ -15,11 +11,9 @@ _root_handler.setLevel(logging.INFO)
 logging.root.setLevel(logging.INFO)
 logging.root.addHandler(_root_handler)
 
-# Silence noisy telegram/httpx libraries — keep only WARNING+
 for _noisy in ("httpx", "telegram", "apscheduler"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
-# ── Explore-specific handler: prints with ⚔️ prefix so it stands out ────────
 class _ExploreFilter(logging.Filter):
     def filter(self, record):
         return record.name == "handlers.explore"
@@ -98,28 +92,14 @@ from handlers.challenge import (challenge, duel_accept_callback, duel_decline_ca
 from handlers.market import market, market_list, unlist, markethistory, market_buy
 from handlers.bank import bank, deposit, withdraw, bankupgrade, banktax
 from handlers.worldbank import (
-    worldbank,
-    worlddeposit,
-    worldwithdraw,
-    wbaddstock,
-    wbsetprice,
-    wbinfo,
-    wbevent,
-    wbblackmarket,
+    worldbank, worlddeposit, worldwithdraw,
+    wbaddstock, wbsetprice, wbinfo, wbevent, wbblackmarket,
 )
 from handlers.bank_giveaway import (
-    bankgiveaway,
-    join_bank_giveaway,
-    resume_bank_giveaways,
-    schedule_daily_bank_tax,
+    bankgiveaway, join_bank_giveaway, resume_bank_giveaways, schedule_daily_bank_tax,
 )
 from handlers.sp_bank import (
-    resume_sp_features,
-    spbank,
-    spdeposit,
-    spwithdraw,
-    spgiveaway,
-    spjoin,
+    resume_sp_features, spbank, spdeposit, spwithdraw, spgiveaway, spjoin,
 )
 from handlers.broadcast import bcast, handle_broadcast_callback
 from handlers.admin_add import add
@@ -136,7 +116,6 @@ from handlers.event import event_cmd, events, eventend, eventlist, event_callbac
 try:
     from handlers.event import eventresults, vote_cmd, vote_callback
 except ImportError:
-    # Fallback stubs if event.py hasn't been updated yet
     async def eventresults(update, context): await eventend(update, context)
     async def vote_cmd(update, context): await event_cmd(update, context)
     async def vote_callback(update, context): await event_callback(update, context)
@@ -154,7 +133,6 @@ from handlers.offer import offers, offer_buy_callback, addoffer
 from handlers.imgupload import setimage, listimages
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
-
 from handlers.skilltree import (skilltree, skilltree_owned, skillbuy, skilllist,
                                  skillinfo, skills, skilltree_buy_callback,
                                  skilltree_page_callback, myskills_callback,
@@ -165,20 +143,15 @@ skill_detail = skillinfo
 from handlers.claninfo import claninfo, clandeposit, clanwithdraw, changestyle, claninfo_callback
 from handlers.unstuck import unstuck, forceunstuck
 from handlers.coop import (
-    joinbattle,
-    coop_attack,
-    coop_technique,
-    coop_use_form,
-    coop_join_callback,
-    coop_leave,
-    coop_back,
-    coop_items,
-    coop_use_item,
-    coop_art_callback,
+    joinbattle, coop_attack, coop_technique, coop_use_form,
+    coop_join_callback, coop_leave, coop_back,
+    coop_items, coop_use_item, coop_art_callback,
 )
 from handlers.admin_tools import get_media_file_id
 
 logger = logging.getLogger(__name__)
+log = logger  # alias used in some handlers
+
 
 async def post_init(application):
     """Called after app starts — log webhook info."""
@@ -196,14 +169,13 @@ async def post_init(application):
         logger.info("Running in polling mode")
 
 PRIVATE = filters.ChatType.PRIVATE
-ANY = filters.ALL  # works everywhere
+ANY = filters.ALL
 AUTO_GUARD_WINDOW_SECONDS = 12
 AUTO_GUARD_MAX_ACTIONS = 14
 AUTO_GUARD_REPEAT_LIMIT = 6
 
 
 async def buy_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Route /buy to market, blackmarket, or shop — works everywhere."""
     args = context.args
     if args and args[0].lower() == 'market':
         await market_buy(update, context)
@@ -244,14 +216,12 @@ def _activity_signature(update: Update) -> str | None:
         if not data or data.startswith("captcha_") or data == "goto_start":
             return None
         return f"button:{data[:48]}"
-
     message = update.message
     if message and message.text and message.text.startswith("/"):
         command = message.text.split()[0][1:].split("@")[0].lower()
         if command == "start":
             return None
         return f"command:{command}"
-
     return None
 
 
@@ -261,16 +231,13 @@ def _note_recent_activity(context: ContextTypes.DEFAULT_TYPE, user_id: int, sign
         "events": deque(maxlen=50),
         "signatures": deque(maxlen=25),
     })
-
     now = datetime.now()
     events = state["events"]
     signatures = state["signatures"]
-
     while events and (now - events[0]).total_seconds() > AUTO_GUARD_WINDOW_SECONDS:
         events.popleft()
     while signatures and (now - signatures[0][0]).total_seconds() > AUTO_GUARD_WINDOW_SECONDS:
         signatures.popleft()
-
     events.append(now)
     signatures.append((now, signature))
     repeat_count = sum(1 for _, sig in signatures if sig == signature)
@@ -280,13 +247,13 @@ def _note_recent_activity(context: ContextTypes.DEFAULT_TYPE, user_id: int, sign
 def _human_check_message(reason: str | None = None, remaining_minutes: int | None = None) -> str:
     if remaining_minutes:
         return (
-            "Verification cooldown active."
+            "Verification cooldown active. "
             f"Wait about {remaining_minutes} minute(s), then use /start in DM."
         )
     if reason:
         return (
-            "Human verification required."
-            f"Trigger: {reason}"
+            "Human verification required. "
+            f"Trigger: {reason} "
             "Use /start in DM and solve the captcha to continue."
         )
     return "Human verification required. Use /start in DM and solve the captcha to continue."
@@ -300,18 +267,13 @@ async def _notify_human_check(update: Update, reason: str | None = None, remaini
         elif update.message:
             await update.message.reply_text(text)
     except Exception as e:
-        log.error("[EXCEPTION] %s", e)
+        logger.error("[EXCEPTION] %s", e)
 
 
 async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Global anti-auto pre-filter.
-    Suspiciously fast command/button spam is forced through a captcha check in DM.
-    """
     user = update.effective_user
     if not user or _is_privileged_user(user.id):
         return
-
     if update.callback_query and (update.callback_query.data or "").startswith("captcha_"):
         return
     if update.callback_query and (update.callback_query.data or "") == "goto_start":
@@ -358,90 +320,60 @@ async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     _set_human_check_required(user.id, reason)
     log_user_activity(
-        user.id,
-        "human_check_required",
-        details=reason,
+        user.id, "human_check_required", details=reason,
         chat_id=update.effective_chat.id if update.effective_chat else None,
         chat_type=update.effective_chat.type if update.effective_chat else None,
-        username=user.username,
-        name=user.first_name,
+        username=user.username, name=user.first_name,
     )
     await _notify_human_check(update, reason=reason)
     raise ApplicationHandlerStop
 
 
 async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Global pre-filter: blocks all users except owner and approved users
-    when maintenance mode is enabled. Runs at group=-2 (before everything).
-    """
     if not is_maintenance_on():
-        return  # Maintenance off — let everyone through
-
+        return
     user = update.effective_user
     if not user:
         return
-
     uid = user.id
-
-    # Always allow owner and approved users through
     if uid == OWNER_ID or is_approved_user(uid):
         return
-
-    # Allow maintenance management commands to pass (owner can turn it off)
     if update.message and update.message.text:
         cmd = update.message.text.split()[0].lstrip('/').split('@')[0].lower()
         if cmd in ('maintenance', 'approveuser', 'unapproveuser', 'approvedlist', 'start'):
             return
-
-    # Block all callback queries with alert
     if update.callback_query:
         try:
-            await update.callback_query.answer(
-                "🔧 Bot is under maintenance. Please wait!",
-                show_alert=True
-            )
+            await update.callback_query.answer("🔧 Bot is under maintenance. Please wait!", show_alert=True)
         except Exception as e:
-            log.error("[EXCEPTION] %s", e)
+            logger.error("[EXCEPTION] %s", e)
         raise ApplicationHandlerStop
-
-    # Block all messages/commands with maintenance message
     maintenance_msg = (
-        "🔧 *Bot Under Maintenance*"
-        "The bot is currently undergoing scheduled maintenance."
-        "Please try again later! 🙏"
+        "🔧 *Bot Under Maintenance*\n"
+        "The bot is currently undergoing scheduled maintenance.\n"
+        "Please try again later! 🙏\n"
         "_We'll be back soon._"
     )
     if update.message:
         try:
             await update.message.reply_text(maintenance_msg, parse_mode="Markdown")
         except Exception as e:
-            log.error("[EXCEPTION] %s", e)
-
+            logger.error("[EXCEPTION] %s", e)
     raise ApplicationHandlerStop
 
 
 async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Global pre-filter: runs before EVERY command and button press.
-    Silently blocks banned players from interacting with the bot.
-    Sends a one-time ban notice so they know why.
-    """
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
         return
-
-    # Skip ban check for admin commands so admins can unban
     if update.message and update.message.text:
         cmd = update.message.text.split()[0].lstrip('/').split('@')[0].lower()
         if cmd in ('unban', 'ban', 'start', 'adminhelp'):
             return
-
     from utils.database import get_player
     player = get_player(user_id)
     if not player or not player.get('banned'):
         return
-
     reason = player.get('ban_reason', 'No reason given')
     msg = (
         "YOU ARE BANNED\n"
@@ -451,15 +383,12 @@ async def _global_ban_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     try:
         if update.callback_query:
-            await update.callback_query.answer(
-                "You are banned from this game.", show_alert=True
-            )
+            await update.callback_query.answer("You are banned from this game.", show_alert=True)
         elif update.message:
             await update.message.reply_text(msg, parse_mode=None)
     except Exception as e:
-        log.error("[EXCEPTION] %s", e)
-
-    raise ApplicationHandlerStop  # block all further handlers
+        logger.error("[EXCEPTION] %s", e)
+    raise ApplicationHandlerStop
 
 
 async def _track_user_command_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -467,17 +396,13 @@ async def _track_user_command_activity(update: Update, context: ContextTypes.DEF
     user = update.effective_user
     if not message or not user or not message.text or not message.text.startswith("/"):
         return
-
     command = message.text.split()[0][1:].split("@")[0].lower()
     args_text = " ".join(message.text.split()[1:]).strip()
     log_user_activity(
-        user.id,
-        f"command:{command}",
-        details=args_text or None,
+        user.id, f"command:{command}", details=args_text or None,
         chat_id=update.effective_chat.id if update.effective_chat else None,
         chat_type=update.effective_chat.type if update.effective_chat else None,
-        username=user.username,
-        name=user.first_name,
+        username=user.username, name=user.first_name,
     )
 
 
@@ -486,29 +411,23 @@ async def _track_user_callback_activity(update: Update, context: ContextTypes.DE
     user = update.effective_user
     if not query or not user:
         return
-
     data = (query.data or "").strip()
     if not data or data.startswith("captcha_"):
         return
-
     log_user_activity(
-        user.id,
-        f"button:{data[:80]}",
-        details=None,
+        user.id, f"button:{data[:80]}", details=None,
         chat_id=query.message.chat_id if query.message else None,
         chat_type=query.message.chat.type if query.message and query.message.chat else None,
-        username=user.username,
-        name=user.first_name,
+        username=user.username, name=user.first_name,
     )
 
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    # These are handled by ConversationHandler — callback_router must NOT touch them
     conv_callbacks = ('faction_', 'story_')
     if any(data.startswith(p) for p in conv_callbacks):
-        return  # Let ConversationHandler handle it
+        return
 
     battle_callbacks = (
         'fight', 'attack', 'technique', 'items_menu', 'flee', 'prize',
@@ -517,7 +436,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     is_battle = any(data == b or data.startswith(b) for b in battle_callbacks)
 
-    # Cross-user buttons (invites, rankings, etc.) — skip ownership check
     cross_user = (
         'duel_accept_', 'duel_decline_',
         'duel_attack_', 'duel_technique_', 'duel_art_', 'duel_view_', 'duel_surrender_', 'duel_surrender_me',
@@ -525,30 +443,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'clan_accept_', 'clan_reject_', 'claninfo_',
         'alliance_accept_', 'alliance_decline_',
         'coop_join_', 'coop_attack', 'coop_technique', 'coop_items',
-        'coop_leave', 'coop_back',
         'coop_leave', 'coop_back', 'coop_art_', 'coop_form_',
-        'rankings_',
-        'guide_',
-        'sug_',
-        'offer_buy_',
-        'clanlist_page_',
-        'logs_',
-        'vote_',
-        'ownerplist_',
-        'duel_settings_',
-        'duel_settings_back_',
-        'duel_settings_done_',
-        'duel_toggle_',
-        'duel_draw_',
-        'duel_details_',
-        'upgrade_confirm_',
-        'travel_locked',
-        'travel_to_',
-        'goto_start',
+        'rankings_', 'guide_', 'sug_', 'offer_buy_', 'clanlist_page_',
+        'logs_', 'vote_', 'ownerplist_',
+        'duel_settings_', 'duel_settings_back_', 'duel_settings_done_',
+        'duel_toggle_', 'duel_draw_', 'duel_details_',
+        'upgrade_confirm_', 'travel_locked', 'travel_to_', 'goto_start',
     )
     is_cross = any(data.startswith(p) or data == p for p in cross_user)
 
-    # Ownership check: only in PRIVATE chat (DM)
     from telegram.constants import ChatType
     in_private = query.message.chat.type == ChatType.PRIVATE
     if not is_battle and not is_cross and in_private and query.from_user.id != query.message.chat_id:
@@ -569,116 +472,101 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'goto_profile': profile, 'goto_party': party, 'goto_menu': menu,
         'goto_explore': explore, 'goto_close': close_menu,
         'goto_inventory': inventory, 'goto_shop': shop,
-        'duel_back': duel_back,
-        'duel_wait': duel_back,  # waiting button = no-op
+        'duel_back': duel_back, 'duel_wait': duel_back,
         'coop_attack': coop_attack, 'coop_technique': coop_technique,
         'coop_items': coop_items, 'coop_leave': coop_leave, 'coop_back': coop_back,
-        # Skill tree
-        'skilltree_main':  skilltree,
-        'skilltree_owned': skilltree_owned,
-        'skilltree':       skilltree,
+        'skilltree_main': skilltree, 'skilltree_owned': skilltree_owned, 'skilltree': skilltree,
     }
 
     if data in routes:
         await routes[data](update, context)
-    elif data.startswith('art_'):          await choose_art(update, context)
-    elif data.startswith('form_'):         await use_form(update, context)
-    elif data.startswith('forminfo_'):     await form_info(update, context)
-    elif data.startswith('use_item_'):     await use_item(update, context)
-    elif data.startswith('travel_to_'):    await travel_to(update, context)
-    elif data.startswith('alliance_accept_'): await alliance_accept(update, context)
-    elif data.startswith('alliance_decline_'): await alliance_decline(update, context)
-    elif data.startswith('switch_ally_'):  await switch_ally(update, context)
-    elif data.startswith('mission_select_'): await select_mission(update, context)
-    elif data == 'mission_confirm':      await confirm_mission(update, context)
-    elif data == 'mission_back':         await mission_back(update, context)
-    elif data == 'mission_abandon':      await abandon_mission(update, context)
-    elif data.startswith('guide_'):    await guide_page_callback(update, context)
-    elif data.startswith('sug_'):      await suggestion_action_callback(update, context)
-    elif data.startswith('upgrade_confirm_'): await upgrade_confirm_callback(update, context)
-    elif data.startswith('offer_buy_'):  await offer_buy_callback(update, context)
-    elif data.startswith('clanlist_page_'): await clanlist_page_callback(update, context)
-    elif data.startswith('logs_'):          await logs_callback(update, context)
-    elif data.startswith('vote_'):           await vote_callback(update, context)
-    elif data.startswith('ownerplist_'):    await ownerplayers_callback(update, context)
-    elif data.startswith('event_'):              await event_callback(update, context)
-    elif data.startswith('abroad_'):             await handle_broadcast_callback(update, context)
-    elif data.startswith('cancel_broadcast:'):   await handle_broadcast_callback(update, context)
+    elif data.startswith('art_'):               await choose_art(update, context)
+    elif data.startswith('form_'):              await use_form(update, context)
+    elif data.startswith('forminfo_'):          await form_info(update, context)
+    elif data.startswith('use_item_'):          await use_item(update, context)
+    elif data.startswith('travel_to_'):         await travel_to(update, context)
+    elif data.startswith('alliance_accept_'):   await alliance_accept(update, context)
+    elif data.startswith('alliance_decline_'):  await alliance_decline(update, context)
+    elif data.startswith('switch_ally_'):       await switch_ally(update, context)
+    elif data.startswith('mission_select_'):    await select_mission(update, context)
+    elif data == 'mission_confirm':             await confirm_mission(update, context)
+    elif data == 'mission_back':                await mission_back(update, context)
+    elif data == 'mission_abandon':             await abandon_mission(update, context)
+    elif data.startswith('guide_'):             await guide_page_callback(update, context)
+    elif data.startswith('sug_'):               await suggestion_action_callback(update, context)
+    elif data.startswith('upgrade_confirm_'):   await upgrade_confirm_callback(update, context)
+    elif data.startswith('offer_buy_'):         await offer_buy_callback(update, context)
+    elif data.startswith('clanlist_page_'):     await clanlist_page_callback(update, context)
+    elif data.startswith('logs_'):              await logs_callback(update, context)
+    elif data.startswith('vote_'):              await vote_callback(update, context)
+    elif data.startswith('ownerplist_'):        await ownerplayers_callback(update, context)
+    elif data.startswith('event_'):             await event_callback(update, context)
+    elif data.startswith('abroad_'):            await handle_broadcast_callback(update, context)
+    elif data.startswith('cancel_broadcast:'):  await handle_broadcast_callback(update, context)
     elif data.startswith('duel_settings_back_'): await duel_settings_back_callback(update, context)
     elif data.startswith('duel_settings_done_'): await duel_settings_done_callback(update, context)
-    elif data.startswith('duel_settings_'): await duel_settings_callback(update, context)
-    elif data.startswith('duel_toggle_'):   await duel_toggle_callback(update, context)
-    elif data.startswith('duel_draw_'):     await duel_draw_callback(update, context)
-    elif data.startswith('duel_details_'):  await duel_details_callback(update, context)
-    elif data.startswith('skillbuy_'):      await skilltree_buy_callback(update, context)
-    elif data == 'goto_upgrade':        await upgrade(update, context)
-    elif data == 'goto_clan':           await clan(update, context)
-    elif data == 'goto_skilltree':      await skilltree(update, context)
-    elif data == 'goto_close':          await close_menu(update, context)
-    elif data.startswith('pet_catch_'): await pet_catch_callback(update, context)
-    elif data.startswith('pet_flee_'):  await pet_flee_callback(update, context)
-    elif data.startswith('pet_hatch_'): await pet_hatch_callback(update, context)
+    elif data.startswith('duel_settings_'):     await duel_settings_callback(update, context)
+    elif data.startswith('duel_toggle_'):       await duel_toggle_callback(update, context)
+    elif data.startswith('duel_draw_'):         await duel_draw_callback(update, context)
+    elif data.startswith('duel_details_'):      await duel_details_callback(update, context)
+    elif data.startswith('skillbuy_'):          await skilltree_buy_callback(update, context)
+    elif data == 'goto_upgrade':                await upgrade(update, context)
+    elif data == 'goto_clan':                   await clan(update, context)
+    elif data == 'goto_skilltree':              await skilltree(update, context)
+    elif data == 'goto_close':                  await close_menu(update, context)
+    elif data.startswith('pet_catch_'):         await pet_catch_callback(update, context)
+    elif data.startswith('pet_flee_'):          await pet_flee_callback(update, context)
+    elif data.startswith('pet_hatch_'):         await pet_hatch_callback(update, context)
     elif data.startswith('banner_approve_') or data.startswith('banner_deny_'):
-        await banner_decision_callback(update, context)
-    elif data == 'noop':               await update.callback_query.answer()
-    elif data.startswith('inv_materials'): await inv_materials_callback(update, context)
-    elif data == 'inv_back':         await inv_back_callback(update, context)
-    elif data.startswith('duel_accept_'):  await duel_accept_callback(update, context)
-    elif data.startswith('duel_decline_'): await duel_decline_callback(update, context)
-    elif data.startswith('duel_attack_'):  await duel_attack(update, context)
-    elif data.startswith('duel_technique_'): await duel_technique_menu(update, context)
-    elif data.startswith('duel_art_'):        await duel_art_callback(update, context)
-    elif data.startswith('duel_view_'):       await duel_view(update, context)
-    elif data.startswith('duel_surrender_'): await duel_surrender(update, context)
-    elif data.startswith('duel_items_'):   await duel_items_menu(update, context)
-    elif data.startswith('duel_form_'):    await duel_use_form(update, context)
-    elif data.startswith('duel_useitem_'): await duel_use_item(update, context)
-    elif data.startswith('claninfo_'):     await claninfo_callback(update, context)
-    elif data == 'raid_attack':             await raid_attack_callback(update, context)
-    elif data == 'raid_technique':          await raid_technique_callback(update, context)
-    elif data == 'raid_items':              await raid_items_callback(update, context)
-    elif data == 'raid_back':               await raid_back_callback(update, context)
-    elif data == 'raid_retreat':            await raid_retreat_callback(update, context)
-    elif data.startswith('raid_form_'):     await raid_use_form_callback(update, context)
-    elif data.startswith('raid_useitem_'):  await raid_use_item_callback(update, context)
-    elif data.startswith('clan_accept_'):  await clan_accept_callback(update, context)
-    elif data.startswith('clan_reject_'):  await clan_reject_callback(update, context)
-    elif data.startswith('coop_join_'):    await coop_join_callback(update, context)
-    elif data.startswith('coop_form_'):    await coop_use_form(update, context)
-    elif data.startswith('coop_useitem_'): await coop_use_item(update, context)
-    elif data.startswith('coop_art_'):     await coop_art_callback(update, context)
-    elif data.startswith('skillinfo_'):       await skill_detail(update, context)
-    elif data.startswith('skillbuy_'):        await skilltree_buy_callback(update, context)
-    elif data.startswith('skillpage_'):       await skilltree_page_callback(update, context)
-    elif data.startswith('shop_'):             await shop_page_callback(update, context)
+                                                await banner_decision_callback(update, context)
+    elif data == 'noop':                        await update.callback_query.answer()
+    elif data.startswith('inv_materials'):      await inv_materials_callback(update, context)
+    elif data == 'inv_back':                    await inv_back_callback(update, context)
+    elif data.startswith('duel_accept_'):       await duel_accept_callback(update, context)
+    elif data.startswith('duel_decline_'):      await duel_decline_callback(update, context)
+    elif data.startswith('duel_attack_'):       await duel_attack(update, context)
+    elif data.startswith('duel_technique_'):    await duel_technique_menu(update, context)
+    elif data.startswith('duel_art_'):          await duel_art_callback(update, context)
+    elif data.startswith('duel_view_'):         await duel_view(update, context)
+    elif data.startswith('duel_surrender_'):    await duel_surrender(update, context)
+    elif data.startswith('duel_items_'):        await duel_items_menu(update, context)
+    elif data.startswith('duel_form_'):         await duel_use_form(update, context)
+    elif data.startswith('duel_useitem_'):      await duel_use_item(update, context)
+    elif data.startswith('claninfo_'):          await claninfo_callback(update, context)
+    elif data == 'raid_attack':                 await raid_attack_callback(update, context)
+    elif data == 'raid_technique':              await raid_technique_callback(update, context)
+    elif data == 'raid_items':                  await raid_items_callback(update, context)
+    elif data == 'raid_back':                   await raid_back_callback(update, context)
+    elif data == 'raid_retreat':                await raid_retreat_callback(update, context)
+    elif data.startswith('raid_form_'):         await raid_use_form_callback(update, context)
+    elif data.startswith('raid_useitem_'):      await raid_use_item_callback(update, context)
+    elif data.startswith('clan_accept_'):       await clan_accept_callback(update, context)
+    elif data.startswith('clan_reject_'):       await clan_reject_callback(update, context)
+    elif data.startswith('coop_join_'):         await coop_join_callback(update, context)
+    elif data.startswith('coop_form_'):         await coop_use_form(update, context)
+    elif data.startswith('coop_useitem_'):      await coop_use_item(update, context)
+    elif data.startswith('coop_art_'):          await coop_art_callback(update, context)
+    elif data.startswith('skillinfo_'):         await skill_detail(update, context)
+    elif data.startswith('skillpage_'):         await skilltree_page_callback(update, context)
+    elif data.startswith('shop_'):              await shop_page_callback(update, context)
     elif data.startswith('myskills_'):          await myskills_callback(update, context)
-    elif data == 'goto_start':                await start(update, context)
-    elif data.startswith('know_'):               await know_callback(update, context)
-    elif data.startswith('help_'):               await help_callback(update, context)
-    elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
+    elif data == 'goto_start':                  await start(update, context)
+    elif data.startswith('know_'):              await know_callback(update, context)
+    elif data.startswith('help_'):              await help_callback(update, context)
+    elif data.startswith('ahelp_'):             await admin_help_callback(update, context)
     else:
         await query.answer("Unknown action.", show_alert=True)
 
 
 async def _end_conv_passthrough(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    ConversationHandler fallback.
-    If a user has an unfinished /start session (stuck at captcha or name entry)
-    and then presses any non-conversation button (explore, fight, shop, etc.),
-    this silently ends the conversation state so the global callback_router
-    can process the button normally.
-    Without this, all their button presses would be swallowed by the
-    ConversationHandler and nothing would happen.
-    """
     return ConversationHandler.END
 
 
 def main():
-    # Validate required environment variables before starting
     import sys
     missing = []
     if not BOT_TOKEN or BOT_TOKEN == 'YOUR_BOT_TOKEN_HERE' or ':' not in BOT_TOKEN:
-        missing.append("BOT_TOKEN (set in Render Dashboard -> Environment)")
+        missing.append("BOT_TOKEN (set in StackHost Dashboard -> Environment)")
     from config import MONGO_URL
     if not MONGO_URL:
         missing.append("MONGO_URL (MongoDB connection string)")
@@ -688,13 +576,12 @@ def main():
         for m in missing:
             logger.error(f"  - {m}")
         logger.error("=" * 60)
-        logger.error("Set these in Render Dashboard -> Your Service -> Environment")
         sys.exit(1)
 
     init_db()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # ── Character creation — DM only ──────────────────────────────────────
+    # ── Character creation ConversationHandler ────────────────────────────
     conv = ConversationHandler(
         entry_points=[
             CommandHandler('start', start),
@@ -708,236 +595,113 @@ def main():
         },
         fallbacks=[
             CommandHandler('start', start),
-            # If user presses a non-captcha button while in captcha state,
-            # end the conversation so callback_router can handle it
             CallbackQueryHandler(_end_conv_passthrough),
         ],
-        per_chat=True,
-        per_user=True,
+        per_chat=True, per_user=True,
         allow_reentry=False,
-        conversation_timeout=300,  # 5 min — kills stale captcha states
+        conversation_timeout=300,
     )
     app.add_handler(conv)
 
-    # ── Maintenance check — runs BEFORE everything else (group=-2) ───────
+    # ── Maintenance check (group=-2) ──────────────────────────────────────
     app.add_handler(MessageHandler(filters.ALL, _global_maintenance_check), group=-2)
     app.add_handler(CallbackQueryHandler(_global_maintenance_check), group=-2)
 
-    # ── Global checks — runs before commands (group=-1) ──────────────────
+    # ── Global checks (group=-1) ──────────────────────────────────────────
     app.add_handler(MessageHandler(filters.ALL, _global_ban_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_ban_check), group=-1)
     app.add_handler(MessageHandler(filters.ALL, _global_human_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_human_check), group=-1)
 
-    # ── Works EVERYWHERE (Groups + DMs) ──────────────────────────────────
+    # ── Commands (everywhere) ─────────────────────────────────────────────
     everywhere = [
-        ('profile',         profile),
-        ('setbanner',       setbanner),
-        ('clearbanner',     clearbanner),
-        ('bannershow',      bannershow),
-        ('bannerpending',   bannerpending),
-        ('rankings',        rankings),
-        ('help',            help_command),
-        ('myid',            myid),
-        ('daily',           daily),
-        ('streak',          streak),
-        ('mission',         mission),
-        ('skilltree',       skilltree),
-        ('skills',          skills),
-        ('skillbuy',        skillbuy),
-        ('skillinfo',       skillinfo),
-        ('skilllist',       skilllist),
-        ('deactivate',      deactivateskill),
-        ('reactivate',      reactivateskill),
-        ('deactivateall',   deactivateall),
-        ('reactivateall',   reactivateall),
-        ('shop',            shop),
-        ('buy',             buy_router),
-        ('sell',            sell),
-        ('equip',           equip),
-        ('use',             use),
-        ('inventory',       inventory),
-        ('market',          market),
-        ('auction',         auction),
-        ('gift',            gift),
-        ('give',            give),
-        ('blackmarket',      blackmarket),
-        ('worldbank',       worldbank),
-        ('worlddeposit',    worlddeposit),
-        ('worldwithdraw',   worldwithdraw),
-        ('wbaddstock',      wbaddstock),
-        ('wbsetprice',      wbsetprice),
-        ('wbinfo',          wbinfo),
-        ('wbevent',         wbevent),
-        ('wbblackmarket',   wbblackmarket),
-        ('referral',        referral),
-        ('slayermark',      slayermark),
-        ('demonmark',       demonmark),
-        ('breathing',       breathing),
-        ('art',             art),
-        ('givestyle',       givestyle),
-        ('giveart',         giveart),
-        ('challenge',       challenge),
-        ('clan',            clan),
-        ('setclanlink',     setclanlink),
-        ('claninfo',        claninfo),
-        ('clandeposit',     clandeposit),
-        ('clanwithdraw',    clanwithdraw),
-        ('changestyle',     changestyle),
-        ('guide',           guide),
-        ('suggest',         suggest),
-        ('event',           event_cmd),
-        ('events',          events),
-        ('eventend',        eventend),
-        ('eventresults',    eventresults),
-        ('vote',            vote_cmd),
-        ('eventlist',       eventlist),
-        ('sqlview',         sqlview),
-        ('giveultimate',    giveultimate),
-        ('info',            info),
-        ('know',            know),
-        ('infoall',         infoall),
-        ('is',              view_suggestion),
-        ('upgrade',         upgrade),
-        ('hybrid',          hybrid),
-        ('re_hybrid',       rehybrid),
-        ('offers',          offers),
-        ('addoffer',        addoffer),
-        ('setimage',        setimage),
-        ('listimages',      listimages),
-        ('upgradetoggle',   upgradetoggle),
-        ('hybridtoggle',    hybridtoggle),
-        ('clan_list',       clan_list),
-        ('helpadmin',       admin_help_list),
-        ('activeusers',     activeusers),
-        ('ownermode',       ownermode),
-        ('owneraccess',     owneraccess),
-        ('ownersetlevel',   ownersetlevel),
-        ('ownersetstyle',   ownersetstyle),
-        ('ownergive',       ownergive),
-        ('ownerreset',      ownerreset),
-        ('ownerban',        ownerban),
-        ('ownerunban',      ownerunban),
-        ('ownermsg',        ownermsg),
-        ('ownerstats',      ownerstats),
-        ('ownerplayers',    ownerplayers),
-        ('maintenance',     maintenance),
-        ('approveuser',     approveuser),
-        ('unapproveuser',   unapproveuser),
-        ('approvedlist',    approvedlist),
-        ('backup',          backup),
-        ('giveslayermark',  giveslayermark),
-        ('givedemonmark',   givedemonmark),
-        ('master',          master),
-        ('restore',         restore),
-        ('logs',            logs),
-        ('logstats',        logstats),
-        ('logsearch',       logsearch),
-        ('loguser',          loguser),
-        ('suggestions',     suggestions),
-        ('createclan',      createclan),
-        ('joinclan',        joinclan),
-        ('leaveclan',       leaveclan),
-        ('clandisband',     clandisband),
-        ('clanmembers',     clanmembers),
-        ('clanannounce',    clanannounce),
-        ('clanslogan',      clanslogan),
-        ('clanimage',       clanimage),
-        ('clanreq',         clanreq),
-        ('clanleaderboard', clanleaderboard),
-        ('promotevice',     promotevice),
-        ('demote',          demote),
-        ('kick',            kick),
-        ('renameclan',      renameclan),
-        ('addsudo',         addsudo),
-        ('removesudo',      removesudo),
-        ('listadmins',      listadmins),
-        ('add',             add),
-        ('announce',        bcast),
-        ('bcast',           bcast),
-        ('ban',             ban),
-        ('unban',           unban),
-        ('givexp',          givexp),
-        ('giveyen',         giveyen),
-        ('giveitem',        giveitem),
-        ('resetplayer',     resetplayer),
-        ('givesp',          givesp),
-        ('check',           check),
-        ('pets',            pets),
-        ('catch',           catch),
-        ('pet',             pet),
-        ('hatchegg',        hatchegg),
-        ('feedpet',         feedpet),
-        ('petskill',        petskill),
-        ('petbattle',       petbattle),
-        ('releasepet',      releasepet),
-        ('inspect',         check),
-        ('usersp',          user_givesp),
-        ('botstats',        botstats),
-        ('startraid',       startraid),
-        ('stopraid',        stopraid),
-        ('addauction',      addauction),
-        ('addmission',      addmission),
-        ('removemission',   removemission),
-        ('listmissions',    listmissions),
-        ('openblackmarket', openblackmarket),
-        ('closeblackmarket',closeblackmarket),
-        ('addblackmarket',  addblackmarket),
-        ('adminhelp',       adminhelp),
-        ('adminunstuck',    admin_unstuck),
-        ('bankgiveaway',    bankgiveaway),
-        ('spbank',          spbank),
-        ('spdeposit',       spdeposit),
-        ('spwithdraw',      spwithdraw),
-        ('spgiveaway',      spgiveaway),
-        ('spjoin',          spjoin),
-        ('banktax',         banktax),
+        ('profile', profile), ('setbanner', setbanner), ('clearbanner', clearbanner),
+        ('bannershow', bannershow), ('bannerpending', bannerpending),
+        ('rankings', rankings), ('help', help_command), ('myid', myid),
+        ('daily', daily), ('streak', streak), ('mission', mission),
+        ('skilltree', skilltree), ('skills', skills), ('skillbuy', skillbuy),
+        ('skillinfo', skillinfo), ('skilllist', skilllist),
+        ('deactivate', deactivateskill), ('reactivate', reactivateskill),
+        ('deactivateall', deactivateall), ('reactivateall', reactivateall),
+        ('shop', shop), ('buy', buy_router), ('sell', sell), ('equip', equip),
+        ('use', use), ('inventory', inventory), ('market', market),
+        ('auction', auction), ('gift', gift), ('give', give),
+        ('blackmarket', blackmarket), ('worldbank', worldbank),
+        ('worlddeposit', worlddeposit), ('worldwithdraw', worldwithdraw),
+        ('wbaddstock', wbaddstock), ('wbsetprice', wbsetprice),
+        ('wbinfo', wbinfo), ('wbevent', wbevent), ('wbblackmarket', wbblackmarket),
+        ('referral', referral), ('slayermark', slayermark), ('demonmark', demonmark),
+        ('breathing', breathing), ('art', art), ('givestyle', givestyle), ('giveart', giveart),
+        ('challenge', challenge), ('clan', clan), ('setclanlink', setclanlink),
+        ('claninfo', claninfo), ('clandeposit', clandeposit), ('clanwithdraw', clanwithdraw),
+        ('changestyle', changestyle), ('guide', guide), ('suggest', suggest),
+        ('event', event_cmd), ('events', events), ('eventend', eventend),
+        ('eventresults', eventresults), ('vote', vote_cmd), ('eventlist', eventlist),
+        ('sqlview', sqlview), ('giveultimate', giveultimate),
+        ('info', info), ('know', know), ('infoall', infoall), ('is', view_suggestion),
+        ('upgrade', upgrade), ('hybrid', hybrid), ('re_hybrid', rehybrid),
+        ('offers', offers), ('addoffer', addoffer), ('setimage', setimage),
+        ('listimages', listimages), ('upgradetoggle', upgradetoggle),
+        ('hybridtoggle', hybridtoggle), ('clan_list', clan_list),
+        ('helpadmin', admin_help_list), ('activeusers', activeusers),
+        ('ownermode', ownermode), ('owneraccess', owneraccess),
+        ('ownersetlevel', ownersetlevel), ('ownersetstyle', ownersetstyle),
+        ('ownergive', ownergive), ('ownerreset', ownerreset),
+        ('ownerban', ownerban), ('ownerunban', ownerunban),
+        ('ownermsg', ownermsg), ('ownerstats', ownerstats), ('ownerplayers', ownerplayers),
+        ('maintenance', maintenance), ('approveuser', approveuser),
+        ('unapproveuser', unapproveuser), ('approvedlist', approvedlist),
+        ('backup', backup), ('giveslayermark', giveslayermark),
+        ('givedemonmark', givedemonmark), ('master', master), ('restore', restore),
+        ('logs', logs), ('logstats', logstats), ('logsearch', logsearch),
+        ('loguser', loguser), ('suggestions', suggestions),
+        ('createclan', createclan), ('joinclan', joinclan), ('leaveclan', leaveclan),
+        ('clandisband', clandisband), ('clanmembers', clanmembers),
+        ('clanannounce', clanannounce), ('clanslogan', clanslogan),
+        ('clanimage', clanimage), ('clanreq', clanreq),
+        ('clanleaderboard', clanleaderboard), ('promotevice', promotevice),
+        ('demote', demote), ('kick', kick), ('renameclan', renameclan),
+        ('addsudo', addsudo), ('removesudo', removesudo), ('listadmins', listadmins),
+        ('add', add), ('announce', bcast), ('bcast', bcast),
+        ('ban', ban), ('unban', unban), ('givexp', givexp), ('giveyen', giveyen),
+        ('giveitem', giveitem), ('resetplayer', resetplayer), ('givesp', givesp),
+        ('check', check), ('pets', pets), ('catch', catch), ('pet', pet),
+        ('hatchegg', hatchegg), ('feedpet', feedpet), ('petskill', petskill),
+        ('petbattle', petbattle), ('releasepet', releasepet),
+        ('inspect', check), ('usersp', user_givesp), ('botstats', botstats),
+        ('startraid', startraid), ('stopraid', stopraid), ('addauction', addauction),
+        ('addmission', addmission), ('removemission', removemission),
+        ('listmissions', listmissions), ('openblackmarket', openblackmarket),
+        ('closeblackmarket', closeblackmarket), ('addblackmarket', addblackmarket),
+        ('adminhelp', adminhelp), ('adminunstuck', admin_unstuck),
+        ('bankgiveaway', bankgiveaway), ('spbank', spbank), ('spdeposit', spdeposit),
+        ('spwithdraw', spwithdraw), ('spgiveaway', spgiveaway), ('spjoin', spjoin),
+        ('banktax', banktax),
     ]
     for cmd, handler in everywhere:
-        app.add_handler(CommandHandler(cmd, handler))  # no filter = works everywhere
+        app.add_handler(CommandHandler(cmd, handler))
 
-    # ── DM Only — redirects groups to bot DM ─────────────────────────────
+    # ── DM-only commands ──────────────────────────────────────────────────
     guarded_cmds = [
-        ('menu',         menu),
-        ('open',         menu),
-        ('close',        close_menu),
-        ('explore',      explore),
-        ('party',        party),
-        ('invite',       party_invite_cmd),
-        ('joinbattle',   joinbattle),
-        ('bank',         bank),
-        ('deposit',      deposit),
-        ('withdraw',     withdraw),
-        ('bankupgrade',  bankupgrade),
-        ('join',         join_bank_giveaway),
-        ('list',         market_list),
-        ('unlist',       unlist),
-        ('markethistory',markethistory),
-        ('lottery',      lottery_play),
-        ('joinraid',     joinraid),
-        ('raidattack',   raidattack),
-        ('travel',       travel),
-        ('bid',          bid),
-        ('unstuck',      unstuck),
-        ('forceunstuck', forceunstuck),
-        ('bmbuy',        bm_buy),
-        ('clanraid',     clanraid),
-        ('clanrole',     clanrole),
+        ('menu', menu), ('open', menu), ('close', close_menu),
+        ('explore', explore), ('party', party), ('invite', party_invite_cmd),
+        ('joinbattle', joinbattle), ('bank', bank), ('deposit', deposit),
+        ('withdraw', withdraw), ('bankupgrade', bankupgrade),
+        ('join', join_bank_giveaway), ('list', market_list), ('unlist', unlist),
+        ('markethistory', markethistory), ('lottery', lottery_play),
+        ('joinraid', joinraid), ('raidattack', raidattack), ('travel', travel),
+        ('bid', bid), ('unstuck', unstuck), ('forceunstuck', forceunstuck),
+        ('bmbuy', bm_buy), ('clanraid', clanraid), ('clanrole', clanrole),
     ]
     for cmd, handler in guarded_cmds:
         app.add_handler(CommandHandler(cmd, handler))
 
-    # ── Reply keyboard button handler ────────────────────────────────────
+    # ── Reply keyboard handler ────────────────────────────────────────────
     async def reply_kb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Route reply keyboard button presses to the right handler."""
         text = update.message.text.strip() if update.message and update.message.text else ""
         routes = {
-            "Explore":    explore,
-            "Profile":    profile,
-            "Inventory":  inventory,
-            "Shop":       shop,
-            "Skills":     skilltree,
-            "Close Menu": close_menu,
+            "Explore": explore, "Profile": profile, "Inventory": inventory,
+            "Shop": shop, "Skills": skilltree, "Close Menu": close_menu,
         }
         handler = routes.get(text)
         if handler:
@@ -949,7 +713,6 @@ def main():
     ), group=1)
 
     async def doc_restore_handler(update, context):
-        """Handle JSON document uploads — trigger restore if caption says /restore or auto."""
         if update.message and update.message.document:
             fname = update.message.document.file_name or ""
             if fname.endswith(".json"):
@@ -959,17 +722,28 @@ def main():
         filters.Document.MimeType('application/json') & filters.ChatType.PRIVATE,
         doc_restore_handler
     ))
-    app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
+    app.add_handler(MessageHandler(
+        (filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE,
+        get_media_file_id
+    ))
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'))
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
 
     logger.info("🗡️ Demon Slayer RPG Bot starting...")
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-    )
+
+    # ── FIX: Create a fresh event loop on every call to main() ───────────
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
+    finally:
+        loop.close()
 
 
 if __name__ == '__main__':
@@ -999,33 +773,25 @@ if __name__ == '__main__':
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
-        def do_GET(self):  # <--- FIXED: Now perfectly aligned!
+        def do_GET(self):
             env_ok = bool(os.environ.get("BOT_TOKEN")) and bool(os.environ.get("MONGO_URL"))
             status = "RUNNING" if env_ok else "MISSING ENV VARS"
-            
             if self.path in ("/", "/health", "/healthz", "/ready"):
                 if self.path == "/":
-                    self._send_text(
-                        200,
-                        "\n".join([
-                            "Demon Slayer RPG Bot",
-                            f"Status: {status}",
-                            f"Host: {HOST}",
-                            f"Port: {PORT}",
-                            f"Render URL: {RENDER_URL or 'not set'}",
-                        ]),
-                    )
+                    self._send_text(200, "\n".join([
+                        "Demon Slayer RPG Bot",
+                        f"Status: {status}",
+                        f"Host: {HOST}",
+                        f"Port: {PORT}",
+                        f"Render URL: {RENDER_URL or 'not set'}",
+                    ]))
                 else:
-                    self._send_json(
-                        200,
-                        {
-                            "service": "demon-slayer-rpg-bot",
-                            "status": status.lower().replace(" ", "_"),
-                            "host": HOST,
-                            "port": PORT,
-                            "render_url": RENDER_URL or None,
-                        },
-                    )
+                    self._send_json(200, {
+                        "service": "demon-slayer-rpg-bot",
+                        "status": status.lower().replace(" ", "_"),
+                        "host": HOST, "port": PORT,
+                        "render_url": RENDER_URL or None,
+                    })
             else:
                 self._send_text(404, "Not Found")
 
@@ -1046,8 +812,8 @@ if __name__ == '__main__':
                 print(f"[HEALTH] Health check: {RENDER_URL}/healthz", flush=True)
             srv.serve_forever()
         except Exception as e:
-            log.error("[HEALTH ERROR] %s", e)
-            _health_started.set()  # unblock main even if health fails
+            logger.error("[HEALTH ERROR] %s", e)
+            _health_started.set()
 
     t = threading.Thread(target=_run_health, daemon=True)
     t.start()
@@ -1056,14 +822,13 @@ if __name__ == '__main__':
 
     import time as _time
     import urllib.request as _urllib_req
-    import urllib.error   as _urllib_err
+    import urllib.error as _urllib_err
 
     _PING_TARGET   = (RENDER_URL + "/healthz") if RENDER_URL else f"http://127.0.0.1:{PORT}/healthz"
     _PING_INTERVAL = 8 * 60
     _PING_TIMEOUT  = 15
 
     def _keep_alive():
-        """Pings the public URL on a fixed cadence with back-off on failure."""
         print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
         _time.sleep(20)
         failures = 0
@@ -1077,10 +842,8 @@ if __name__ == '__main__':
                 print(f"[KEEP-ALIVE] ⚠️  attempt {failures} failed: {exc.reason}", flush=True)
             except Exception as exc:
                 failures += 1
-                log.error("[KEEP-ALIVE] %s", exc)
-
-            wait = min(_PING_INTERVAL, _PING_INTERVAL * (2 ** max(0, failures - 1)))
-            wait = min(wait, 13 * 60)
+                logger.error("[KEEP-ALIVE] %s", exc)
+            wait = min(_PING_INTERVAL * (2 ** max(0, failures - 1)), 13 * 60)
             _time.sleep(wait)
 
     _ka_thread = threading.Thread(target=_keep_alive, daemon=True, name="keep-alive")
@@ -1088,13 +851,13 @@ if __name__ == '__main__':
 
     _RESTART_DELAY = 10
     _MAX_RESTARTS  = 10
-
     _restart_count = 0
+
     while True:
         try:
             print(f"[BOT] Starting bot (restart #{_restart_count})...", flush=True)
             main()
-            print("[BOT] main() exited normally — restarting in case of clean shutdown.", flush=True)
+            print("[BOT] main() exited normally — restarting.", flush=True)
         except (KeyboardInterrupt, SystemExit):
             print("[BOT] Shutdown requested — exiting.", flush=True)
             break
