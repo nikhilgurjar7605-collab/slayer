@@ -148,43 +148,19 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines += [
         "━━━━━━━━━━━━━━━━━━━",
+        "**🛒 Purchase Command",
+        "└ Use: /buy market [item name] [amount]",
+        "📦 List Command",
+        "└ Use: /list [item] [price]**",
     ]
-
-    # Purchase command as blockquote (Telegram MarkdownV2 blockquote)
-    # Using expandable blockquote for the purchase commands
-    purchase_block = (
-        "**blockquote**\n"
-        "🛒 Purchase Command\n"
-        "└ Use: /buy market [item name] [amount]\n"
-        "📦 List Command\n"
-        "└ Use: /list [item] [price]"
-    )
 
     main_text = '\n'.join(lines)
 
-    # Send main body with Markdown, then blockquote separately using MarkdownV2
     try:
         await msg.reply_text(main_text, parse_mode='Markdown')
     except BadRequest:
         plain = main_text.replace('*', '').replace('_', '').replace('`', '')
         await msg.reply_text(plain)
-
-    # Send purchase command as a Telegram blockquote using MarkdownV2
-    blockquote_text = (
-        ">🛒 *Purchase Command*\n"
-        ">└ Use: `/buy market \\[item name\\] \\[amount\\]`\n"
-        ">📦 *List Command*\n"
-        ">└ Use: `/list \\[item\\] \\[price\\]`"
-    )
-    try:
-        await msg.reply_text(blockquote_text, parse_mode='MarkdownV2')
-    except BadRequest:
-        await msg.reply_text(
-            "🛒 Purchase Command\n"
-            "└ Use: /buy market [item name] [amount]\n"
-            "📦 List Command\n"
-            "└ Use: /list [item] [price]"
-        )
 
 
 # ── /list — list an item for sale ─────────────────────────────────────────
