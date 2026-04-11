@@ -60,7 +60,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_kb = ReplyKeyboardMarkup(
         [
-            [KeyboardButton("⚔️ Explore"), KeyboardButton("📜 Profile")],
+            [KeyboardButton("/explore"), KeyboardButton("/Profile")],
             [KeyboardButton("❌ Close Menu")],
         ],
         resize_keyboard=True,
