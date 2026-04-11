@@ -10,7 +10,6 @@ runtime:
   image: python:3.11-slim
 
 commands:
-  package: libssl-dev libffi-dev
   build:
     - pip install --upgrade pip
     - pip install -r requirements.txt
