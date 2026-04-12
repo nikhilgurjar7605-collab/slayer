@@ -1,7 +1,7 @@
 """
 explore.py – Demon Slayer RPG Combat System
 UI: Images, quote logs, block bars, turn counter, star rating
-All game mechanics unchanged.
+All game mechanics unchanged. Safe image fallback.
 """
 
 import random
@@ -46,7 +46,7 @@ from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from handlers.party import get_party_member_ids
 
 # ─────────────────────────────────────────────────────────────────────────
-#  IMAGE HELPERS (load from images.json)
+#  IMAGE HELPERS (with safe fallback)
 # ─────────────────────────────────────────────────────────────────────────
 def load_image_map() -> Dict[str, Any]:
     try:
@@ -59,6 +59,9 @@ IMAGE_MAP = load_image_map()
 
 def get_image_url(category: str, key: str) -> Optional[str]:
     data = IMAGE_MAP.get(category, {})
+    # If key is None or empty, try default
+    if not key:
+        return data.get("default", None)
     return data.get(key, data.get("default", None))
 
 async def send_photo_message(
@@ -70,9 +73,10 @@ async def send_photo_message(
     reply_markup: Optional[InlineKeyboardMarkup] = None,
     parse_mode: str = 'Markdown'
 ):
-    """Send a photo with caption. Falls back to text if image missing."""
+    """Send a photo with caption. Falls back to text if image missing or fails."""
     url = get_image_url(image_category, image_key)
     if not url:
+        # No image – send plain text
         await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
         return
     try:
@@ -84,6 +88,7 @@ async def send_photo_message(
             reply_markup=reply_markup
         )
     except Exception:
+        # Fallback to text if photo fails (network, invalid file_id, etc.)
         await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 async def edit_photo_caption(
@@ -99,10 +104,15 @@ async def edit_photo_caption(
     """Edit caption of an existing photo message. Falls back to edit text."""
     url = get_image_url(image_category, image_key)
     if not url:
-        await context.bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id, text=text,
-            parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        # No image – edit as plain text
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id, text=text,
+                parse_mode=parse_mode, reply_markup=reply_markup
+            )
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                raise
         return
     try:
         await context.bot.edit_message_caption(
@@ -110,24 +120,36 @@ async def edit_photo_caption(
             caption=text, parse_mode=parse_mode, reply_markup=reply_markup
         )
     except Exception:
-        await context.bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id, text=text,
-            parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        # Fallback to edit text
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id, text=text,
+                parse_mode=parse_mode, reply_markup=reply_markup
+            )
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                raise
 
 # ─────────────────────────────────────────────────────────────────────────
 #  UI FORMATTING FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────
 def format_hp_bar(current: int, maximum: int) -> str:
     """Return: [████████░░] 80% (2,340/3,200)"""
-    percent = current / maximum if maximum > 0 else 0
+    if maximum <= 0:
+        return "[░░░░░░░░░░] 0% (0/0)"
+    percent = current / maximum
     filled = int(10 * percent)
     bar = "█" * filled + "░" * (10 - filled)
     return f"[{bar}]  {int(percent*100)}%  (`{current:,}/{maximum:,}`)"
 
 def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_lines: List[str] = None, turn: int = None) -> str:
     """Battle HUD with block bars, star rating, and quote‑formatted logs."""
-    threat = state.get('threat', 3)
+    # Safely convert threat to int
+    threat_raw = state.get('threat', 3)
+    try:
+        threat = int(threat_raw)
+    except (ValueError, TypeError):
+        threat = 3
     stars = "★" * min(5, max(1, threat)) + "☆" * (5 - min(5, max(1, threat)))
     enemy_line = (
         f"👹 *{state['enemy_name']}*  {stars}\n"
@@ -440,7 +462,7 @@ def get_active_ally(state):
     return get_player(state.get('active_ally_id'))
 
 # ─────────────────────────────────────────────────────────────────────────
-#  EXPLORE (full, with images)
+#  EXPLORE (full, with images and safe threat conversion)
 # ─────────────────────────────────────────────────────────────────────────
 @dm_only
 async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -525,13 +547,21 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_pet = get_active_pet(user_id)
     pet_line = f"\n🐾 *{active_pet['name']}* {PETS.get(active_pet['name'],{}).get('emoji','🐾')} active" if active_pet else ""
 
+    # Safe threat conversion for star rating
+    threat_raw = enemy.get('threat', 3)
+    try:
+        threat = int(threat_raw)
+    except (ValueError, TypeError):
+        threat = 3
+    stars = "★" * min(5, max(1, threat)) + "☆" * (5 - min(5, max(1, threat)))
+
     encounter_text = (
         f"🌙 *{player['name']} ventures into {zone['emoji']} {zone['name']}...*\n\n"
         f"💀 *{enemy['name'].upper()} APPEARS!*{boss_warning}\n\n"
         f"{enemy['emoji']} *{enemy['name']}*\n"
         f"❤️ HP: {enemy['hp']:,}\n"
         f"⚔️ ATK: {enemy['atk']}\n"
-        f"⚠️ Threat: {'★' * min(5,enemy.get('threat',3))}{'☆' * (5-min(5,enemy.get('threat',3)))}\n"
+        f"⚠️ Threat: {stars}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🗡️ *{player['name']}*\n"
         f"❤️ HP: {player['hp']}/{player['max_hp']}\n"
