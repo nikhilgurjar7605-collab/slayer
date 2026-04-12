@@ -1,0 +1,22 @@
+{
+  "enemies": {
+    "Enmu": "https://your-cdn.com/enmu.jpg",
+    "default": "https://your-cdn.com/default_demon.jpg"
+  },
+  "player_styles": {
+    "Water Breathing": "https://your-cdn.com/water.jpg",
+    "default": "https://your-cdn.com/slayer_default.jpg"
+  },
+  "skills": {
+    "default": "https://your-cdn.com/skill_default.jpg"
+  },
+  "items": {
+    "default": "https://your-cdn.com/item_default.jpg"
+  },
+  "ui": {
+    "victory": "https://your-cdn.com/victory.jpg",
+    "defeat": "https://your-cdn.com/defeat.jpg",
+    "flee": "https://your-cdn.com/flee.jpg",
+    "explore": "https://your-cdn.com/explore.jpg"
+  }
+}
