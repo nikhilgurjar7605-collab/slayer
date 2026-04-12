@@ -1,6 +1,6 @@
 {
   "enemies": {
-    "Enmu": "https://your-cdn.com/enmu.jpg",
+    "Rogue Demon": "AgACAgUAAxkBAAECQhpp2_iPOjsbKpGy8JuPg3ZBbm19MwAC4xBrG3HU4FZMdFMO3YKfdgEAAwIAA3kAAzsE",
     "default": "https://your-cdn.com/default_demon.jpg"
   },
   "player_styles": {
