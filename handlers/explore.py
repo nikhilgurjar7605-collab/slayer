@@ -74,7 +74,10 @@ async def send_photo_message(
 ):
     url = get_image_url(image_category, image_key)
     if not url:
-        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        await context.bot.send_message(
+            chat_id=chat_id, text=text,
+            parse_mode=parse_mode, reply_markup=reply_markup
+        )
         return
     try:
         await context.bot.send_photo(
@@ -85,7 +88,10 @@ async def send_photo_message(
             reply_markup=reply_markup
         )
     except Exception:
-        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        await context.bot.send_message(
+            chat_id=chat_id, text=text,
+            parse_mode=parse_mode, reply_markup=reply_markup
+        )
 
 async def edit_photo_caption(
     context: ContextTypes.DEFAULT_TYPE,
@@ -97,65 +103,105 @@ async def edit_photo_caption(
     reply_markup: Optional[InlineKeyboardMarkup] = None,
     parse_mode: str = 'Markdown'
 ):
+    """
+    Smartly edits a message. If the existing message has a photo (caption),
+    edits the caption. If it's a plain text message, edits the text.
+    Falls back gracefully if the message type doesn't match.
+    """
     url = get_image_url(image_category, image_key)
-    if not url:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=message_id, text=text,
-                parse_mode=parse_mode, reply_markup=reply_markup
-            )
-        except BadRequest:
-            pass
-        return
+
+    # Try caption edit first (photo message), then fall back to text edit
     try:
         await context.bot.edit_message_caption(
-            chat_id=chat_id, message_id=message_id,
-            caption=text, parse_mode=parse_mode, reply_markup=reply_markup
+            chat_id=chat_id,
+            message_id=message_id,
+            caption=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup
         )
-    except Exception:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=message_id, text=text,
-                parse_mode=parse_mode, reply_markup=reply_markup
-            )
-        except BadRequest:
+        return
+    except BadRequest as e:
+        err = str(e).lower()
+        # If message has no photo, fall through to text edit
+        if "there is no caption" in err or "message is not modified" in err:
             pass
+        elif "message to edit not found" in err:
+            return  # Message deleted, nothing we can do
+        # Any other BadRequest → fall through to text edit
+    except Exception:
+        pass
+
+    # Fall back: plain text edit (message has no photo)
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup
+        )
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            pass  # Silently ignore unmodified; log others if needed
+    except Exception:
+        pass
 
 # ─────────────────────────────────────────────────────────────────────────
 #  UI FORMATTING FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────
-def format_hp_bar_soft(current: int, maximum: int) -> str:
-    """Soft block bar: ▰▰▰▰▰▰▰▰▱▱ 80% (20,000/25,000)"""
+def format_hp_bar_poke(current: int, maximum: int, length: int = 10) -> str:
+    """Pokémon-style filled block bar: ██████████"""
     if maximum <= 0:
-        return "▰▰▰▰▰▰▰▰▰▰ 0% (0/0)"
-    percent = current / maximum
-    filled = int(10 * percent)
-    bar = "▰" * filled + "▱" * (10 - filled)
-    return f"{bar} {int(percent*100)}% ({current:,}/{maximum:,})"
+        return "░" * length
+    percent = max(0.0, min(1.0, current / maximum))
+    filled = int(length * percent)
+    return "█" * filled + "░" * (length - filled)
 
 def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_lines: List[str] = None, turn: int = None) -> str:
-    """Battle HUD: soft block bars, quote logs, turn counter."""
-    enemy_line = f"👹 {state['enemy_name']:<12} {format_hp_bar_soft(state['enemy_hp'], state['enemy_max_hp'])}"
-    player_line = f"🗡️ {player['name']:<12} {format_hp_bar_soft(player['hp'], player['max_hp'])}  🌀 {player['sta']}/{player['max_sta']}"
-    ally_line = ""
+    """Pokémon-style battle HUD."""
+    enemy_hp_bar  = format_hp_bar_poke(state['enemy_hp'], state['enemy_max_hp'])
+    player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
+
+    enemy_block = (
+        f"☠️ *{state['enemy_name']}*\n"
+        f"HP : {state['enemy_hp']:,}/{state['enemy_max_hp']:,}\n"
+        f"`{enemy_hp_bar}`"
+    )
+
+    turn_line = f"*Turn {turn}*" if turn is not None else ""
+
+    player_block = (
+        f"{'『' + player['name'] + '』'}\n"
+        f"HP : {player['hp']:,}/{player['max_hp']:,}  🌀 {player['sta']}/{player['max_sta']}\n"
+        f"`{player_hp_bar}`"
+    )
+
+    ally_block = ""
     if ally and state.get('active_ally_id') and state.get('ally_hp') is not None:
-        ally_line = f"👥 {ally['name']:<12} {format_hp_bar_soft(state['ally_hp'], state['ally_max_hp'])}"
+        ally_hp_bar = format_hp_bar_poke(state['ally_hp'], state['ally_max_hp'])
+        ally_block = (
+            f"\n👥 *{ally['name']}*\n"
+            f"HP : {state['ally_hp']:,}/{state['ally_max_hp']:,}\n"
+            f"`{ally_hp_bar}`"
+        )
+
     log_section = ""
     if log_lines:
-        clean = [l for l in log_lines if "━━━" not in str(l) and "────────────────" not in str(l)][-6:]
+        clean = [l for l in log_lines if "━━━" not in str(l) and "────" not in str(l)][-5:]
         if clean:
-            quoted = "\n".join(f"> {l}" for l in clean)
-            log_section = f"{quoted}\n\n"
-    turn_line = f"Turn {turn}\n\n" if turn is not None else ""
-    separator = "────────────────────────────────────"
-    parts = [turn_line]
+            log_section = "\n".join(f"› {l}" for l in clean) + "\n\n"
+
+    parts = []
     if log_section:
         parts.append(log_section)
-    parts.append(enemy_line)
-    parts.append(separator)
-    parts.append(player_line)
-    if ally_line:
-        parts.append(ally_line)
+    parts.append(enemy_block)
+    parts.append("─" * 20)
+    if turn_line:
+        parts.append(turn_line)
+    parts.append(player_block)
+    if ally_block:
+        parts.append(ally_block)
+
     return "\n".join(parts)
 
 def build_combat_keyboard(has_ally: bool = False):
@@ -524,17 +570,22 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     zone = next((z for z in TRAVEL_ZONES if z['id'] == location), TRAVEL_ZONES[0])
-    boss_warning = "\n🔴 *⚠️ BOSS ENCOUNTER!*" if enemy.get('is_boss') else ""
+    boss_tag = "  ⚠️ *BOSS*" if enemy.get('is_boss') else ""
     active_pet = get_active_pet(user_id)
-    pet_line = f"\n🐾 *{active_pet['name']}* {PETS.get(active_pet['name'],{}).get('emoji','🐾')} active" if active_pet else ""
 
-    # Compact encounter text (no threat stars, no location line)
+    enemy_hp_bar  = format_hp_bar_poke(enemy['hp'], enemy['hp'])
+    player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
+    player_level  = get_level(player['xp'])
+
     encounter_text = (
-        f"💀 *{enemy['name'].upper()}*  {boss_warning}\n"
-        f"❤️ `{enemy['hp']:,}`  ⚔️ `{enemy['atk']}`\n\n"
-        f"🗡️ *{player['name']}*\n"
-        f"❤️ `{player['hp']}`  🌀 `{player['sta']}`"
-        f"{f'  🐾 *{active_pet['name']}*' if active_pet else ''}\n\n"
+        f"*{enemy['name'].upper()}*{boss_tag}\n"
+        f"HP : {enemy['hp']:,}/{enemy['hp']:,}\n"
+        f"`{enemy_hp_bar}`\n\n"
+        f"─────────────────────\n"
+        f"『{player['name']}』\n"
+        f"Level : {player_level}  |  HP : {player['hp']:,}/{player['max_hp']:,}\n"
+        f"`{player_hp_bar}`"
+        f"{chr(10) + '🐾 ' + active_pet['name'] + ' active' if active_pet else ''}\n\n"
         f"⭐ `{enemy['xp']:,}` XP  💰 `{enemy['yen']:,}`¥"
     )
 
@@ -647,16 +698,17 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pdisp = pressure_display(pressure, location)
     boss_line = f"\n☠️ *BOSS BATTLE!* HP x3 | ATK x1.5" if state.get('is_boss') else ""
-    intro = f"⚔️ *BATTLE BEGINS!*{boss_line}\n\n{pdisp}"
+    intro = f"⚔️ *BATTLE BEGINS!*{boss_line}\n{pdisp}"
     if skill_lines:
         intro += "\n" + "\n".join(skill_lines)
     if pet_lines:
         intro += "\n" + "\n".join(pet_lines)
+    intro += "\n\n"
 
     status_text = combat_status(player, state, ally, turn=1)
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
-        text=intro + "\n\n" + status_text,
+        text=intro + status_text,
         image_category="enemies",
         image_key=state['enemy_name'],
         reply_markup=build_combat_keyboard(has_ally=bool(ally))
@@ -903,6 +955,21 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
     owned_skills = _safe_get_skills(user_id)
     bonuses      = _safe_get_bonuses(user_id, context)
     has_multi    = bonuses.get('multi_art', False)
+
+    # Build art list for display text
+    art_entries = [f"{player['style_emoji']} {player['style']}"]
+    for art in arts:
+        art_entries.append(f"{art['art_emoji']} {art['art_name']} ✨")
+    if player.get('hybrid_style'):
+        he = player.get('hybrid_emoji', '⚡')
+        art_entries.append(f"{he} {player['hybrid_style']} ⚡Hybrid")
+    if scroll_arts and (has_multi or not arts):
+        for sart in scroll_arts[:2]:
+            art_entries.append(f"📜 {sart} (Scroll)")
+
+    moves_text = "\n".join(f"• {e}" for e in art_entries)
+
+    # Buttons — one per art style
     buttons = [[InlineKeyboardButton(
         f"{player['style_emoji']} {player['style']}",
         callback_data=f"art_{player['style']}"
@@ -926,7 +993,8 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data=f"art_{sart}"
             )])
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data='fight')])
-    text = "💨 *CHOOSE YOUR ART*"
+
+    text = f"💨 *Techniques — Choose Art:*\n\n{moves_text}"
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
         text=text,
@@ -936,8 +1004,9 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+
 # ─────────────────────────────────────────────────────────────────────────
-#  CHOOSE ART (form list)
+#  CHOOSE ART (form list — Pokémon move style)
 # ─────────────────────────────────────────────────────────────────────────
 @owner_only_button
 async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -951,18 +1020,30 @@ async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not forms:
         await query.answer("No forms unlocked for this art!", show_alert=True)
         return
+
+    # Build Pokémon move-card style text listing all forms
+    lines = [f"💨 *{art_name.upper()}*\n", "*Moves :*"]
+    for form in forms:
+        lines.append(
+            f"• *Form {form['form']} — {form['name']}*\n"
+            f"  DMG: {form['dmg_min']}–{form['dmg_max']}  |  STA: {form['sta_cost']}"
+        )
+
+    moves_text = "\n".join(lines)
+
+    # One button per form
     buttons = []
     for form in forms:
         buttons.append([InlineKeyboardButton(
-            f"Form {form['form']} — {form['name']} | DMG:{form['dmg_min']}-{form['dmg_max']} STA:{form['sta_cost']}",
+            f"F{form['form']} · {form['name']}  [{form['dmg_min']}-{form['dmg_max']} DMG | {form['sta_cost']} STA]",
             callback_data=f"form_{art_name}_{form['form']}"
         )])
     buttons.append([InlineKeyboardButton("📖 Details", callback_data=f"forminfo_{art_name}")])
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data='technique')])
-    text = f"💨 *{art_name.upper()}*\n\nChoose your form:"
+
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
-        text=text,
+        text=moves_text,
         image_category="skills",
         image_key=art_name,
         reply_markup=InlineKeyboardMarkup(buttons),
