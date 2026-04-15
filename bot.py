@@ -40,8 +40,8 @@ from telegram.ext import (
 )
 from config import BOT_TOKEN, OWNER_ID
 from utils.database import init_db, get_player, col
-from handlers.start import (start, get_name, choose_faction, choose_story, captcha_callback,
-                            WAITING_NAME, WAITING_CAPTCHA, CHOOSING_FACTION, CHOOSING_STORY)
+from handlers.start import (start, get_name, choose_faction, choose_story,
+                            WAITING_NAME, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
 from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, bannershow, banner_decision_callback, bannerpending
 from handlers.explore import (explore, fight, attack, technique, choose_art, use_form,
@@ -241,7 +241,7 @@ def _activity_signature(update: Update) -> str | None:
     query = update.callback_query
     if query:
         data = (query.data or "").strip()
-        if not data or data.startswith("captcha_") or data == "goto_start":
+        if not data or data == "goto_start":
             return None
         return f"button:{data[:48]}"
 
@@ -488,7 +488,7 @@ async def _track_user_callback_activity(update: Update, context: ContextTypes.DE
         return
 
     data = (query.data or "").strip()
-    if not data or data.startswith("captcha_"):
+    if not data:
         return
 
     log_user_activity(
@@ -663,7 +663,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _end_conv_passthrough(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     ConversationHandler fallback.
-    If a user has an unfinished /start session (stuck at captcha or name entry)
+    If a user has an unfinished /start session (stuck at name entry)
     and then presses any non-conversation button (explore, fight, shop, etc.),
     this silently ends the conversation state so the global callback_router
     can process the button normally.
@@ -701,7 +701,6 @@ def main():
             CallbackQueryHandler(start, pattern='^goto_start$'),
         ],
         states={
-            WAITING_CAPTCHA: [CallbackQueryHandler(captcha_callback, pattern='^captcha_')],
             WAITING_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             CHOOSING_FACTION:[CallbackQueryHandler(choose_faction, pattern='^faction_')],
             CHOOSING_STORY:  [CallbackQueryHandler(choose_story,   pattern='^story_')],
@@ -715,7 +714,7 @@ def main():
         per_chat=True,
         per_user=True,
         allow_reentry=False,
-        conversation_timeout=300,  # 5 min — kills stale captcha states
+        conversation_timeout=300,  # 5 min — kills stale conversation states
     )
     app.add_handler(conv)
 
@@ -726,8 +725,6 @@ def main():
     # ── Global checks — runs before commands (group=-1) ──────────────────
     app.add_handler(MessageHandler(filters.ALL, _global_ban_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_ban_check), group=-1)
-    app.add_handler(MessageHandler(filters.ALL, _global_human_check), group=-1)
-    app.add_handler(CallbackQueryHandler(_global_human_check), group=-1)
 
     # ── Works EVERYWHERE (Groups + DMs) ──────────────────────────────────
     everywhere = [
