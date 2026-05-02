@@ -65,6 +65,8 @@ OWNER_ID = int(os.environ.get("OWNER_ID", 1214273889))  # Set env var or replace
 # If 0, falls back to OWNER_ID.
 BANNER_APPROVAL_CHAT_ID = int(os.environ.get("BANNER_APPROVAL_CHAT_ID", -1003810191728))
 SUDO_ADMIN_IDS = []     # <-- Add trusted admin IDs here, e.g. [123456789, 987654321]
+# Cost in Telegram Stars to set an animated GIF as profile banner
+GIF_BANNER_STAR_COST = int(os.environ.get("GIF_BANNER_STAR_COST", 50))
 # ═══════════════════════════════════════════════════
 
 # Game Settings
