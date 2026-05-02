@@ -23,7 +23,10 @@ async def get_media_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = None
     media_type = ""
 
-    if message.photo:
+    if message.animation:          # <--- GIF / animated sticker
+        file_id = message.animation.file_id
+        media_type = "GIF"
+    elif message.photo:
         file_id = message.photo[-1].file_id
         media_type = "Photo"
     elif message.video:
