@@ -8,6 +8,8 @@ Owner commands:
       Remove a GIF from the store by its Mongo _id (shown in /listgifbanners).
   /listgifbanners
       List all GIFs currently in the store (owner/admin only).
+  /setmygifbanner <file_id>
+      Owner only – apply any GIF banner to own profile instantly, without payment.
 
 Player commands:
   /gifstore
@@ -193,6 +195,54 @@ async def listgifbanners(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"• {name} — {price} ⭐\n  ID: `{gid}`")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+# ── /setmygifbanner – owner free self‑apply ────────────────────────────────
+
+async def setmygifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Owner only. Apply any GIF banner to own profile without paying.
+    Usage: /setmygifbanner <file_id>
+    """
+    user_id = update.effective_user.id
+    if not _is_owner(user_id):
+        await update.message.reply_text("Owner only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /setmygifbanner <file_id>\n\n"
+            "Example: /setmygifbanner CgACAgIAAx...\n"
+            "You can get the file_id by forwarding a GIF to @raw_data_bot."
+        )
+        return
+
+    file_id = context.args[0].strip()
+
+    # Verify that the file_id is a valid animation (optional but nice)
+    try:
+        await context.bot.send_animation(
+            chat_id=user_id,
+            animation=file_id,
+            caption="Preview of the banner you just set (free)."
+        )
+    except Exception as e:
+        log.warning("[GIF_STORE] Owner setmygifbanner preview failed: %s", e)
+        # Still continue – maybe the file_id is valid but bot can't preview?
+        # We'll still try to apply it.
+        pass
+
+    update_player(
+        user_id,
+        profile_banner_gif_id=file_id,
+        profile_banner_file_id=None,
+        profile_banner_url=None,
+    )
+    log.info("[GIF_STORE] Owner %s set own GIF banner to file_id=%s", user_id, file_id)
+    await update.message.reply_text(
+        "✅ Your profile banner has been updated (free, no Stars deducted).\n"
+        "Use /profile to see the change."
+    )
 
 
 # ── /gifstore — player browsing UI ────────────────────────────────────────
