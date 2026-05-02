@@ -265,11 +265,11 @@ async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _is_owner_or_admin(user_id):
         if not update.message.photo and not context.args:
             await update.message.reply_text(
-            "SET PROFILE BANNER (Admin/Owner - instant)\n\n"
-            "Send a photo with /setbanner\n"
-            "or /setbanner https://example.com/image.jpg",
-            parse_mode=None
-        )
+                "SET PROFILE BANNER (Admin/Owner - instant)\n\n"
+                "Send a photo with /setbanner\n"
+                "or /setbanner https://example.com/image.jpg",
+                parse_mode=None
+            )
             return
 
         url = None
@@ -387,13 +387,13 @@ async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def banner_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles Approve / Deny button presses from admin/owner."""
     query   = update.callback_query
-    await query.answer()
     reviewer_id = query.from_user.id
 
     if not _is_owner_or_admin(reviewer_id):
         await query.answer("You are not authorized to approve banners.", show_alert=True)
         return
 
+    await query.answer()
     data = query.data  # "banner_approve_<uid>" or "banner_deny_<uid>"
     parts = data.split("_")
     action  = parts[1]          # "approve" or "deny"
