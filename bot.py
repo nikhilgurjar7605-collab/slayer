@@ -36,14 +36,14 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationHandlerStop,
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ConversationHandler, filters, ContextTypes
+    ConversationHandler, filters, ContextTypes, PreCheckoutQueryHandler
 )
 from config import BOT_TOKEN, OWNER_ID
 from utils.database import init_db, get_player, col
 from handlers.start import (start, get_name, choose_faction, choose_story, captcha_callback,
                             WAITING_NAME, WAITING_CAPTCHA, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
-from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, bannershow, banner_decision_callback, bannerpending
+from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, bannershow, banner_decision_callback, bannerpending, approvebanner, banner_pre_checkout, banner_successful_payment
 from handlers.explore import (explore, fight, attack, technique, choose_art, use_form,
                                items_menu, use_item, party_battle, flee, prize, form_info,
                                switch_ally, dismiss_ally_callback, ally_fainted_callback)
@@ -71,6 +71,11 @@ from handlers.pets import (
 )
 from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
+from handlers.gif_store import (
+    addgifbanner, removegifbanner, listgifbanners,
+    gifstore, gifstore_page_callback, gifstore_buy_callback,
+    gifstore_pre_checkout, gifstore_successful_payment,
+)
 from handlers.hybrid import hybrid, rehybrid, demonmark, hybridtoggle
 from handlers.clan import (clan, createclan, joinclan, leaveclan, setclanlink, clandisband,
                             clanmembers, promotevice, demote, kick,
@@ -736,6 +741,8 @@ def main():
         ('clearbanner',     clearbanner),
         ('bannershow',      bannershow),
         ('bannerpending',   bannerpending),
+        ('approvebanner',   approvebanner),
+        ('gifstore',        gifstore),
         ('rankings',        rankings),
         ('help',            help_command),
         ('myid',            myid),
@@ -883,6 +890,9 @@ def main():
         ('openblackmarket', openblackmarket),
         ('closeblackmarket',closeblackmarket),
         ('addblackmarket',  addblackmarket),
+        ('addgifbanner',    addgifbanner),
+        ('removegifbanner', removegifbanner),
+        ('listgifbanners',  listgifbanners),
         ('adminhelp',       adminhelp),
         ('adminunstuck',    admin_unstuck),
         ('bankgiveaway',    bankgiveaway),
@@ -961,6 +971,29 @@ def main():
     ))
     app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'))
+    app.add_handler(CallbackQueryHandler(gifstore_page_callback, pattern=r'^gifstore_page_\d+$'))
+    app.add_handler(CallbackQueryHandler(gifstore_buy_callback,  pattern=r'^gifstore_buy_.+$'))
+
+    # ── Unified Telegram Stars pre-checkout router ────────────────────────
+    async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        payload = update.pre_checkout_query.invoice_payload
+        if payload.startswith("gifstore_"):
+            await gifstore_pre_checkout(update, context)
+        elif payload.startswith("gif_banner_"):
+            await banner_pre_checkout(update, context)
+        else:
+            await update.pre_checkout_query.answer(ok=False, error_message="Unknown payment.")
+
+    # ── Unified successful payment router ─────────────────────────────────
+    async def _unified_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        payload = update.message.successful_payment.invoice_payload
+        if payload.startswith("gifstore_"):
+            await gifstore_successful_payment(update, context)
+        elif payload.startswith("gif_banner_"):
+            await banner_successful_payment(update, context)
+
+    app.add_handler(PreCheckoutQueryHandler(_unified_pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT & filters.ChatType.PRIVATE, _unified_successful_payment))
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
