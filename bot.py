@@ -623,8 +623,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('pet_catch_'): await pet_catch_callback(update, context)
     elif data.startswith('pet_flee_'):  await pet_flee_callback(update, context)
     elif data.startswith('pet_hatch_'): await pet_hatch_callback(update, context)
-    elif data.startswith('banner_approve_') or data.startswith('banner_deny_'):
-        await banner_decision_callback(update, context)
     elif data == 'noop':               await update.callback_query.answer()
     elif data.startswith('inv_materials'): await inv_materials_callback(update, context)
     elif data == 'inv_back':         await inv_back_callback(update, context)
@@ -970,9 +968,10 @@ def main():
         doc_restore_handler
     ))
     app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
-    app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'))
-    app.add_handler(CallbackQueryHandler(gifstore_page_callback, pattern=r'^gifstore_page_\d+$'))
-    app.add_handler(CallbackQueryHandler(gifstore_buy_callback,  pattern=r'^gifstore_buy_.+$'))
+    # ── group=1: these must never be swallowed by the ConvHandler fallback ──
+    app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'), group=1)
+    app.add_handler(CallbackQueryHandler(gifstore_page_callback,   pattern=r'^gifstore_page_\d+$'),          group=1)
+    app.add_handler(CallbackQueryHandler(gifstore_buy_callback,    pattern=r'^gifstore_buy_.+$'),             group=1)
 
     # ── Unified Telegram Stars pre-checkout router ────────────────────────
     async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
