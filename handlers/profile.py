@@ -1,10 +1,10 @@
 import logging
 from telegram.error import BadRequest, TimedOut
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import ContextTypes
 from utils.database import get_player, get_arts, col, update_player, is_admin
 from utils.helpers import get_unlocked_forms, get_level, hp_bar
-from config import OWNER_ID, BANNER_APPROVAL_CHAT_ID
+from config import OWNER_ID, BANNER_APPROVAL_CHAT_ID, GIF_BANNER_STAR_COST
 log = logging.getLogger(__name__)
 
 
@@ -38,13 +38,17 @@ def _armor_buff(name: str) -> str:
 
 
 def _profile_banner_media(player: dict):
+    """Return (media, is_gif) tuple for the player's banner, or (None, False)."""
+    gif_id = str(player.get("profile_banner_gif_id") or "").strip()
+    if gif_id:
+        return gif_id, True
     file_id = str(player.get("profile_banner_file_id") or "").strip()
     if file_id:
-        return file_id
+        return file_id, False
     url = str(player.get("profile_banner_url") or "").strip()
     if url.startswith("http"):
-        return url
-    return None
+        return url, False
+    return None, False
 
 
 def _is_owner_or_admin(user_id: int) -> bool:
@@ -56,14 +60,17 @@ def _is_owner_or_admin(user_id: int) -> bool:
 
 # ── Banner request helpers ─────────────────────────────────────────────────
 
-def _save_banner_request(user_id: int, file_id: str | None, url: str | None):
+def _save_banner_request(user_id: int, file_id: str | None, url: str | None, gif_file_id: str | None = None):
     """Store a pending banner request in MongoDB."""
+    banner_type = "gif" if gif_file_id else "image"
     col("banner_requests").update_one(
         {"user_id": user_id},
         {"$set": {
             "user_id": user_id,
             "file_id": file_id,
             "url": url,
+            "gif_file_id": gif_file_id,
+            "banner_type": banner_type,
             "status": "pending",
         }},
         upsert=True,
@@ -166,10 +173,13 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔"
     )
 
-    banner_media = _profile_banner_media(player)
+    banner_media, banner_is_gif = _profile_banner_media(player)
     if banner_media:
         target_msg = update.callback_query.message if update.callback_query else update.message
-        await target_msg.reply_photo(banner_media, caption=text[:1024], parse_mode=None, reply_markup=keyboard)
+        if banner_is_gif:
+            await target_msg.reply_animation(banner_media, caption=text[:1024], parse_mode=None, reply_markup=keyboard)
+        else:
+            await target_msg.reply_photo(banner_media, caption=text[:1024], parse_mode=None, reply_markup=keyboard)
     elif update.callback_query:
         await update.callback_query.edit_message_text(text, parse_mode=None, reply_markup=keyboard)
     else:
@@ -261,103 +271,196 @@ async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No character found. Use /start first.")
         return
 
+    msg = update.message
+    has_photo     = bool(msg.photo)
+    has_animation = bool(msg.animation)  # GIF / animated sticker sent as file
+    has_url_arg   = bool(context.args and context.args[-1].strip().startswith("http"))
+
     # ── Admins & owner: apply instantly without approval ─────────────────
     if _is_owner_or_admin(user_id):
-        if not update.message.photo and not context.args:
-            await update.message.reply_text(
+        if not has_photo and not has_animation and not has_url_arg:
+            await msg.reply_text(
                 "SET PROFILE BANNER (Admin/Owner - instant)\n\n"
-                "Send a photo with /setbanner\n"
+                "Send a photo/GIF with /setbanner\n"
                 "or /setbanner https://example.com/image.jpg",
                 parse_mode=None
             )
             return
 
-        url = None
-        if context.args:
-            maybe_url = context.args[-1].strip()
-            if maybe_url.startswith("http"):
-                url = maybe_url
-
-        update_fields = {}
-        if update.message.photo:
-            update_fields["profile_banner_file_id"] = update.message.photo[-1].file_id
-            update_fields["profile_banner_url"] = None
-        elif url:
-            update_fields["profile_banner_url"] = url
-            update_fields["profile_banner_file_id"] = None
+        update_fields = {"profile_banner_file_id": None,
+                         "profile_banner_url": None,
+                         "profile_banner_gif_id": None}
+        if has_animation:
+            update_fields["profile_banner_gif_id"] = msg.animation.file_id
+        elif has_photo:
+            update_fields["profile_banner_file_id"] = msg.photo[-1].file_id
+        elif has_url_arg:
+            update_fields["profile_banner_url"] = context.args[-1].strip()
         else:
-            await update.message.reply_text("Send a photo or a direct http image URL.")
+            await msg.reply_text("Send a photo, GIF, or a direct http image URL.")
             return
 
         update_player(user_id, **update_fields)
         log.info("[SETBANNER] Admin/owner banner set instantly: user_id=%s", user_id)
-        await update.message.reply_text(
+        await msg.reply_text(
             "Banner set instantly (admin privilege).\nUse /profile to preview.",
             parse_mode=None
         )
         return
 
-    # ── Regular players: submit for approval ─────────────────────────────
-    if not update.message.photo and not context.args:
-        # Check if they already have a pending request
+    # ── GIF path: send Telegram Stars invoice ────────────────────────────
+    if has_animation:
         existing = _get_banner_request(user_id)
         if existing and existing.get("status") == "pending":
-            await update.message.reply_text(
+            await msg.reply_text(
+                "You already have a pending banner request.\n"
+                "Wait for it to be reviewed before submitting another.",
+                parse_mode=None
+            )
+            return
+        # Store gif file_id temporarily so we can retrieve it after payment
+        context.user_data["pending_gif_file_id"] = msg.animation.file_id
+        try:
+            await context.bot.send_invoice(
+                chat_id=user_id,
+                title="Animated GIF Profile Banner",
+                description=(
+                    f"Set an animated GIF as your profile banner.\n"
+                    f"Cost: {GIF_BANNER_STAR_COST} ⭐ Stars\n\n"
+                    "After payment your GIF will be sent for admin approval."
+                ),
+                payload=f"gif_banner_{user_id}_{msg.animation.file_id}",
+                currency="XTR",
+                prices=[LabeledPrice("Animated Banner", GIF_BANNER_STAR_COST)],
+            )
+        except Exception as e:
+            log.error("[SETBANNER] Failed to send Stars invoice: %s", e)
+            await msg.reply_text("Failed to start payment. Please try again.")
+        return
+
+    # ── Regular image/URL path: submit for approval ───────────────────────
+    if not has_photo and not has_url_arg:
+        existing = _get_banner_request(user_id)
+        if existing and existing.get("status") == "pending":
+            await msg.reply_text(
                 "Your banner request is already pending approval.\n\n"
                 "An admin will review it soon. Please wait.",
                 parse_mode=None
             )
             return
 
-        await update.message.reply_text(
+        await msg.reply_text(
             "SET PROFILE BANNER\n\n"
-            "Send a photo with /setbanner or\n"
-            "/setbanner https://example.com/image.jpg\n\n"
-            "Your banner must be approved by an admin before it appears on your profile.",
+            "• Send a photo with /setbanner\n"
+            "• /setbanner https://example.com/image.jpg\n"
+            f"• Send a GIF with /setbanner (costs {GIF_BANNER_STAR_COST} ⭐ Stars)\n\n"
+            "Photos require admin approval before appearing on your profile.",
             parse_mode=None
         )
         return
 
-    url = None
-    if context.args:
-        maybe_url = context.args[-1].strip()
-        if maybe_url.startswith("http"):
-            url = maybe_url
+    url = context.args[-1].strip() if has_url_arg else None
+    file_id = msg.photo[-1].file_id if has_photo else None
 
-    file_id = None
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif url:
-        pass  # url already set
-    else:
-        await update.message.reply_text("Send a photo or a direct http image URL.")
+    if not file_id and not url:
+        await msg.reply_text("Send a photo or a direct http image URL.")
         return
 
     _save_banner_request(user_id, file_id=file_id, url=url)
     log.info("[SETBANNER] Banner request submitted for approval: user_id=%s", user_id)
 
+    await _notify_approval_chat(context, user_id, player, file_id=file_id, url=url, gif_file_id=None)
+
+    await msg.reply_text(
+        "Banner request submitted.\n\n"
+        "An admin will review your banner shortly.\n"
+        "You will be notified when it is approved or denied.",
+        parse_mode=None
+    )
+
+
+# ── Stars payment handlers for GIF banners ────────────────────────────────
+
+async def banner_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Auto-approve the pre-checkout for GIF banner invoices."""
+    query = update.pre_checkout_query
+    if query.invoice_payload.startswith("gif_banner_"):
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Unknown payment.")
+
+
+async def banner_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """After Stars payment succeeds, save the GIF request and notify admins."""
+    payment = update.message.successful_payment
+    payload = payment.invoice_payload  # "gif_banner_<uid>_<file_id>"
+    if not payload.startswith("gif_banner_"):
+        return
+
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("No character found. Use /start first.")
+        return
+
+    # Extract gif file_id from payload (format: gif_banner_<uid>_<file_id>)
+    parts    = payload.split("_", 3)  # ["gif", "banner", uid, file_id]
+    gif_file_id = parts[3] if len(parts) == 4 else context.user_data.get("pending_gif_file_id")
+
+    if not gif_file_id:
+        await update.message.reply_text("Payment received but GIF file lost. Contact an admin.")
+        log.error("[SETBANNER] Payment ok but gif_file_id missing for user %s", user_id)
+        return
+
+    _save_banner_request(user_id, file_id=None, url=None, gif_file_id=gif_file_id)
+    context.user_data.pop("pending_gif_file_id", None)
+    log.info("[SETBANNER] GIF banner payment ok, request saved: user_id=%s", user_id)
+
+    await _notify_approval_chat(context, user_id, player, file_id=None, url=None, gif_file_id=gif_file_id)
+
+    await update.message.reply_text(
+        f"Payment received ({GIF_BANNER_STAR_COST} ⭐ Stars).\n\n"
+        "Your animated GIF banner has been submitted for admin approval.\n"
+        "You will be notified once it is reviewed.",
+        parse_mode=None
+    )
+
+
+# ── Shared helper: send approval message to admin chat ────────────────────
+
+async def _notify_approval_chat(
+    context, user_id: int, player: dict,
+    file_id: str | None, url: str | None, gif_file_id: str | None
+):
     approval_chat_id = BANNER_APPROVAL_CHAT_ID or OWNER_ID
-
-    # Notify the approval chat with approve/deny buttons
     player_name = player.get("name", str(user_id))
-    player_username = player.get("username") or ""
-    player_display = f"{player_name}" + (f" (@{player_username})" if player_username else f" [ID: {user_id}]")
-    tg_username = player.get("username") or update.effective_user.username or ""
-    user_display = f"{player_name}" + (f" (@{tg_username})" if tg_username else f" [ID: {user_id}]")
+    tg_username = player.get("username") or ""
+    user_display = player_name + (f" (@{tg_username})" if tg_username else f" [ID: {user_id}]")
+    banner_type_label = "Animated GIF" if gif_file_id else "Photo/Image"
 
-    approve_btn = InlineKeyboardButton("Approve", callback_data=f"banner_approve_{user_id}")
-    deny_btn    = InlineKeyboardButton("Deny",    callback_data=f"banner_deny_{user_id}")
+    approve_btn = InlineKeyboardButton("✅ Approve", callback_data=f"banner_approve_{user_id}")
+    deny_btn    = InlineKeyboardButton("❌ Deny",    callback_data=f"banner_deny_{user_id}")
     keyboard    = InlineKeyboardMarkup([[approve_btn, deny_btn]])
 
     caption = (
         f"Banner Approval Request\n\n"
         f"Player: {user_display}\n"
-        f"ID: {user_id}\n\n"
-        f"Approve or deny using the buttons below."
+        f"ID: {user_id}\n"
+        f"Type: {banner_type_label}\n\n"
+        f"Approve or deny using the buttons below.\n"
+        f"Or use: /approvebanner {user_id}"
     )
 
     try:
-        if file_id:
+        if gif_file_id:
+            await context.bot.send_animation(
+                chat_id=approval_chat_id,
+                animation=gif_file_id,
+                caption=caption,
+                parse_mode=None,
+                reply_markup=keyboard,
+            )
+        elif file_id:
             await context.bot.send_photo(
                 chat_id=approval_chat_id,
                 photo=file_id,
@@ -376,12 +479,69 @@ async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.error("[SETBANNER] Failed to notify approval chat: %s", e)
 
+
+# ── /approvebanner <user_id> — approve via command ────────────────────────
+
+async def approvebanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin/owner command: /approvebanner <user_id> — approve a pending banner."""
+    admin_id = update.effective_user.id
+    if not _is_owner_or_admin(admin_id):
+        await update.message.reply_text("Admin only.")
+        return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text(
+            "Usage: /approvebanner <user_id>\n\n"
+            "Use /bannerpending to see pending requests.",
+            parse_mode=None
+        )
+        return
+
+    target_uid = int(context.args[0])
+    request    = _get_banner_request(target_uid)
+
+    if not request or request.get("status") != "pending":
+        await update.message.reply_text(f"No pending banner request found for ID: {target_uid}.")
+        return
+
+    player = get_player(target_uid)
+    player_name = player.get("name", str(target_uid)) if player else str(target_uid)
+
+    update_fields = {"profile_banner_file_id": None,
+                     "profile_banner_url": None,
+                     "profile_banner_gif_id": None}
+    if request.get("gif_file_id"):
+        update_fields["profile_banner_gif_id"] = request["gif_file_id"]
+    elif request.get("file_id"):
+        update_fields["profile_banner_file_id"] = request["file_id"]
+    elif request.get("url"):
+        update_fields["profile_banner_url"] = request["url"]
+    else:
+        await update.message.reply_text("Request has no banner data. Deleting it.")
+        _delete_banner_request(target_uid)
+        return
+
+    update_player(target_uid, **update_fields)
+    _delete_banner_request(target_uid)
+    log.info("[SETBANNER] Approved via command by admin=%s for user=%s", admin_id, target_uid)
+
     await update.message.reply_text(
-        "Banner request submitted.\n\n"
-        "An admin will review your banner shortly.\n"
-        "You will be notified when it is approved or denied.",
+        f"Banner approved for {player_name} (ID: {target_uid}).",
         parse_mode=None
     )
+
+    # Notify the player
+    try:
+        await context.bot.send_message(
+            chat_id=target_uid,
+            text=(
+                "Your profile banner has been approved.\n\n"
+                "Use /profile to see it live."
+            ),
+            parse_mode=None,
+        )
+    except Exception as e:
+        log.error("[SETBANNER] Could not notify player %s of approval: %s", target_uid, e)
 
 
 async def banner_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -413,14 +573,16 @@ async def banner_decision_callback(update: Update, context: ContextTypes.DEFAULT
     player_display = f"{player_name}" + (f" (@{player_username})" if player_username else f" [ID: {user_id}]")
 
     if action == "approve":
-        # Apply the banner
-        update_fields = {}
-        if request.get("file_id"):
+        # Apply the banner — check gif first
+        update_fields = {"profile_banner_file_id": None,
+                         "profile_banner_url": None,
+                         "profile_banner_gif_id": None}
+        if request.get("gif_file_id"):
+            update_fields["profile_banner_gif_id"] = request["gif_file_id"]
+        elif request.get("file_id"):
             update_fields["profile_banner_file_id"] = request["file_id"]
-            update_fields["profile_banner_url"]     = None
         elif request.get("url"):
-            update_fields["profile_banner_url"]     = request["url"]
-            update_fields["profile_banner_file_id"] = None
+            update_fields["profile_banner_url"] = request["url"]
 
         update_player(user_id, **update_fields)
         _delete_banner_request(user_id)
@@ -576,18 +738,25 @@ async def bannershow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No character found for that ID.")
         return
 
-    banner_media = _profile_banner_media(player)
+    banner_media, banner_is_gif = _profile_banner_media(player)
     if not banner_media:
         await update.message.reply_text("That user has no banner set.")
         return
 
     name = player.get("name", str(target_id))
     try:
-        await update.message.reply_photo(
-            banner_media,
-            caption=f"Banner for {name} (ID: {target_id})",
-            parse_mode=None
-        )
+        if banner_is_gif:
+            await update.message.reply_animation(
+                banner_media,
+                caption=f"Banner for {name} (ID: {target_id})",
+                parse_mode=None
+            )
+        else:
+            await update.message.reply_photo(
+                banner_media,
+                caption=f"Banner for {name} (ID: {target_id})",
+                parse_mode=None
+            )
     except Exception:
         await update.message.reply_text("Failed to display banner media.")
 
@@ -612,7 +781,7 @@ async def clearbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No character found. Use /start first.")
         return
 
-    update_player(target_id, profile_banner_file_id=None, profile_banner_url=None)
+    update_player(target_id, profile_banner_file_id=None, profile_banner_url=None, profile_banner_gif_id=None)
     _delete_banner_request(target_id)
 
     if target_id == user_id:
