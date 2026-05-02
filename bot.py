@@ -169,6 +169,8 @@ from handlers.skilltree import (skilltree, skilltree_owned, skillbuy, skilllist,
 skill_detail = skillinfo
 from handlers.claninfo import claninfo, clandeposit, clanwithdraw, changestyle, claninfo_callback
 from handlers.unstuck import unstuck, forceunstuck
+from this_file import setmygifbanner
+
 from handlers.coop import (
     joinbattle,
     coop_attack,
@@ -972,6 +974,7 @@ def main():
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'), group=1)
     app.add_handler(CallbackQueryHandler(gifstore_page_callback,   pattern=r'^gifstore_page_\d+$'),          group=1)
     app.add_handler(CallbackQueryHandler(gifstore_buy_callback,    pattern=r'^gifstore_buy_.+$'),             group=1)
+    application.add_handler(CommandHandler("setmygifbanner", setmygifbanner))
 
     # ── Unified Telegram Stars pre-checkout router ────────────────────────
     async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
