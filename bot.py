@@ -72,7 +72,7 @@ from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
 from handlers.gif_store import (
     addgifbanner, removegifbanner, listgifbanners, setmygifbanner,
-    gifstore, gifstore_page_callback, gifstore_buy_callback,
+    gifstore, gifstore_page_callback,
     gifstore_successful_payment,
 )
 from handlers.hybrid import hybrid, rehybrid, demonmark, hybridtoggle
@@ -812,7 +812,6 @@ def main():
     # ── group=1: these must never be swallowed by the ConvHandler fallback ──
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'), group=1)
     app.add_handler(CallbackQueryHandler(gifstore_page_callback,   pattern=r'^gifstore_page_\d+$'),          group=1)
-    app.add_handler(CallbackQueryHandler(gifstore_buy_callback,    pattern=r'^gifstore_buy_.+$'),             group=1)
 
     # ── Telegram Stars payment handlers ───────────────────────────────────
     async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
