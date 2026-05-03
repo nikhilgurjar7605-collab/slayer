@@ -240,13 +240,15 @@ async def setmygifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── /gifstore — player browsing UI ────────────────────────────────────────
 
-def _store_keyboard(index: int, total: int, gif_id: str, price: int) -> InlineKeyboardMarkup:
+def _store_keyboard(index: int, total: int, gif_id: str, price: int, bot_username: str) -> InlineKeyboardMarkup:
     nav = []
     if index > 0:
         nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"gifstore_page_{index - 1}"))
     if index < total - 1:
         nav.append(InlineKeyboardButton("Next ▶", callback_data=f"gifstore_page_{index + 1}"))
-    buy_row = [InlineKeyboardButton(f"Buy {price} ⭐", callback_data=f"gifstore_buy_{gif_id}")]
+    # Deep-link: opens bot DM and auto-triggers the invoice
+    buy_url = f"https://t.me/{bot_username}?start=gifbuy_{gif_id}"
+    buy_row = [InlineKeyboardButton(f"🛒 Buy {price} ⭐", url=buy_url)]
     rows = []
     if nav:
         rows.append(nav)
@@ -273,24 +275,25 @@ async def gifstore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _show_gif_page(update, context, gifs: list, index: int, edit: bool):
-    g     = gifs[index]
+    g      = gifs[index]
     gif_id = str(g["_id"])
-    name  = g.get("name", "GIF Banner")
-    price = g.get("price", 0)
-    total = len(gifs)
+    name   = g.get("name", "GIF Banner")
+    price  = g.get("price", 0)
+    total  = len(gifs)
+
+    from config import BOT_USERNAME
+    keyboard = _store_keyboard(index, total, gif_id, price, BOT_USERNAME)
 
     caption = (
         f"🎨 GIF Banner Store\n\n"
         f"Name: {name}\n"
         f"Price: {price} ⭐ Stars\n"
         f"({index + 1} / {total})\n\n"
-        f"Tap Buy to purchase. It will be applied to your profile instantly!"
+        f"Tap 🛒 Buy to open the bot DM and purchase instantly!"
     )
-    keyboard = _store_keyboard(index, total, gif_id, price)
 
     try:
         if edit and update.callback_query:
-            # Edit the existing animation message in-place
             await update.callback_query.message.delete()
             await update.callback_query.message.chat.send_animation(
                 animation=g["file_id"],
@@ -329,6 +332,79 @@ async def gifstore_page_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     index = max(0, min(index, len(gifs) - 1))
     await _show_gif_page(update, context, gifs, index=index, edit=True)
+
+
+# ── Buy via deep-link: /start gifbuy_<gif_id> ─────────────────────────────
+
+async def gifstore_handle_deeplink(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Called from start.py when user arrives via deep-link:
+      /start gifbuy_<gif_id>
+    Sends the Stars invoice directly in DM.
+    """
+    user_id = update.effective_user.id
+    msg     = update.message
+
+    if not context.args:
+        return
+
+    arg = context.args[0]
+    if not arg.startswith("gifbuy_"):
+        return
+
+    gif_id = arg[len("gifbuy_"):]
+    gif    = _get_gif(gif_id)
+
+    if not gif:
+        await msg.reply_text(
+            "Sorry, that GIF banner is no longer available.\n"
+            "Use /gifstore to browse current items."
+        )
+        return
+
+    player = get_player(user_id)
+    if not player:
+        await msg.reply_text("No character found. Use /start to create one first.")
+        return
+
+    name  = gif.get("name", "GIF Banner")
+    price = gif.get("price", 1)
+
+    # Show a preview of the GIF before the invoice
+    try:
+        await context.bot.send_animation(
+            chat_id=user_id,
+            animation=gif["file_id"],
+            caption=(
+                f"🎨 *{name}*\n\n"
+                f"Price: {price} ⭐ Stars\n\n"
+                f"Applied to your profile instantly after purchase!\n"
+                f"No admin approval needed."
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass  # preview failing shouldn't block the invoice
+
+    try:
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=f"{name} — GIF Banner",
+            description=(
+                f"Buy the '{name}' animated GIF banner.\n"
+                f"Applied to your profile instantly. No approval needed!"
+            ),
+            payload=f"gifstore_{gif_id}",
+            provider_token="",  # Empty string required for Telegram Stars (XTR)
+            currency="XTR",
+            prices=[LabeledPrice(name, price)],
+        )
+        log.info("[GIF_STORE] Invoice sent via deeplink to user=%s gif=%s", user_id, gif_id)
+    except Exception as e:
+        log.error("[GIF_STORE] Deeplink invoice failed: %s", e)
+        await msg.reply_text(
+            "Failed to create the payment invoice. Please try again or contact an admin."
+        )
 
 
 # ── Buy flow: invoice → pre-checkout → successful payment ─────────────────
