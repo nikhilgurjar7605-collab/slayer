@@ -97,9 +97,7 @@ async def addgifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Usage: /addgifbanner <name> <stars_price> <file_id>\n\n"
             "Example:\n"
-            "/addgifbanner Fire\\_Hashira 30 CgACAgIAAx...\n\n"
-            "Use underscores for spaces in the name.\n"
-            "Price is in Telegram Stars ⭐.",
+            "/addgifbanner Fire\\_Hashira 30 CgACAgIAAx...\n\n",
             parse_mode="Markdown"
         )
         return
@@ -210,7 +208,6 @@ async def setmygifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
             "Usage: /setmygifbanner <file_id>\n\n"
-            "Send a GIF to @raw_data_bot to get its file_id."
         )
         return
 
