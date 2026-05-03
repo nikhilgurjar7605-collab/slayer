@@ -30,7 +30,6 @@ _explore_handler.setLevel(logging.DEBUG)
 _explore_handler.addFilter(_ExploreFilter())
 logging.root.addHandler(_explore_handler)
 
-from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -40,10 +39,10 @@ from telegram.ext import (
 )
 from config import BOT_TOKEN, OWNER_ID
 from utils.database import init_db, get_player, col
-from handlers.start import (start, get_name, choose_faction, choose_story, captcha_callback,
-                            WAITING_NAME, WAITING_CAPTCHA, CHOOSING_FACTION, CHOOSING_STORY)
+from handlers.start import (start, get_name, choose_faction, choose_story,
+                            WAITING_NAME, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
-from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, bannershow, banner_decision_callback, bannerpending, approvebanner, banner_pre_checkout, banner_successful_payment
+from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, bannershow, banner_decision_callback, bannerpending, approvebanner, banner_successful_payment
 from handlers.explore import (explore, fight, attack, technique, choose_art, use_form,
                                items_menu, use_item, party_battle, flee, prize, form_info,
                                switch_ally, dismiss_ally_callback, ally_fainted_callback)
@@ -72,10 +71,9 @@ from handlers.pets import (
 from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
 from handlers.gif_store import (
-    addgifbanner, removegifbanner, listgifbanners,
+    addgifbanner, removegifbanner, listgifbanners, setmygifbanner,
     gifstore, gifstore_page_callback, gifstore_buy_callback,
-    gifstore_pre_checkout, gifstore_successful_payment,
-    setmygifbanner,   # <--- NEW IMPORT
+    gifstore_successful_payment,
 )
 from handlers.hybrid import hybrid, rehybrid, demonmark, hybridtoggle
 from handlers.clan import (clan, createclan, joinclan, leaveclan, setclanlink, clandisband,
@@ -170,8 +168,6 @@ from handlers.skilltree import (skilltree, skilltree_owned, skillbuy, skilllist,
 skill_detail = skillinfo
 from handlers.claninfo import claninfo, clandeposit, clanwithdraw, changestyle, claninfo_callback
 from handlers.unstuck import unstuck, forceunstuck
-
-
 from handlers.coop import (
     joinbattle,
     coop_attack,
@@ -187,6 +183,7 @@ from handlers.coop import (
 from handlers.admin_tools import get_media_file_id
 
 logger = logging.getLogger(__name__)
+log = logger  # alias used in some handlers
 
 async def post_init(application):
     """Called after app starts — log webhook info."""
@@ -205,9 +202,6 @@ async def post_init(application):
 
 PRIVATE = filters.ChatType.PRIVATE
 ANY = filters.ALL  # works everywhere
-AUTO_GUARD_WINDOW_SECONDS = 12
-AUTO_GUARD_MAX_ACTIONS = 14
-AUTO_GUARD_REPEAT_LIMIT = 6
 
 
 async def buy_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,155 +221,6 @@ def _is_privileged_user(user_id: int | None) -> bool:
     if user_id == OWNER_ID:
         return True
     return col("admins").find_one({"user_id": user_id}) is not None
-
-
-def _get_human_check_doc(user_id: int) -> dict:
-    return col("captcha_guard").find_one({"user_id": user_id}) or {}
-
-
-def _set_human_check_required(user_id: int, reason: str) -> None:
-    col("captcha_guard").update_one(
-        {"user_id": user_id},
-        {"$set": {
-            "challenge_required": True,
-            "challenge_reason": str(reason)[:180],
-            "challenge_set_at": datetime.now(),
-        }},
-        upsert=True,
-    )
-
-
-def _activity_signature(update: Update) -> str | None:
-    query = update.callback_query
-    if query:
-        data = (query.data or "").strip()
-        if not data or data.startswith("captcha_") or data == "goto_start":
-            return None
-        return f"button:{data[:48]}"
-
-    message = update.message
-    if message and message.text and message.text.startswith("/"):
-        command = message.text.split()[0][1:].split("@")[0].lower()
-        if command == "start":
-            return None
-        return f"command:{command}"
-
-    return None
-
-
-def _note_recent_activity(context: ContextTypes.DEFAULT_TYPE, user_id: int, signature: str) -> tuple[int, int]:
-    tracker = context.application.bot_data.setdefault("auto_guard_tracker", {})
-    state = tracker.setdefault(user_id, {
-        "events": deque(maxlen=50),
-        "signatures": deque(maxlen=25),
-    })
-
-    now = datetime.now()
-    events = state["events"]
-    signatures = state["signatures"]
-
-    while events and (now - events[0]).total_seconds() > AUTO_GUARD_WINDOW_SECONDS:
-        events.popleft()
-    while signatures and (now - signatures[0][0]).total_seconds() > AUTO_GUARD_WINDOW_SECONDS:
-        signatures.popleft()
-
-    events.append(now)
-    signatures.append((now, signature))
-    repeat_count = sum(1 for _, sig in signatures if sig == signature)
-    return len(events), repeat_count
-
-
-def _human_check_message(reason: str | None = None, remaining_minutes: int | None = None) -> str:
-    if remaining_minutes:
-        return (
-            "Verification cooldown active."
-            f"Wait about {remaining_minutes} minute(s), then use /start in DM."
-        )
-    if reason:
-        return (
-            "Human verification required."
-            f"Trigger: {reason}"
-            "Use /start in DM and solve the captcha to continue."
-        )
-    return "Human verification required. Use /start in DM and solve the captcha to continue."
-
-
-async def _notify_human_check(update: Update, reason: str | None = None, remaining_minutes: int | None = None):
-    text = _human_check_message(reason=reason, remaining_minutes=remaining_minutes)
-    try:
-        if update.callback_query:
-            await update.callback_query.answer(text[:180], show_alert=True)
-        elif update.message:
-            await update.message.reply_text(text)
-    except Exception as e:
-        log.error("[EXCEPTION] %s", e)
-
-
-async def _global_human_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Global anti-auto pre-filter.
-    Suspiciously fast command/button spam is forced through a captcha check in DM.
-    """
-    user = update.effective_user
-    if not user or _is_privileged_user(user.id):
-        return
-
-    if update.callback_query and (update.callback_query.data or "").startswith("captcha_"):
-        return
-    if update.callback_query and (update.callback_query.data or "") == "goto_start":
-        return
-    if update.message and update.message.text and update.message.text.startswith("/start"):
-        return
-
-    guard_doc = _get_human_check_doc(user.id)
-    now = datetime.now()
-    lock_until = guard_doc.get("lock_until")
-    if isinstance(lock_until, datetime) and lock_until <= now:
-        col("captcha_guard").update_one(
-            {"user_id": user.id},
-            {"$set": {"lock_until": None}},
-            upsert=True,
-        )
-        lock_until = None
-
-    if isinstance(lock_until, datetime) and lock_until > now:
-        remaining = max(1, int((lock_until - now).total_seconds() // 60))
-        await _notify_human_check(update, remaining_minutes=remaining)
-        raise ApplicationHandlerStop
-
-    if guard_doc.get("challenge_required"):
-        await _notify_human_check(update, reason=guard_doc.get("challenge_reason"))
-        raise ApplicationHandlerStop
-
-    signature = _activity_signature(update)
-    if not signature:
-        return
-
-    player = get_player(user.id)
-    if not player:
-        return
-
-    burst_count, repeat_count = _note_recent_activity(context, user.id, signature)
-    if burst_count < AUTO_GUARD_MAX_ACTIONS and repeat_count < AUTO_GUARD_REPEAT_LIMIT:
-        return
-
-    reason = (
-        f"{repeat_count} repeated {signature} actions in {AUTO_GUARD_WINDOW_SECONDS}s"
-        if repeat_count >= AUTO_GUARD_REPEAT_LIMIT
-        else f"{burst_count} rapid actions in {AUTO_GUARD_WINDOW_SECONDS}s"
-    )
-    _set_human_check_required(user.id, reason)
-    log_user_activity(
-        user.id,
-        "human_check_required",
-        details=reason,
-        chat_id=update.effective_chat.id if update.effective_chat else None,
-        chat_type=update.effective_chat.type if update.effective_chat else None,
-        username=user.username,
-        name=user.first_name,
-    )
-    await _notify_human_check(update, reason=reason)
-    raise ApplicationHandlerStop
 
 
 async def _global_maintenance_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -496,7 +341,7 @@ async def _track_user_callback_activity(update: Update, context: ContextTypes.DE
         return
 
     data = (query.data or "").strip()
-    if not data or data.startswith("captcha_"):
+    if not data:
         return
 
     log_user_activity(
@@ -669,12 +514,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _end_conv_passthrough(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     ConversationHandler fallback.
-    If a user has an unfinished /start session (stuck at captcha or name entry)
-    and then presses any non-conversation button (explore, fight, shop, etc.),
-    this silently ends the conversation state so the global callback_router
-    can process the button normally.
-    Without this, all their button presses would be swallowed by the
-    ConversationHandler and nothing would happen.
+    If a user has an unfinished /start session (stuck at name entry)
+    and presses any non-conversation button, this silently ends the
+    conversation state so the global callback_router can handle it.
     """
     return ConversationHandler.END
 
@@ -707,21 +549,18 @@ def main():
             CallbackQueryHandler(start, pattern='^goto_start$'),
         ],
         states={
-            WAITING_CAPTCHA: [CallbackQueryHandler(captcha_callback, pattern='^captcha_')],
             WAITING_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             CHOOSING_FACTION:[CallbackQueryHandler(choose_faction, pattern='^faction_')],
             CHOOSING_STORY:  [CallbackQueryHandler(choose_story,   pattern='^story_')],
         },
         fallbacks=[
             CommandHandler('start', start),
-            # If user presses a non-captcha button while in captcha state,
-            # end the conversation so callback_router can handle it
             CallbackQueryHandler(_end_conv_passthrough),
         ],
         per_chat=True,
         per_user=True,
         allow_reentry=False,
-        conversation_timeout=300,  # 5 min — kills stale captcha states
+        conversation_timeout=300,
     )
     app.add_handler(conv)
 
@@ -732,8 +571,6 @@ def main():
     # ── Global checks — runs before commands (group=-1) ──────────────────
     app.add_handler(MessageHandler(filters.ALL, _global_ban_check), group=-1)
     app.add_handler(CallbackQueryHandler(_global_ban_check), group=-1)
-    app.add_handler(MessageHandler(filters.ALL, _global_human_check), group=-1)
-    app.add_handler(CallbackQueryHandler(_global_human_check), group=-1)
 
     # ── Works EVERYWHERE (Groups + DMs) ──────────────────────────────────
     everywhere = [
@@ -744,7 +581,6 @@ def main():
         ('bannerpending',   bannerpending),
         ('approvebanner',   approvebanner),
         ('gifstore',        gifstore),
-        ('setmygifbanner',  setmygifbanner),   # <--- ADDED
         ('rankings',        rankings),
         ('help',            help_command),
         ('myid',            myid),
@@ -895,6 +731,7 @@ def main():
         ('addgifbanner',    addgifbanner),
         ('removegifbanner', removegifbanner),
         ('listgifbanners',  listgifbanners),
+        ('setmygifbanner',  setmygifbanner),
         ('adminhelp',       adminhelp),
         ('adminunstuck',    admin_unstuck),
         ('bankgiveaway',    bankgiveaway),
@@ -977,18 +814,18 @@ def main():
     app.add_handler(CallbackQueryHandler(gifstore_page_callback,   pattern=r'^gifstore_page_\d+$'),          group=1)
     app.add_handler(CallbackQueryHandler(gifstore_buy_callback,    pattern=r'^gifstore_buy_.+$'),             group=1)
 
-    # ── Unified Telegram Stars pre-checkout router ────────────────────────
+    # ── Telegram Stars payment handlers ───────────────────────────────────
     async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        payload = update.pre_checkout_query.invoice_payload
-        if payload.startswith("gifstore_"):
-            await gifstore_pre_checkout(update, context)
-        elif payload.startswith("gif_banner_"):
-            await banner_pre_checkout(update, context)
+        """Single pre-checkout handler for all Stars payments."""
+        query   = update.pre_checkout_query
+        payload = query.invoice_payload
+        if payload.startswith("gifstore_") or payload.startswith("gif_banner_"):
+            await query.answer(ok=True)
         else:
-            await update.pre_checkout_query.answer(ok=False, error_message="Unknown payment.")
+            await query.answer(ok=False, error_message="Unknown payment.")
 
-    # ── Unified successful payment router ─────────────────────────────────
     async def _unified_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Route successful payments to the correct handler by payload prefix."""
         payload = update.message.successful_payment.invoice_payload
         if payload.startswith("gifstore_"):
             await gifstore_successful_payment(update, context)
