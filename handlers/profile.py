@@ -330,6 +330,7 @@ async def setbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "After payment your GIF will be sent for admin approval."
                 ),
                 payload=f"gif_banner_{user_id}_{msg.animation.file_id}",
+                provider_token="",  # Empty string required for Telegram Stars (XTR)
                 currency="XTR",
                 prices=[LabeledPrice("Animated Banner", GIF_BANNER_STAR_COST)],
             )
