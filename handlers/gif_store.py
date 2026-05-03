@@ -363,12 +363,19 @@ async def gifstore_buy_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 f"No approval needed!"
             ),
             payload=f"gifstore_{gif_id}",
+            provider_token="",  # Empty string required for Telegram Stars (XTR)
             currency="XTR",
             prices=[LabeledPrice(name, price)],
         )
+        # Tell user in-chat that invoice was sent to DM
+        chat_id = update.callback_query.message.chat_id if update.callback_query.message else None
+        if chat_id and chat_id != user_id:
+            await query.answer("Invoice sent to your DM! Check your messages.", show_alert=True)
+        else:
+            await query.answer("Invoice sent! Check below to pay.", show_alert=False)
     except Exception as e:
         log.error("[GIF_STORE] Invoice send failed: %s", e)
-        await query.answer("Failed to start payment. Try again.", show_alert=True)
+        await query.answer(f"Failed to start payment: {e}", show_alert=True)
 
 
 async def gifstore_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
