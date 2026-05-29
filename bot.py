@@ -213,6 +213,9 @@ async def post_init(application):
 PRIVATE = filters.ChatType.PRIVATE
 ANY = filters.ALL  # works everywhere
 
+async def on_startup(app: Application):
+    await app.bot.send_message(chat_id=-1003882841537, text="Bot has been started!")
+
 
 async def buy_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Route /buy to market, blackmarket, or shop — works everywhere."""
@@ -862,6 +865,7 @@ def main():
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
 
     logger.info("🗡️ Demon Slayer RPG Bot starting...")
+    app.post_init = on_startup
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
