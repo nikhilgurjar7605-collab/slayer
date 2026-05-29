@@ -239,10 +239,11 @@ async def send_egg_drop_message(context, chat_id: int, egg_name: str):
     """
     egg_data = PET_EGGS.get(egg_name, {})
     emoji = egg_data.get("emoji", "🥚")
-    rarity_hint = {
-        "Basic Egg":     "Common / Uncommon pets",
-        "Rare Egg":      "Uncommon / Rare / Epic pets",
-        "Legendary Egg": "Epic / Legendary pets 🌟",
+    # Use rarity_label from config if available, else fallback
+    rarity_hint = egg_data.get("rarity_label") or {
+        "Basic Egg":     "Common pets only ⚪",
+        "Rare Egg":      "Rare pets only 🔵",
+        "Legendary Egg": "Legendary pets only 🌟",
     }.get(egg_name, "")
 
     kb = InlineKeyboardMarkup([[
