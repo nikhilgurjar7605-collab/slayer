@@ -26,7 +26,7 @@ from utils.database import (
     clear_status_effects, add_item
 )
 from utils.helpers import get_unlocked_forms, get_level, hp_bar, get_rank
-from utils.guards import dm_only, owner_only_button, no_button_spam
+from utils.guards import dm_only,no_button_spam
 from handlers.pets import (
     roll_wild_pet_encounter, roll_egg_drop, trigger_wild_encounter,
     apply_pet_passives_to_rewards, get_pet_drop_bonus, get_active_pet,
@@ -44,6 +44,7 @@ from utils.effects import (
 )
 from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from handlers.party import get_party_member_ids
+from utils import (send_error)
 
 # ─────────────────────────────────────────────────────────────────────────
 #  IMAGE HELPERS (with safe fallback)
@@ -1163,7 +1164,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown"
                 )
             except Exception as e:
-                pass
+                await send_error(context, e)
 
     hits = form.get('hits', 1)
     total_dmg = 0

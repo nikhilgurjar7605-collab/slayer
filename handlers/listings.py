@@ -21,7 +21,6 @@ def _build_inline_keyboard(items, prefix, cols=2):
     return InlineKeyboardMarkup(buttons)
 
 # ----- Breathing Styles -----
-@owner_only
 async def list_styles(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Owner‑only command that displays all breathing styles as buttons."""
     items = [(style["name"], style["name"]) for style in config.BREATHING_STYLES]
@@ -35,7 +34,6 @@ async def list_styles(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
     )
 
-@owner_only
 async def style_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -51,7 +49,6 @@ async def style_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text(text, parse_mode="Markdown")
 
 # ----- Demon Arts -----
-@owner_only
 async def list_arts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Owner‑only command that displays all demon arts as buttons."""
     items = [(art["name"], art["name"]) for art in config.DEMON_ARTS]
@@ -65,7 +62,6 @@ async def list_arts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
     )
 
-@owner_only
 async def art_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -81,7 +77,6 @@ async def art_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode="Markdown")
 
 # ----- Enemies -----
-@owner_only
 async def list_enemies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Owner‑only command that lists all enemies with buttons for details."""
     items = []
@@ -107,7 +102,6 @@ async def list_enemies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
     )
 
-@owner_only
 async def enemy_info_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
