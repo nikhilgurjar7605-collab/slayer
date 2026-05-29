@@ -236,6 +236,45 @@ def build_encounter_keyboard():
 # ─────────────────────────────────────────────────────────────────────────
 #  YOUR EXISTING HELPER FUNCTIONS (unchanged)
 # ─────────────────────────────────────────────────────────────────────────
+def is_in_battle(user_id) -> bool:
+    state = get_battle_state(user_id)
+    return bool(state and state.get('in_combat'))
+
+def is_in_challenge(user_id) -> bool:
+    try:
+        doc = col("challenges").find_one(
+            {"$or": [{"challenger_id": user_id}, {"target_id": user_id}],
+             "status": "active"}
+        )
+        return doc is not None
+    except Exception:
+        return False
+
+def is_busy(user_id) -> bool:
+    return is_in_battle(user_id) or is_in_challenge(user_id)
+
+async def send_busy_message(send_fn, user_id, parse_mode='Markdown'):
+    if is_in_battle(user_id):
+        state = get_battle_state(user_id)
+        enemy_name = state.get('enemy_name', 'an enemy') if state else 'an enemy'
+        enemy_hp   = state.get('enemy_hp', '?') if state else '?'
+        enemy_max  = state.get('enemy_max_hp', '?') if state else '?'
+        await send_fn(
+            f"⚔️ *BATTLE IN PROGRESS!*\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"You are currently fighting *{enemy_name}*\n"
+            f"❤️ Enemy HP: *{enemy_hp}/{enemy_max}*\n\n"
+            f"_Finish your current battle first!_\n"
+            f"Type `/explore` to unstuck if needed.",
+            parse_mode=parse_mode
+        )
+    elif is_in_challenge(user_id):
+        await send_fn(
+            f"🥊 *CHALLENGE IN PROGRESS!*\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"You are currently in a PvP duel.\n\n"
+            f"_Finish your challenge first before exploring!_",
+            parse_mode=parse_mode
+        )
+
 def get_enemies_for_region(player):
     location = player.get('location', 'asakusa')
     region   = REGION_ENEMIES.get(location)
@@ -501,6 +540,11 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+
+    if is_in_challenge(user_id):
+        await send_photo_message(context, chat_id, "🥊 *CHALLENGE IN PROGRESS!*", "ui", "explore")
+        return
+
     level = get_level(player['xp'])
     location = player.get('location', 'asakusa')
     update_player(user_id, explore_count=player.get('explore_count',0)+1, explores_since_boss=min(20, player.get('explores_since_boss',20)+1))
@@ -581,7 +625,6 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  PRIZE PREVIEW
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -613,7 +656,6 @@ async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  FIGHT (start combat)
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 @no_button_spam
 async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -688,7 +730,6 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  ATTACK (full original logic with UI change)
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 @no_button_spam
 async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -927,7 +968,6 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  TECHNIQUE MENU
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 @no_button_spam
 async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1003,7 +1043,6 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  CHOOSE ART (form list — Pokémon move style)
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1075,7 +1114,6 @@ async def form_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  USE FORM (technique execution)
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1345,7 +1383,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  ITEMS MENU
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1373,7 +1410,6 @@ async def items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  USE ITEM
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1412,7 +1448,6 @@ async def use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  PARTY / ALLY SELECTION
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def party_battle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1470,7 +1505,6 @@ async def party_battle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  SWITCH ALLY
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def switch_ally(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1512,7 +1546,6 @@ async def switch_ally(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 #  DISMISS ALLY
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 async def dismiss_ally_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1542,7 +1575,6 @@ async def ally_fainted_callback(update: Update, context: ContextTypes.DEFAULT_TY
 # ─────────────────────────────────────────────────────────────────────────
 #  FLEE
 # ─────────────────────────────────────────────────────────────────────────
-@owner_only_button
 @no_button_spam
 async def flee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
