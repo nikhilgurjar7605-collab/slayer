@@ -855,24 +855,6 @@ def main():
     app.add_handler(CommandHandler('updates', recent_updates))
     app.add_handler(CallbackQueryHandler(update_callback, pattern=r'^update_'))
 
-# ── Telegram Stars payment handlers ───────────────────────────────────
-async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Single pre-checkout handler for all Stars payments."""
-    query   = update.pre_checkout_query
-    payload = query.invoice_payload
-    if payload.startswith("gifstore_") or payload.startswith("gif_banner_"):
-        await query.answer(ok=True)
-    else:
-        await query.answer(ok=False, error_message="Unknown payment.")
-
-async def _unified_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Route successful payments to the correct handler by payload prefix."""
-    payload = update.message.successful_payment.invoice_payload
-    if payload.startswith("gifstore_"):
-        await gifstore_successful_payment(update, context)
-    elif payload.startswith("gif_banner_"):
-        await banner_successful_payment(update, context)
-
     app.add_handler(PreCheckoutQueryHandler(_unified_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT & filters.ChatType.PRIVATE, _unified_successful_payment))
     app.add_handler(CallbackQueryHandler(callback_router))
@@ -884,6 +866,26 @@ async def _unified_successful_payment(update: Update, context: ContextTypes.DEFA
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
     )
+
+
+# ── Telegram Stars payment handlers ───────────────────────────────────
+async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single pre-checkout handler for all Stars payments."""
+    query   = update.pre_checkout_query
+    payload = query.invoice_payload
+    if payload.startswith("gifstore_") or payload.startswith("gif_banner_"):
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Unknown payment.")
+
+
+async def _unified_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Route successful payments to the correct handler by payload prefix."""
+    payload = update.message.successful_payment.invoice_payload
+    if payload.startswith("gifstore_"):
+        await gifstore_successful_payment(update, context)
+    elif payload.startswith("gif_banner_"):
+        await banner_successful_payment(update, context)
 
 
 if __name__ == '__main__':
