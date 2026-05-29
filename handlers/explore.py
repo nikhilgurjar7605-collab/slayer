@@ -26,7 +26,7 @@ from utils.database import (
     clear_status_effects, add_item
 )
 from utils.helpers import get_unlocked_forms, get_level, hp_bar, get_rank
-from utils.guards import dm_only,no_button_spam
+from utils.guards import dm_only, no_button_spam
 from handlers.pets import (
     roll_wild_pet_encounter, roll_egg_drop, trigger_wild_encounter,
     apply_pet_passives_to_rewards, get_pet_drop_bonus, get_active_pet,
@@ -44,7 +44,18 @@ from utils.effects import (
 )
 from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from handlers.party import get_party_member_ids
-from utils import (send_error)
+from utils import send_error
+
+# ─────────────────────────────────────────────────────────────────────────
+#  CALLBACK DATA HELPERS  (spaces ↔ hyphens)
+# ─────────────────────────────────────────────────────────────────────────
+def _encode(name: str) -> str:
+    """Replace spaces with hyphens for safe Telegram callback_data."""
+    return name.replace(" ", "-")
+
+def _decode(name: str) -> str:
+    """Restore hyphens to spaces when reading callback_data."""
+    return name.replace("-", " ")
 
 # ─────────────────────────────────────────────────────────────────────────
 #  IMAGE HELPERS (with safe fallback)
@@ -59,9 +70,7 @@ def load_image_map() -> Dict[str, Any]:
 IMAGE_MAP = load_image_map()
 
 def get_image_url(category: str, key: str) -> Optional[str]:
-    # Check MongoDB style_images for custom uploads (file_id or url) with case‑insensitive style name
     if key:
-        # Use a regex for case‑insensitive exact match
         doc = col("style_images").find_one({"style_name": {"$regex": f"^{key}$", "$options": "i"}})
         if doc:
             if doc.get("file_id"):
@@ -70,7 +79,6 @@ def get_image_url(category: str, key: str) -> Optional[str]:
                 return doc["url"]
             if doc.get("image"):
                 return doc["image"]
-
     data = IMAGE_MAP.get(category, {})
     if not key:
         return data.get("default", None)
@@ -116,14 +124,7 @@ async def edit_photo_caption(
     reply_markup: Optional[InlineKeyboardMarkup] = None,
     parse_mode: str = 'Markdown'
 ):
-    """
-    Smartly edits a message. If the existing message has a photo (caption),
-    edits the caption. If it's a plain text message, edits the text.
-    Falls back gracefully if the message type doesn't match.
-    """
     url = get_image_url(image_category, image_key)
-
-    # Try caption edit first (photo message), then fall back to text edit
     try:
         await context.bot.edit_message_caption(
             chat_id=chat_id,
@@ -135,16 +136,13 @@ async def edit_photo_caption(
         return
     except BadRequest as e:
         err = str(e).lower()
-        # If message has no photo, fall through to text edit
         if "there is no caption" in err or "message is not modified" in err:
             pass
         elif "message to edit not found" in err:
-            return  # Message deleted, nothing we can do
-        # Any other BadRequest → fall through to text edit
+            return
     except Exception:
         pass
 
-    # Fall back: plain text edit (message has no photo)
     try:
         await context.bot.edit_message_text(
             chat_id=chat_id,
@@ -155,7 +153,7 @@ async def edit_photo_caption(
         )
     except BadRequest as e:
         if "message is not modified" not in str(e).lower():
-            pass  # Silently ignore unmodified; log others if needed
+            pass
     except Exception:
         pass
 
@@ -163,7 +161,6 @@ async def edit_photo_caption(
 #  UI FORMATTING FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────
 def format_hp_bar_poke(current: int, maximum: int, length: int = 10) -> str:
-    """Pokémon-style filled block bar: ██████████"""
     if maximum <= 0:
         return "░" * length
     percent = max(0.0, min(1.0, current / maximum))
@@ -171,7 +168,6 @@ def format_hp_bar_poke(current: int, maximum: int, length: int = 10) -> str:
     return "█" * filled + "░" * (length - filled)
 
 def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_lines: List[str] = None, turn: int = None) -> str:
-    """Pokémon-style battle HUD."""
     enemy_hp_bar  = format_hp_bar_poke(state['enemy_hp'], state['enemy_max_hp'])
     player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
 
@@ -343,12 +339,11 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         if context and context.user_data.get(f'pet_low_hp_boost_{user_id}'):
             _boost = context.user_data.pop(f'pet_low_hp_boost_{user_id}')
             dmg = int(dmg * (1 + _boost))
-            
-    # Potential Tier damage boost (5% per Tier)
+
     tier = player.get('potential_tier', 0)
     if tier > 0:
         dmg = int(dmg * (1 + tier * 0.05))
-        
+
     return dmg
 
 def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None):
@@ -374,12 +369,11 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
         bonuses = get_active_skill_bonuses(owned_skills, user_id=user_id, used_once=used_once)
         if 'dmg_reduce' in bonuses:
             dmg = max(1, int(dmg * (1 - bonuses['dmg_reduce'])))
-            
-    # Potential Tier damage reduction (3% reduction per Tier)
+
     tier = player.get('potential_tier', 0)
     if tier > 0:
         dmg = max(1, int(dmg * (1 - tier * 0.03)))
-        
+
     return dmg
 
 def _safe_get_skills(user_id):
@@ -533,14 +527,11 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     player = get_player(user_id)
     if not player or player.get('banned'):
-        # Safely handle reply when there is no callback query
         if is_callback:
             await query.message.reply_text("❌ Character not found.")
         else:
             await update.message.reply_text("❌ Character not found.")
         return
-
-
 
     if is_in_challenge(user_id):
         await send_photo_message(context, chat_id, "🥊 *CHALLENGE IN PROGRESS!*", "ui", "explore")
@@ -548,12 +539,11 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     level = get_level(player['xp'])
     location = player.get('location', 'asakusa')
-    update_player(user_id, explore_count=player.get('explore_count',0)+1, explores_since_boss=min(20, player.get('explores_since_boss',20)+1))
+    update_player(user_id, explore_count=player.get('explore_count', 0) + 1, explores_since_boss=min(20, player.get('explores_since_boss', 20) + 1))
     player = get_player(user_id)
     enemy_template = get_enemies_for_region(player)
     enemy = dict(enemy_template)
 
-    # Scaling (your original logic)
     if enemy.get('yoriichi'):
         from config import _yoriichi_hp_for_level
         enemy['hp'] = _yoriichi_hp_for_level(level)
@@ -579,7 +569,6 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_battle_state(user_id, enemy, in_combat=False)
 
-    # Wild pet
     if not enemy.get('is_boss'):
         wild = roll_wild_pet_encounter(location)
         if wild:
@@ -831,14 +820,12 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await handle_victory(query, user_id, player, state_fresh, log, context)
             return
 
-    # ── Pet combat contribution ──────────────────────────────────────────────
     active_pet = get_active_pet(user_id)
     if active_pet and current_enemy_hp > 0:
         from config import PETS, PET_EVOLUTIONS
         pet_name = active_pet["name"]
         pet_cfg = PET_EVOLUTIONS.get(pet_name) or PETS.get(pet_name, {})
         bond_level = active_pet.get("bond_level", 0)
-        # Base pet damage: scales with bond 0→3 dmg, 1→5, 2→8, 3→12, 4→18
         pet_base = [3, 5, 8, 12, 18][min(bond_level, 4)]
         pet_atk_bonus = get_pet_passives(user_id).get("atk_pct", 0)
         pet_dmg = int(pet_base * (1 + pet_atk_bonus))
@@ -846,14 +833,13 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_battle_enemy_hp(user_id, current_enemy_hp)
         emoji = pet_cfg.get("emoji", "🐾")
         log.append(f"{emoji} {pet_name} bites in - {pet_dmg} damage!")
-        # Gain bond XP per battle contribution
         from handlers.pets import add_pet_bond_xp
         add_pet_bond_xp(user_id, pet_name, 5)
         if current_enemy_hp <= 0:
             state_fresh = get_battle_state(user_id)
             await handle_victory(query, user_id, player, state_fresh, log, context)
             return
-    # ────────────────────────────────────────────────────────────────────────
+
     context.user_data['_counter_ready'] = bonuses.get('counter_chance', 0)
     ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = current_enemy_hp
@@ -992,7 +978,6 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bonuses      = _safe_get_bonuses(user_id, context)
     has_multi    = bonuses.get('multi_art', False)
 
-    # Build art list for display text
     art_entries = [f"{player['style_emoji']} {player['style']}"]
     for art in arts:
         art_entries.append(f"{art['art_emoji']} {art['art_name']} ✨")
@@ -1005,28 +990,28 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     moves_text = "\n".join(f"• {e}" for e in art_entries)
 
-    # Buttons — one per art style
+    # Build buttons — encode spaces as hyphens in callback_data
     buttons = [[InlineKeyboardButton(
         f"{player['style_emoji']} {player['style']}",
-        callback_data=f"art_{player['style']}"
+        callback_data=f"art_{_encode(player['style'])}"
     )]]
     for art in arts:
         buttons.append([InlineKeyboardButton(
             f"{art['art_emoji']} {art['art_name']} ✨",
-            callback_data=f"art_{art['art_name']}"
+            callback_data=f"art_{_encode(art['art_name'])}"
         )])
     if player.get('hybrid_style'):
         hs = player['hybrid_style']
         he = player.get('hybrid_emoji', '⚡')
         buttons.append([InlineKeyboardButton(
             f"{he} {hs} ⚡Hybrid",
-            callback_data=f"art_{hs}"
+            callback_data=f"art_{_encode(hs)}"
         )])
     if scroll_arts and (has_multi or not arts):
         for sart in scroll_arts[:2]:
             buttons.append([InlineKeyboardButton(
                 f"📜 {sart} (Scroll)",
-                callback_data=f"art_{sart}"
+                callback_data=f"art_{_encode(sart)}"
             )])
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data='fight')])
 
@@ -1040,23 +1025,22 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-
 # ─────────────────────────────────────────────────────────────────────────
-#  CHOOSE ART (form list — Pokémon move style)
+#  CHOOSE ART (form list)
 # ─────────────────────────────────────────────────────────────────────────
 async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     player = get_player(user_id)
-    art_name = query.data[4:].replace("_", " ")
+    # Decode hyphens back to spaces
+    art_name = _decode(query.data[4:])
     level = get_level(player['xp'])
     forms = get_unlocked_forms(art_name, level, player.get('rank'), player.get('faction'))
     if not forms:
         await query.answer("No forms unlocked for this art!", show_alert=True)
         return
 
-    # Build Pokémon move-card style text listing all forms
     lines = [f"💨 *{art_name.upper()}*\n", "*Moves :*"]
     for form in forms:
         lines.append(
@@ -1066,15 +1050,14 @@ async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     moves_text = "\n".join(lines)
 
-    # One button per form
+    # Encode art_name AND form name in callback — use art_name only (form num is safe)
     buttons = []
     for form in forms:
-        safe_art = art_name.replace(" ", "_")
         buttons.append([InlineKeyboardButton(
             f"F{form['form']} · {form['name']}  [{form['dmg_min']}-{form['dmg_max']} DMG | {form['sta_cost']} STA]",
-            callback_data=f"form_{safe_art}_{form['form']}"
+            callback_data=f"form_{_encode(art_name)}_{form['form']}"
         )])
-    buttons.append([InlineKeyboardButton("📖 Details", callback_data=f"forminfo_{safe_art}")])
+    buttons.append([InlineKeyboardButton("📖 Details", callback_data=f"forminfo_{_encode(art_name)}")])
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data='technique')])
 
     await edit_photo_caption(
@@ -1094,7 +1077,8 @@ async def form_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
     player = get_player(user_id)
-    art_name = query.data[9:].replace("_", " ")
+    # "forminfo_Love-Breathing" → "Love Breathing"
+    art_name = _decode(query.data[9:])
     level = get_level(player['xp'])
     forms = get_unlocked_forms(art_name, level, player.get('rank'), player.get('faction'))
     lines = [f"📖 *{art_name.upper()} — ALL FORMS*\n"]
@@ -1103,7 +1087,7 @@ async def form_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✨ *Form {form['form']} — {form['name']}*\n"
             f"   💥 DMG: {form['dmg_min']}-{form['dmg_max']} | 🌀 STA: {form['sta_cost']}\n"
         )
-    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"art_{art_name.replace(' ', '_')}")]]
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"art_{_encode(art_name)}")]]
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
         text='\n'.join(lines),
@@ -1125,8 +1109,9 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not state or not state.get('in_combat'):
         await edit_photo_caption(context, query.message.chat_id, query.message.message_id, "No active battle.", "ui", "explore")
         return
+    # "form_Love-Breathing_3" → art_name="Love Breathing", form_num=3
     parts = query.data.split('_', 2)
-    art_name = parts[1].replace("_", " ")
+    art_name = _decode(parts[1])
     form_num = int(parts[2])
     all_forms = TECHNIQUES.get(art_name, [])
     form = next((f for f in all_forms if f['form'] == form_num), None)
@@ -1151,7 +1136,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log = []
     log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
 
-    # Dynamic Form reply image support
     form_image_doc = col("style_images").find_one({"style_name": form["name"]})
     if form_image_doc:
         p_img = form_image_doc.get("file_id") or form_image_doc.get("url") or form_image_doc.get("image")
@@ -1252,7 +1236,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await handle_victory(query, user_id, player, get_battle_state(user_id), log, context)
             return
 
-    # ── Pet combat contribution (technique turn) ─────────────────────────────
     _pet_doc = get_active_pet(user_id)
     if _pet_doc and current_hp > 0:
         from config import PETS as _PETS, PET_EVOLUTIONS as _PET_EVO
@@ -1267,11 +1250,11 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _pemoji = _pcfg.get("emoji", "🐾")
         log.append(f"{_pemoji} {_pname} assists the technique - {_pdmg} damage!")
         from handlers.pets import add_pet_bond_xp as _apbx
-        _apbx(user_id, _pname, 8)  # Technique turns give more bond XP
+        _apbx(user_id, _pname, 8)
         if current_hp <= 0:
             await handle_victory(query, user_id, player, get_battle_state(user_id), log, context)
             return
-    # ─────────────────────────────────────────────────────────────────────────
+
     ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = current_hp
     ctx['enemy_max_hp'] = state.get('enemy_max_hp', state.get('enemy_hp', 1000))
@@ -1435,12 +1418,11 @@ async def use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     remove_item(user_id, item_name)
     player = get_player(user_id)
     state = get_battle_state(user_id)
-    log_text = '\n'.join(log)
     turn = context.user_data.get('turn', 1)
     status_text = combat_status(player, state, ally, log_lines=log, turn=turn)
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
-        text=f"📜 *COMBAT LOG*\n\n{log_text}\n\n{status_text}",
+        text=f"📜 *COMBAT LOG*\n\n{chr(10).join(log)}\n\n{status_text}",
         image_category="items",
         image_key=item_name,
         reply_markup=build_combat_keyboard(has_ally=bool(ally)),
@@ -1685,7 +1667,6 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         sta=bonus_maxsta,
         skill_points=player.get('skill_points', 0) + sp_gained
     )
-    from utils.database import add_item
     _loc = player.get('location', 'asakusa')
     _zone = next((z for z in TRAVEL_ZONES if z['id'] == _loc), TRAVEL_ZONES[0])
     _region_label = f"{_zone.get('emoji', '')} {_zone['name']}"
@@ -1713,7 +1694,6 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     if state.get('is_boss'):
         add_item(user_id, 'Boss Shard', 'material')
         drop_lines.append(f"🔸 Boss Shard _(found in {_region_label})_")
-    # Devour system
     faction = player.get('faction', 'slayer')
     enemy_faction_type = state.get('faction_type', '')
     devour_msg = ""
@@ -1744,7 +1724,6 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         context.user_data.pop('_counter_ready', None)
     if state.get('is_boss'):
         update_player(user_id, explores_since_boss=0)
-    # Build result string
     result = (
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"☀️ *VICTORY!*\n"
@@ -1782,7 +1761,6 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         elif new_level % 3 == 0:
             add_item(user_id, "Wisteria Antidote", "item")
             result += f"   🌿 *Level bonus:* Wisteria Antidote!\n"
-    # Mission tracking (simplified – keep your existing code)
     player_now = get_player(user_id)
     if player_now.get('active_mission'):
         try:
@@ -1806,8 +1784,10 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         add_clan_xp(player_now['clan_id'], clan_xp_gain)
         drops_list = state.get('drops', [])
         if isinstance(drops_list, str):
-            try: drops_list = json.loads(drops_list)
-            except: drops_list = []
+            try:
+                drops_list = json.loads(drops_list)
+            except Exception:
+                drops_list = []
         if drops_list and random.random() < 0.30:
             add_to_clan_treasury(player_now['clan_id'], drops_list[0], 1)
     append_battle_log(user_id, log)
@@ -1823,7 +1803,7 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     )
 
 # ─────────────────────────────────────────────────────────────────────────
-#  DEFEAT (with clean UI)
+#  DEFEAT
 # ─────────────────────────────────────────────────────────────────────────
 async def handle_defeat(query, user_id, player, log, context=None):
     if context and context.user_data.get(f'pet_rebirth_{user_id}'):
