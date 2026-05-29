@@ -38,7 +38,10 @@ from telegram.ext import (
     ConversationHandler, filters, ContextTypes, PreCheckoutQueryHandler
 )
 from config import BOT_TOKEN, OWNER_ID
-from utils.database import init_db, get_player, col
+from utils.guards import dm_only, owner_only, owner_only_button
+from apscheduler.schedulers.background import BackgroundScheduler
+from handlers.missions import register_missions, refresh_missions_job
+from utils.database import get_player, col, init_db
 from handlers.start import (start, get_name, choose_faction, choose_story,
                             WAITING_NAME, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
@@ -133,7 +136,7 @@ from handlers.style_art import breathing, art, givestyle, giveart
 from handlers.guide import guide, guide_page_callback, guide_home_callback
 from handlers.suggest import suggest, suggestions, suggestion_action_callback
 from handlers.sqlview import sqlview
-from handlers.info_cmd import info, infoall, view_suggestion
+from handlers.info_cmd import info, infoall, view_suggestion, mytechnique, myart, setstyleimage
 from handlers.know import know, know_callback
 from handlers.give import give
 from handlers.event import event_cmd, events, eventend, eventlist, event_callback
@@ -155,7 +158,14 @@ from handlers.maintenance import (
 from handlers.upgrade import upgrade, upgradetoggle, upgrade_confirm_callback
 from handlers.hybrid import hybrid, demonmark, hybridtoggle
 from handlers.offer import offers, offer_buy_callback, addoffer
+from handlers.broadcast import bcast, handle_broadcast_callback, announce_changes
+from handlers.style_art import breathing, art, givestyle, giveart
 from handlers.imgupload import setimage, listimages
+from handlers.update import update_command, update_callback, recent_updates
+from handlers.forge import forge_command, forge_callback
+from handlers.pettrade import pettrade, petoffer, petaccept
+
+from handlers.meditate import meditate, meditate_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
 
@@ -398,6 +408,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'travel_locked',
         'travel_to_',
         'goto_start',
+        'mkt_sel_',
     )
     is_cross = any(data.startswith(p) or data == p for p in cross_user)
 
@@ -434,6 +445,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data in routes:
         await routes[data](update, context)
+    elif data.startswith('mkt_sel_'):
+        from handlers.market import cb_market_seller
+        await cb_market_seller(update, context)
     elif data.startswith('art_'):          await choose_art(update, context)
     elif data.startswith('form_'):         await use_form(update, context)
     elif data.startswith('forminfo_'):     await form_info(update, context)
@@ -643,6 +657,9 @@ def main():
         ('know',            know),
         ('infoall',         infoall),
         ('is',              view_suggestion),
+        ('mytechnique',     mytechnique),
+        ('myart',           myart),
+        ('setstyleimage',   setstyleimage),
         ('upgrade',         upgrade),
         ('hybrid',          hybrid),
         ('re_hybrid',       rehybrid),
@@ -650,6 +667,7 @@ def main():
         ('addoffer',        addoffer),
         ('setimage',        setimage),
         ('listimages',      listimages),
+        ('meditate',        meditate),
         ('upgradetoggle',   upgradetoggle),
         ('hybridtoggle',    hybridtoggle),
         ('clan_list',       clan_list),
@@ -698,7 +716,11 @@ def main():
         ('removesudo',      removesudo),
         ('listadmins',      listadmins),
         ('add',             add),
-        ('announce',        bcast),
+        ('announce',        announce),
+        ('pettrade',       pettrade),
+        ('petoffer',      petoffer),
+        ('petaccept',     petaccept),
+
         ('bcast',           bcast),
         ('ban',             ban),
         ('unban',           unban),
@@ -811,25 +833,45 @@ def main():
     app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
     # ── group=1: these must never be swallowed by the ConvHandler fallback ──
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'), group=1)
-    app.add_handler(CallbackQueryHandler(gifstore_page_callback,   pattern=r'^gifstore_page_\d+$'),          group=1)
+    app.add_handler(CallbackQueryHandler(gifstore_page_callback,   pattern=r'^gifstore_page_\\d+$'),          group=1)
+    # ── Meditate callback handler ──
+    app.add_handler(CallbackQueryHandler(meditate_callback, pattern=r'^meditate_'), group=1)
 
-    # ── Telegram Stars payment handlers ───────────────────────────────────
-    async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Single pre-checkout handler for all Stars payments."""
-        query   = update.pre_checkout_query
-        payload = query.invoice_payload
-        if payload.startswith("gifstore_") or payload.startswith("gif_banner_"):
-            await query.answer(ok=True)
-        else:
-            await query.answer(ok=False, error_message="Unknown payment.")
+    # Command registration block moved into main()
+    # Register owner-only listings commands via helper
+    from handlers.listings import register_owner_listings
+    register_owner_listings(app)
+    # Register missions command
+    register_missions(app)
+    
+    # Start APScheduler to refresh missions daily at midnight UTC
+    scheduler = BackgroundScheduler()
+    # Schedule job at 00:00 UTC daily
+    scheduler.add_job(refresh_missions_job, 'cron', hour=0, minute=0, timezone='UTC')
+    scheduler.start()
+    # Ensure forge and updates are added only once
+    app.add_handler(CommandHandler('forge', forge_command))
+    app.add_handler(CallbackQueryHandler(forge_callback, pattern=r'^forge_'))
+    app.add_handler(CommandHandler('updates', recent_updates))
+    app.add_handler(CallbackQueryHandler(update_callback, pattern=r'^update_'))
 
-    async def _unified_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Route successful payments to the correct handler by payload prefix."""
-        payload = update.message.successful_payment.invoice_payload
-        if payload.startswith("gifstore_"):
-            await gifstore_successful_payment(update, context)
-        elif payload.startswith("gif_banner_"):
-            await banner_successful_payment(update, context)
+# ── Telegram Stars payment handlers ───────────────────────────────────
+async def _unified_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Single pre-checkout handler for all Stars payments."""
+    query   = update.pre_checkout_query
+    payload = query.invoice_payload
+    if payload.startswith("gifstore_") or payload.startswith("gif_banner_"):
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Unknown payment.")
+
+async def _unified_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Route successful payments to the correct handler by payload prefix."""
+    payload = update.message.successful_payment.invoice_payload
+    if payload.startswith("gifstore_"):
+        await gifstore_successful_payment(update, context)
+    elif payload.startswith("gif_banner_"):
+        await banner_successful_payment(update, context)
 
     app.add_handler(PreCheckoutQueryHandler(_unified_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT & filters.ChatType.PRIVATE, _unified_successful_payment))

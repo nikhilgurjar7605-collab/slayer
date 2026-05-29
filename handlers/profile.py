@@ -146,6 +146,9 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ])
 
+    stars = player.get("stars", 0)
+    stars_str = f"┣ ✮ 𝙎𝙩𝙖𝙧𝙨 : {stars} ⭐\n" if stars > 0 else ""
+
     text = (
         f"┏━━━━━━━━━━━━━━━━\n"
         f"┣ ✮ 𝙉𝙖𝙢𝙚 : {uname_display}\n"
@@ -154,6 +157,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"┣ ✮ 𝙀𝙭𝙥 : {player['xp']:,}\n"
         f"┣ ✮ 𝙍𝙖𝙣𝙠 : {player['rank']} {player['rank_kanji']}\n"
         f"┣ ✮ 𝙎𝙩𝙮𝙡𝙚 : {player['style_emoji']} {player['style']}\n"
+        f"{stars_str}"
         #f"┣ ✮ 𝘽𝙖𝙡𝙖𝙣𝙘𝙚 : {player['yen']:,}¥\n"
         f"┗━━━━━━━━━━━━━━━━\n"
         f"╰➤🧭 𝘾𝙪𝙧𝙧𝙚𝙣𝙩 𝙇𝙤𝙘𝙖𝙩𝙞𝙤𝙣 : 「{location}」\n"
@@ -175,15 +179,35 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     banner_media, banner_is_gif = _profile_banner_media(player)
     if banner_media:
+        if update.callback_query:
+            try:
+                # Edit the existing message's caption instead of sending a new one
+                await update.callback_query.edit_message_caption(caption=text[:1024], parse_mode='HTML', reply_markup=keyboard)
+                return
+            except Exception as e:
+                log.error("[PROFILE] failed to edit caption: %s", e)
+                # Fallback to sending a new message if editing fails
+
         target_msg = update.callback_query.message if update.callback_query else update.message
-        if banner_is_gif:
-            await target_msg.reply_animation(banner_media, caption=text[:1024], parse_mode=None, reply_markup=keyboard)
-        else:
-            await target_msg.reply_photo(banner_media, caption=text[:1024], parse_mode=None, reply_markup=keyboard)
-    elif update.callback_query:
-        await update.callback_query.edit_message_text(text, parse_mode=None, reply_markup=keyboard)
+        try:
+            if banner_is_gif:
+                await target_msg.reply_animation(banner_media, caption=text[:1024], parse_mode='HTML', reply_markup=keyboard)
+            else:
+                await target_msg.reply_photo(banner_media, caption=text[:1024], parse_mode='HTML', reply_markup=keyboard)
+            return
+        except Exception as e:
+            log.error("[PROFILE] Failed to send banner media: %s. Falling back to plain text.", e)
+            col("players").update_one(
+                {"user_id": user_id},
+                {"$unset": {"profile_banner_url": "", "profile_banner_file_id": "", "profile_banner_gif_id": ""}}
+            )
+            text += "\n\n⚠️ <i>Your custom banner URL was invalid/unreachable and has been removed. Please set a valid direct image URL.</i>"
+
+    # Plain text fallback
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
     else:
-        await update.message.reply_text(text, parse_mode=None, reply_markup=keyboard)
+        await update.message.reply_text(text, parse_mode='HTML', reply_markup=keyboard)
 
 
 async def profile_techniques(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -234,6 +258,18 @@ async def profile_more_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p_bar = hp_bar(player['hp'],  player['max_hp'])
     s_bar = hp_bar(player['sta'], player['max_sta'])
 
+    tier = player.get('potential_tier', 0)
+    tier_label = ""
+    if tier > 0:
+        titles = {
+            1: "🌟 Tier I",
+            2: "✨ Tier II",
+            3: "💎 Tier III",
+            4: "🌌 Tier IV",
+            5: "👑 Tier V",
+        }
+        tier_label = f"  ({titles.get(tier, f'🔥 Tier {tier}')})"
+
     text = (
         f"📊 *DETAILED STATS — {player['name'].upper()}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -243,7 +279,7 @@ async def profile_more_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💪  STR:       *{player['str_stat']}*\n"
         f"⚡  SPD:       *{player['spd']}*\n"
         f"🛡️  DEF:       *{player['def_stat']}*\n"
-        f"🔮  Potential: *{player.get('potential', 0)}%*\n"
+        f"🔮  Potential: *{player.get('potential', 0)}%*{tier_label}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚔️  Sword:     _{player.get('equipped_sword','None')}_"
         + (_sword_buff(player.get('equipped_sword',''))) + "\n"
@@ -416,6 +452,13 @@ async def banner_successful_payment(update: Update, context: ContextTypes.DEFAUL
     _save_banner_request(user_id, file_id=None, url=None, gif_file_id=gif_file_id)
     context.user_data.pop("pending_gif_file_id", None)
     log.info("[SETBANNER] GIF banner payment ok, request saved: user_id=%s", user_id)
+
+    # Credit Stars to the Owner's account in database
+    col("players").update_one(
+        {"user_id": OWNER_ID},
+        {"$inc": {"stars": GIF_BANNER_STAR_COST}}
+    )
+    log.info("[SETBANNER] Credited %s stars to owner %s", GIF_BANNER_STAR_COST, OWNER_ID)
 
     await _notify_approval_chat(context, user_id, player, file_id=None, url=None, gif_file_id=gif_file_id)
 

@@ -29,7 +29,7 @@ from utils.database import col, get_player, update_player
 from utils.helpers import get_level
 from utils.guards import dm_only
 
-DEFAULT_SP_PRICE = 25_000
+DEFAULT_SP_PRICE = 10_000
 DEPOSIT_YEN_RATE = 1.00
 DEPOSIT_DAILY_CAP = 10
 WITHDRAW_DAILY_CAP = 100

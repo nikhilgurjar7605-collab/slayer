@@ -186,3 +186,33 @@ async def handle_broadcast_callback(update: Update, context: ContextTypes.DEFAUL
     broadcast_reply_cache.pop(admin_id, None)
     markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Broadcast", callback_data=f"cancel_broadcast:{broadcast_id}")]])
     await query.edit_message_text("⏳ Broadcast initiated...", reply_markup=markup)
+async def announce_changes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Broadcast a preset summary of recent platform changes.
+    This command is admin‑only and uses the same broadcast infrastructure.
+    """
+    if not has_admin_access(update.effective_user.id):
+        return
+    # Summary of recent changes (keep concise for broadcast)
+    summary = (
+        "✨ *Slayer RPG – Recent Enhancements*\n"
+        "\n"
+        "• UI/UX overhaul – all techniques and styles now render as a single rich message.\n"
+        "• Meditation system – gain *potential* and unlock Ascension tiers for permanent stat boosts.\n"
+        "• Pet integration – active pets deal damage in combat, grant bonuses, and can be traded.\n"
+        "• Reset command – fully clears pets, arts, missions, logs, cooldowns and clan membership.\n"
+        "• New commands – /meditate, /pettrade, /petoffer, /petaccept and broadcast via /announce."
+    )
+    # Use direct_text mode to broadcast the summary to all users
+    broadcast_id = _start_broadcast(
+        context,
+        update.effective_chat.id,
+        "direct_text",
+        {"text": summary},
+    )
+    # Provide a cancel button for the admin
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancel Broadcast", callback_data=f"cancel_broadcast:{broadcast_id}")]
+    ])
+    await update.message.reply_text("⏳ Announcement broadcast initiated...", reply_markup=markup)
+
+# End of file

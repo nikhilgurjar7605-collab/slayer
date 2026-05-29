@@ -139,8 +139,14 @@ TECHNIQUES = {
          "desc": "Self-heal, stamina recovery, and cleanses 1 bleed stack."},
         {"form": 6,  "name": "Whirlpool",           "dmg_min": 46, "dmg_max": 48,  "sta_cost": 40, "type": "control",   "effect": "flow_control",  "unlock_rank": "Kinoe",
          "desc": "Staggers 1 action; removes enemy dodge/escape capabilities."},
+        {"form": 7,  "name": "Drop Ripple Thrust",  "dmg_min": 50, "dmg_max": 58,  "sta_cost": 45, "type": "piercing",  "effect": "stagger_chance", "unlock_rank": "Kinoe",
+         "desc": "Lightning-fast thrust — ignores 15% of enemy DEF; 35% Stagger chance."},
+        {"form": 8,  "name": "Waterfall Basin",     "dmg_min": 52, "dmg_max": 62,  "sta_cost": 50, "type": "sustain",   "effect": "regen_apply",    "unlock_rank": "Kinoe",
+         "desc": "Towering downpour slash — heals 8% HP and cleanses 2 debuffs."},
         {"form": 10, "name": "Constant Flux",       "dmg_min": 57, "dmg_max": 64,  "sta_cost": 60, "type": "finisher",  "effect": "flow_finisher", "unlock_rank": "Hashira",
          "desc": "60% power raw. Full power only if Sustain + Defensive forms were used prior."},
+        {"form": 11, "name": "Dead Calm",           "dmg_min": 68, "dmg_max": 80,  "sta_cost": 70, "type": "ultimate",  "effect": "freeze_apply",  "unlock_rank": "Hashira",
+         "desc": "Perfect stillness — negates all incoming attacks this turn; massive counter strike."},
     ],
     "Flame Breathing": [
         {"form": 1, "name": "Unknowing Fire",            "dmg_min": 34, "dmg_max": 48,  "sta_cost": 15, "type": "opener",    "effect": "burn_apply",   "burn_chance": 90,
@@ -151,6 +157,14 @@ TECHNIQUES = {
          "desc": "Higher crit pressure if used after another Flame form."},
         {"form": 4, "name": "Blooming Flame Undulation", "dmg_min": 41, "dmg_max": 54,  "sta_cost": 30, "type": "punish",    "effect": "burn_punish",   "unlock_rank": "Kinoe",
          "desc": "Removes combo stack; reduces next incoming attack dmg by 20%."},
+        {"form": 5, "name": "Flame Tiger",               "dmg_min": 46, "dmg_max": 58,  "sta_cost": 38, "type": "barrage",   "hits": 2, "effect": "burn_apply",  "unlock_rank": "Kinoe",
+         "desc": "Twin fire-tiger strikes — both hits apply Burn; bonus if target already Burning."},
+        {"form": 6, "name": "Enma Flames",               "dmg_min": 52, "dmg_max": 63,  "sta_cost": 48, "type": "control",   "effect": "exhaust_apply",  "unlock_rank": "Kinoe",
+         "desc": "Hellfire pressure — Exhausts enemy, halving their STA recovery for 2 turns."},
+        {"form": 7, "name": "Phoenix Waltz",             "dmg_min": 55, "dmg_max": 66,  "sta_cost": 55, "type": "sustain",   "effect": "regen_apply",    "unlock_rank": "Hashira",
+         "desc": "Rising from the ashes — self-heal 10% HP + cleanses Burn from self."},
+        {"form": 8, "name": "Purgatory Eighth Form",     "dmg_min": 62, "dmg_max": 76,  "sta_cost": 62, "type": "barrage",   "hits": 3, "effect": "burn_apply",  "unlock_rank": "Hashira",
+         "desc": "Triple inferno strike — guaranteed Burn on all hits; destroys 25% enemy STA."},
         {"form": 9, "name": "Rengoku",                   "dmg_min": 58, "dmg_max": 71, "sta_cost": 65, "type": "finisher",  "effect": "burn_execute",  "unlock_rank": "Hashira",
          "desc": "Extra damage if target below 50% HP and Burning."},
     ],
@@ -162,6 +176,12 @@ TECHNIQUES = {
          "desc": "+1 Bleed stack; extends bleed duration; halves enemy dodge/escape."},
         {"form": 3, "name": "Scarlet Torrent", "dmg_min": 44, "dmg_max": 59, "sta_cost": 38, "type": "finisher", "effect": "bleed_payoff",
          "desc": "Bonus dmg per Bleed stack; self-heal; stamina refund; stagger chance."},
+        {"form": 4, "name": "Sanguine Ward",   "dmg_min": 48, "dmg_max": 52, "sta_cost": 28, "type": "defensive", "effect": "bleed_sustain", "unlock_rank": "Lower Moon 6",
+         "desc": "Form shield of blood — converts active bleed ticks into a personal shield."},
+        {"form": 5, "name": "Haemokinesis Burst", "dmg_min": 58, "dmg_max": 68, "sta_cost": 42, "type": "barrage", "hits": 2, "unlock_rank": "Lower Moon 4",
+         "desc": "Explosive twin streams — high damage, stacks bleed twice."},
+        {"form": 6, "name": "Heart Stopper",    "dmg_min": 78, "dmg_max": 95, "sta_cost": 60, "type": "ultimate", "effect": "bleed_payoff", "unlock_rank": "Lower Moon 2",
+         "desc": "Ultimate payoff — consumes all active bleed stacks for a devastating cardiac blow."},
     ],
 
     # ── NEW BREATHING STYLES ──────────────────────────────────────────────
@@ -208,7 +228,7 @@ TECHNIQUES = {
 
     # ── EXPANDED FORMS ────────────────────────────────────────────────────
 
-    # Thunder Breathing (add Forms 5, 7)
+    # Thunder Breathing
     "Thunder Breathing": [
         {"form": 1, "name": "Thunderclap and Flash",     "dmg_min": 40, "dmg_max": 52, "sta_cost": 20, "type": "opener",
          "desc": "Blinding speed strike — 20% chance to Stun enemy."},
@@ -216,15 +236,19 @@ TECHNIQUES = {
          "desc": "Two rapid slashes — each hit stacks pressure."},
         {"form": 3, "name": "Thunder Swarm",             "dmg_min": 35, "dmg_max": 40, "sta_cost": 22, "type": "barrage", "hits": 3,
          "desc": "Three rapid hits — deals bonus damage against stunned enemies."},
+        {"form": 4, "name": "Distant Thunder",           "dmg_min": 44, "dmg_max": 56, "sta_cost": 28, "type": "control",
+         "desc": "Charged stance — buffs own SPD +20% and deals pre-emptive chip damage."},
         {"form": 5, "name": "Heat Lightning",            "dmg_min": 48, "dmg_max": 62, "sta_cost": 32, "type": "punish",  "unlock_rank": "Kinoe",
          "desc": "Unleashes lightning pressure — reduces enemy SPD for 2 turns."},
         {"form": 6, "name": "Rumble and Flash",          "dmg_min": 56, "dmg_max": 62, "sta_cost": 45, "type": "finisher","unlock_rank": "Kinoe",
          "desc": "Thunder + speed combo — 40% Stun chance on hit.", "effect": "stun_chance"},
-        {"form": 7, "name": "Honoikazuchi no Kami",      "dmg_min": 66, "dmg_max": 84,"sta_cost": 65, "type": "ultimate","unlock_rank": "Hashira",
+        {"form": 7, "name": "Honoikazuchi no Kami",      "dmg_min": 66, "dmg_max": 84, "sta_cost": 65, "type": "ultimate","unlock_rank": "Hashira",
          "desc": "God of Thunder — guaranteed Stun + massive lightning damage.", "effect": "stun_apply"},
+        {"form": 8, "name": "Thundergod's Wrath",        "dmg_min": 75, "dmg_max": 92, "sta_cost": 75, "type": "ultimate", "hits": 2, "unlock_rank": "Hashira",
+         "desc": "Twin divine lightning strikes — both guaranteed Stun; second hit deals 150% damage.", "effect": "stun_apply"},
     ],
 
-    # Wind Breathing (add Forms 4-7)
+    # Wind Breathing
     "Wind Breathing": [
         {"form": 1, "name": "Dust Whirlwind Cutter",     "dmg_min": 35, "dmg_max": 48, "sta_cost": 18, "type": "opener",
          "desc": "Wide slashing arc — hits all (single target in bot)."},
@@ -236,11 +260,15 @@ TECHNIQUES = {
          "desc": "Ascending storm — bonus damage if used after Form 3."},
         {"form": 5, "name": "Gale Storm Slash",          "dmg_min": 48, "dmg_max": 62, "sta_cost": 35, "type": "barrage", "hits": 3, "unlock_rank": "Kinoe",
          "desc": "Three-hit storm barrage — each hit deals wind pressure damage."},
-        {"form": 9, "name": "Idaten Typhoon",            "dmg_min": 59, "dmg_max": 73,"sta_cost": 60, "type": "ultimate","unlock_rank": "Hashira",
-         "desc": "God of Wind — hurricane damage with 50% Exhaust.", "effect": "exhaust_apply"},
+        {"form": 6, "name": "Black Wind Mountain Mist",  "dmg_min": 54, "dmg_max": 66, "sta_cost": 44, "type": "evasive",  "unlock_rank": "Kinoe",
+         "desc": "Shroud self in wind — +25% dodge and Exhausts enemy if they miss.", "effect": "exhaust_chance"},
+        {"form": 7, "name": "Anchoring Gust",            "dmg_min": 62, "dmg_max": 76, "sta_cost": 52, "type": "control",  "unlock_rank": "Hashira",
+         "desc": "Tornado anchor — immobilises enemy for 1 turn; removes all their buffs.", "effect": "stagger_apply"},
+        {"form": 9, "name": "Idaten Typhoon",            "dmg_min": 72, "dmg_max": 88, "sta_cost": 68, "type": "ultimate", "unlock_rank": "Hashira",
+         "desc": "God of Wind — hurricane damage with guaranteed Exhaust.", "effect": "exhaust_apply"},
     ],
 
-    # Stone Breathing (add Forms 3-7)
+    # Stone Breathing
     "Stone Breathing": [
         {"form": 1, "name": "Serpentinite Bipolar",      "dmg_min": 45, "dmg_max": 46, "sta_cost": 20, "type": "opener",
          "desc": "Two-direction split strike — high base damage."},
@@ -252,11 +280,13 @@ TECHNIQUES = {
          "desc": "Massive impact — 35% chance to Stagger enemy.", "effect": "stagger_chance"},
         {"form": 5, "name": "Arcs of Justice",          "dmg_min": 60, "dmg_max": 66, "sta_cost": 50, "type": "finisher","unlock_rank": "Kinoe",
          "desc": "Devastating arc slash — extra damage when enemy is staggered."},
-        {"form": 6, "name": "Mountainous Avalanche",    "dmg_min": 62, "dmg_max": 80,"sta_cost": 60, "type": "ultimate","unlock_rank": "Hashira",
+        {"form": 6, "name": "Mountainous Avalanche",    "dmg_min": 62, "dmg_max": 80, "sta_cost": 60, "type": "ultimate","unlock_rank": "Hashira",
          "desc": "Unleash a mountain's force — guaranteed Stagger + massive damage.", "effect": "stagger_apply"},
+        {"form": 7, "name": "Stone Titan's Roar",       "dmg_min": 74, "dmg_max": 93, "sta_cost": 72, "type": "ultimate", "hits": 2, "unlock_rank": "Hashira",
+         "desc": "Titan's double smash — first hit Staggers; second ignores all DEF.", "effect": "stagger_apply"},
     ],
 
-    # Serpent Breathing (add Forms 4-6)
+    # Serpent Breathing
     "Serpent Breathing": [
         {"form": 1, "name": "Winding Serpent Slash",    "dmg_min": 38, "dmg_max": 41, "sta_cost": 18, "type": "opener",
          "desc": "Deceptive curved strike — applies Vulnerable 25%."},
@@ -268,8 +298,10 @@ TECHNIQUES = {
          "desc": "Double-headed strike — 2 hits, each can apply Poison."},
         {"form": 5, "name": "Slithering Viper",         "dmg_min": 52, "dmg_max": 57, "sta_cost": 38, "type": "finisher", "unlock_rank": "Kinoe",
          "desc": "Rapid serpent lunge — bonus damage per Poison stack active."},
-        {"form": 6, "name": "King Cobra",               "dmg_min": 59, "dmg_max": 73,"sta_cost": 55, "type": "ultimate", "effect": "deep_poison", "unlock_rank": "Hashira",
-         "desc": "Lethal bite — applies Deep Poison (5%/turn × 4 turns).", },
+        {"form": 6, "name": "King Cobra",               "dmg_min": 59, "dmg_max": 73, "sta_cost": 55, "type": "ultimate", "effect": "deep_poison", "unlock_rank": "Hashira",
+         "desc": "Lethal bite — applies Deep Poison (5%/turn × 4 turns)."},
+        {"form": 7, "name": "Ouroboros",                "dmg_min": 72, "dmg_max": 88, "sta_cost": 65, "type": "ultimate", "hits": 2, "effect": "deep_poison", "unlock_rank": "Hashira",
+         "desc": "Serpent infinity loop — 2 hits; each applies Deep Poison; bonus dmg per existing stack."},
     ],
 
     # Mist Breathing (add Forms 3-7)
@@ -331,6 +363,10 @@ TECHNIQUES = {
          "desc": "Swift aerial — +20% dodge this turn, poisons on hit."},
         {"form": 5, "name": "Compound Eye Hexagon",     "dmg_min": 44, "dmg_max": 57, "sta_cost": 35, "type": "ultimate", "effect": "deep_poison",  "poison": True, "unlock_rank": "Hashira",
          "desc": "Full insect assault — applies Deep Poison.", },
+        {"form": 6, "name": "Dance of the Wasp Sting",   "dmg_min": 48, "dmg_max": 54, "sta_cost": 24, "type": "multi",    "hits": 2, "poison": True, "unlock_rank": "Kinoe",
+         "desc": "Rapid double sting targeting weak points, applying severe poison."},
+        {"form": 7, "name": "Dance of the Spider Web",   "dmg_min": 58, "dmg_max": 72, "sta_cost": 42, "type": "ultimate", "effect": "deep_poison", "poison": True, "unlock_rank": "Hashira",
+         "desc": "Piles on deep neurotoxins that slowly paralyze the target."},
     ],
 
     # Moon Breathing (add Forms 3-9)
@@ -441,6 +477,12 @@ TECHNIQUES = {
          "desc": "Water prison orb — Freezes enemy."},
         {"form": 5, "name": "Maelstrom",                "dmg_min": 59, "dmg_max": 77,"sta_cost": 50, "type": "ultimate", "effect": "exhaust_apply",
          "desc": "Raging vortex — Exhausts + Staggers enemy."},
+        {"form": 6, "name": "Hydro Shield",             "dmg_min": 52, "dmg_max": 58, "sta_cost": 28, "type": "defensive", "unlock_rank": "Lower Moon 6",
+         "desc": "A swirling barrier of high-pressure water that reduces incoming damage by 18% for 2 turns."},
+        {"form": 7, "name": "Crushing Depth",           "dmg_min": 68, "dmg_max": 82, "sta_cost": 45, "type": "control", "unlock_rank": "Lower Moon 3",
+         "desc": "Impose deep ocean pressure — reduces enemy SPD and STA recovery."},
+        {"form": 8, "name": "Oceanic Judgment",         "dmg_min": 92, "dmg_max": 115, "sta_cost": 75, "type": "ultimate", "unlock_rank": "Upper Moon 6",
+         "desc": "Pinnacle form — floods the battlefield, deals heavy water damage and washes away enemy buffs."},
     ],
 
     "Ink Manipulation": [

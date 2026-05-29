@@ -101,31 +101,53 @@ def init_db():
     db.press_logs.create_index([("user_id", 1), ("timestamp", DESCENDING)])
 
     # Seed Black Market
+    bm_items = [
+        # Rare materials
+        ("Muzan Blood",                    60000, 1),
+        ("Demon King Core",                40000, 1),
+        ("Upper Moon Core",                20000, 2),
+        ("Kizuki Blood",                   10000, 3),
+        ("Boss Shard",                      6000, 5),
+        ("Rui Thread",                      8000, 2),
+        ("Akaza Fist",                      15000, 1),
+        ("Kokushibo Shard",                 25000, 1),
+        # Technique Scrolls — let users learn extra arts in battle
+        ("Demonic Catalyst",               20000, 1),
+        ("Ancient Whetstone",             15000, 2),
+        ("Rare Ore Fragment",             10000, 2),
+        # Sun/Moon tomes
+        ("Sun Breathing Tome",             80000, 1),
+        ("Moon Breathing Scroll",           35000, 1),
+    ]
+
+    # Update active black market item prices in the DB to the new lower prices
+    for n, p, s in bm_items:
+        db.black_market.update_many(
+            {"item_name": n, "status": "active", "price": {"$gt": p}},
+            {"$set": {"price": p}}
+        )
+
+    # Force any active World Bank SP listings to update to 10k Yen
+    db.black_market.update_many(
+        {"item_name": "Skill Point (WB)", "status": "active", "price": {"$gt": 10000}},
+        {"$set": {"price": 10000}}
+    )
+
+    # Set default global World Bank SP price
+    db.world_bank.update_one(
+        {"_id": "global"},
+        {"$set": {"sp_price": 10000}},
+        upsert=True
+    )
+
     if db.black_market.count_documents({"status": "active"}) == 0:
         expires = datetime.now() + timedelta(days=30)
-        bm_items = [
-            # Rare materials
-            ("Muzan Blood",                    150000, 1),
-            ("Demon King Core",                100000, 1),
-            ("Upper Moon Core",                 50000, 2),
-            ("Kizuki Blood",                    25000, 3),
-            ("Boss Shard",                      15000, 5),
-            ("Rui Thread",                      18000, 2),
-            ("Akaza Fist",                      35000, 1),
-            ("Kokushibo Shard",                 55000, 1),
-            # Technique Scrolls — let users learn extra arts in battle
-            ("Demonic Catalyst",               50000, 1),
-            ("Ancient Whetstone",             35000, 2),
-            ("Rare Ore Fragment",             25000, 2),
-            # Sun/Moon tomes
-            ("Sun Breathing Tome",             200000, 1),
-            ("Moon Breathing Scroll",           80000, 1),
-        ]
         db.black_market.insert_many([
             {"item_name": n, "price": p, "stock": s,
              "expires_at": expires, "status": "active", "item_type": "scroll" if "Scroll" in n or "Tome" in n else "material"}
             for n, p, s in bm_items
         ])
+
 
     # Seed Player Market
     if db.market_listings.count_documents({"status": "active", "seller_id": 0}) == 0:
@@ -267,6 +289,7 @@ def _player_defaults(faction="slayer"):
             "xp": 0, "level": 1,
             "hp": 280, "max_hp": 280, "sta": 160, "max_sta": 160,
             "str_stat": 26, "spd": 20, "def_stat": 14, "potential": 0,
+            "stars": 0,
             "yen": 1000, "demons_slain": 0, "missions_done": 0, "deaths": 0,
             "location": "asakusa",
             "equipped_sword": None,
@@ -287,6 +310,7 @@ def _player_defaults(faction="slayer"):
             "xp": 0, "level": 1,
             "hp": 240, "max_hp": 240, "sta": 170, "max_sta": 170,
             "str_stat": 22, "spd": 20, "def_stat": 18, "potential": 0,
+            "stars": 0,
             "yen": 1000, "demons_slain": 0, "missions_done": 0, "deaths": 0,
             "location": "asakusa",
             "equipped_sword": "Basic Nichirin Blade",
@@ -895,10 +919,12 @@ def clear_status_effects(user_id):
 
 # ── Market ────────────────────────────────────────────────────────────────
 
-def get_market_listings(search=None):
+def get_market_listings(search=None, seller_id=None):
     query = {"status": "active"}
     if search:
         query["item_name"] = {"$regex": search, "$options": "i"}
+    if seller_id is not None:
+        query["seller_id"] = int(seller_id)
     # Keep _id so market_buy can do atomic updates
     results = []
     for d in col("market_listings").find(query).sort("_id", DESCENDING):

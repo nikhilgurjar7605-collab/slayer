@@ -1,197 +1,447 @@
 """
-/info — View detailed info about your breathing style or demon art
-/infoall — Owner-only: full breakdown of ALL styles/arts with damage, effects, forms
-/is [id] — View a specific suggestion in full detail
+/info [name]        — Details on any breathing style or demon art
+/mytechnique        — Your own breathing style details (Slayers)
+/myart              — Your own demon art details (Demons)
+/setstyleimage      — Admin: set banner image/GIF for a style/art
+/infoall            — Owner: full breakdown of ALL styles/arts
+/is [id]            — View a specific suggestion in full detail
 """
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import logging
+from telegram import Update
 from telegram.ext import ContextTypes
-from utils.database import get_player, col
+from utils.database import get_player, col, is_admin
 from config import BREATHING_STYLES, DEMON_ARTS, TECHNIQUES, OWNER_ID
 
+log = logging.getLogger(__name__)
 
-# ── /info [name] — View any breathing style or demon art ─────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def _get_level(xp: int) -> int:
+    """Simple XP→Level formula (mirrors utils/helpers.py)."""
+    level = 1
+    xp_needed = 100
+    while xp >= xp_needed:
+        xp -= xp_needed
+        level += 1
+        xp_needed = int(xp_needed * 1.15)
+    return level
+
+
+def _get_unlocked_forms(style_name: str, level: int, player_rank: str = None) -> set:
+    """Return set of form numbers the player has unlocked."""
+    forms   = TECHNIQUES.get(style_name, [])
+    rank_order = [
+        "Mizunoto", "Mizunoe", "Kanoto", "Kanoe", "Tsuchinoto", "Tsuchinoe",
+        "Hinoto", "Hinoe", "Kinoto", "Kinoe", "Hashira",
+        "Lower Moon 6", "Lower Moon 5", "Lower Moon 4", "Lower Moon 3",
+        "Lower Moon 2", "Lower Moon 1",
+        "Upper Moon 6", "Upper Moon 5", "Upper Moon 4", "Upper Moon 3",
+        "Upper Moon 2", "Upper Moon 1",
+    ]
+    rank_idx = rank_order.index(player_rank) if player_rank in rank_order else 0
+
+    unlocked = set()
+    for f in forms:
+        req_rank = f.get("unlock_rank")
+        req_lv   = 1 + (f["form"] - 1) * 3   # Form N unlocks at level 1+(N-1)*3
+        if level >= req_lv:
+            if req_rank:
+                req_idx = rank_order.index(req_rank) if req_rank in rank_order else 999
+                if rank_idx >= req_idx:
+                    unlocked.add(f["form"])
+            else:
+                unlocked.add(f["form"])
+    return unlocked
+
+
+def _is_owner_or_admin(user_id: int) -> bool:
+    if user_id == OWNER_ID:
+        return True
+    return is_admin(user_id)
+
+
+def get_style_image(style_name: str) -> str | None:
+    """Look up a custom banner from MongoDB first, then fall back to config."""
+    doc = col("style_images").find_one({"style_name": style_name})
+    if doc:
+        if doc.get("file_id"):
+            return doc["file_id"]
+        if doc.get("url"):
+            return doc["url"]
+        if doc.get("image"):
+            return doc["image"]
+    all_pool = BREATHING_STYLES + DEMON_ARTS
+    meta = next((s for s in all_pool if s["name"] == style_name), {})
+    return meta.get("image_url") or meta.get("image") or None
+
 
 def _find_style(query: str):
-    """Find a breathing style or demon art by name (exact or partial, case-insensitive)."""
+    """Find a style/art by exact or partial name, case-insensitive."""
     all_pool = BREATHING_STYLES + DEMON_ARTS
     q = query.lower().strip()
-    # Exact match first
-    match = next((s for s in all_pool if s['name'].lower() == q), None)
-    if not match:
-        # Partial match
-        match = next((s for s in all_pool if q in s['name'].lower()), None)
-    return match
+    return (
+        next((s for s in all_pool if s["name"].lower() == q), None)
+        or next((s for s in all_pool if q in s["name"].lower()), None)
+    )
+
+# ── Format helper ──────────────────────────────────────────────────────────
+
+_EFFECT_LABELS = {
+    "freeze_apply":   "❄️ Freeze (2t)",
+    "burn_apply":     "🔥 Burn (5t)",
+    "bleed_apply":    "🩸 Bleed (3t)",
+    "poison_apply":   "☠️ Poison (5t)",
+    "deep_poison":    "☠️ Deep Poison",
+    "confuse_apply":  "😵 Confusion (2t)",
+    "exhaust_apply":  "😮‍💨 Exhaust",
+    "stagger_apply":  "🥴 Stagger",
+    "stun_apply":     "⚡ Stun",
+    "regen_apply":    "💚 Regen",
+    "atk_buff":       "⬆️ ATK+",
+    "def_buff":       "🛡️ DEF+",
+    "burn_execute":   "🔥 Execute if burning",
+    "bleed_payoff":   "🩸 Bleed payoff",
+    "bleed_sustain":  "🩸 Blood Shield",
+    "bleed_extend":   "🩸 Extend Bleed",
+    "flow_start":     "💧 Flow State",
+    "flow_finisher":  "💧 Flow Finisher",
+    "ice_shatter":    "🧊 Shatter: DEF-15",
+    "stagger_chance": "🥴 Stagger Chance",
+    "freeze_chance":  "❄️ Freeze Chance",
+    "exhaust_chance": "😮‍💨 Exhaust Chance",
+    "confuse_chance": "😵 Confuse Chance",
+    "stun_chance":    "⚡ Stun Chance",
+    "curse_apply":    "💀 Curse",
+}
 
 
-def _format_style_info(style_meta: dict, player=None) -> str:
-    """Build the full info text for a breathing style or demon art."""
-    from utils.helpers import get_level, get_unlocked_forms
-
-    name   = style_meta['name']
-    emoji  = style_meta.get('emoji', '⚔️')
-    rarity = style_meta.get('rarity', '⭐⭐ COMMON')
-    desc   = style_meta.get('description', '')
+def _format_forms(style_meta: dict, player: dict = None) -> str:
+    name   = style_meta["name"]
     forms  = TECHNIQUES.get(name, [])
 
-    is_breathing = style_meta in BREATHING_STYLES
-    label = "BREATHING STYLE" if is_breathing else "DEMON ART"
-    fe    = '🗡️' if is_breathing else '👹'
+    is_breathing = any(s["name"] == name for s in BREATHING_STYLES)
 
-    # Stat bonus
-    bonus_text = ""
-    stat_bonus = style_meta.get('stat_bonus', {})
-    if stat_bonus:
-        parts = []
-        for k, v in stat_bonus.items():
-            label_map = {'str_stat': '💪 STR', 'spd': '⚡ SPD', 'def_stat': '🛡️ DEF',
-                        'max_hp': '❤️ MaxHP', 'max_sta': '🌀 MaxSTA'}
-            parts.append(f"{label_map.get(k, k)} +{v}")
-        bonus_text = f"⭐ *Stat bonus:* {' | '.join(parts)}\n"
-
-    # Gacha info
-    weight = style_meta.get('gacha_weight', 0)
-    pool   = BREATHING_STYLES if is_breathing else DEMON_ARTS
-    total_w = sum(s.get('gacha_weight', 0) for s in pool)
-    chance = f"{round(weight/total_w*100, 2)}%" if total_w > 0 and weight > 0 else "UNIQUE"
-    gacha_line = f"🎲 *Gacha chance:* {chance}  (weight {weight})\n"
-
-    # Player unlock info
-    if player and player.get('style') == name:
-        level    = get_level(player['xp'])
-        unlocked = {f['form'] for f in get_unlocked_forms(name, level, player.get('rank') if player else None, player.get('faction') if player else None)}
-        owned    = True
-    elif player and player.get('hybrid_style') == name:
-        level    = get_level(player['xp'])
-        unlocked = {f['form'] for f in get_unlocked_forms(name, level, player.get('rank') if player else None, player.get('faction') if player else None)}
-        owned    = True
+    # Unlock status for this player
+    if player:
+        owns = player.get("style") == name or player.get("hybrid_style") == name
+        if owns:
+            level    = _get_level(player.get("xp", 0))
+            unlocked = _get_unlocked_forms(name, level, player.get("rank"))
+        else:
+            owns     = False
+            unlocked = set()
     else:
+        owns     = False
         unlocked = set()
-        owned    = False
 
     lines = [
-        f"╔══════════════════════════╗",
-        f"   {fe} {label}",
-        f"╚══════════════════════════╝\n",
-        f"{emoji} *{name}*",
-        f"🏅 {rarity}",
-        bonus_text.strip() if bonus_text else "",
-        gacha_line.strip(),
-        f"📖 _{desc}_\n",
         f"━━━━━━━━━━━━━━━━━━━━━",
-        f"⚔️ *FORMS & TECHNIQUES* ({len(forms)} forms)\n",
+        f"⚔️ *FORMS & TECHNIQUES* ({len(forms)} forms)",
+        f"",
     ]
-    lines = [l for l in lines if l]  # remove empty
 
     if not forms:
-        lines.append("_No technique forms defined for this style._")
+        lines.append("_No technique forms defined yet._")
     else:
         for f in forms:
-            if owned and unlocked:
-                locked  = f['form'] not in unlocked
-                lock_ic = "🔒" if locked else "✅"
-                req     = f"  _(Lv.{1+(f['form']-1)*3})_" if locked else ""
+            form_num = f["form"]
+            if owns:
+                locked  = form_num not in unlocked
+                icon    = "🔒" if locked else "✅"
+                req_txt = f"  _(Lv.{1+(form_num-1)*3})_" if locked else ""
             else:
-                lock_ic = "📋"
-                req_lv  = 1 + (f['form'] - 1) * 3
-                req     = f"  _(Unlocks Lv.{req_lv})_"
+                icon    = "📋"
+                req_txt = f"  _(Unlocks Lv.{1+(form_num-1)*3})_"
 
-            lines.append(f"{lock_ic} *Form {f['form']} — {f['name']}*{req}")
+            lines.append(f"{icon} Form {form_num} — *{f['name']}*{req_txt}")
             lines.append(f"   💥 DMG: *{f['dmg_min']}–{f['dmg_max']}*  |  🌀 STA: *{f['sta_cost']}*")
 
             extras = []
-            if f.get('hits',1) > 1:     extras.append(f"🔁 ×{f['hits']} hits")
-            if f.get('poison'):         extras.append("☠️ Poison")
-            if f.get('effect'):
-                eff_desc = {
-                    'freeze_apply': '❄️ Freeze (2t)',
-                    'burn_apply':   '🔥 Burn (5t)',
-                    'bleed_apply':  '🩸 Bleed (3t)',
-                    'poison_apply': '☠️ Poison (5t)',
-                    'poison_aoe':   '☠️ Poison AOE (4t)',
-                    'ice_shatter':  '🧊 Shatter: DEF-15 (3t)',
-                    'ice_blind':    '🙈 Blind: 30% miss (1t)',
-                    'ice_bleed':    '🩸 IceBleed: 12 DMG/t (2t)',
-                    'frostburn':    '🌡️ Frostburn: -10 STA/t (3t)',
-                    'ice_counter':  '🪞 Reflect 20% DMG (1t)',
-                    'deep_freeze':  '❄️ Deep Freeze: skip 2 turns',
-                    'flow_start':   '💧 Flow State',
-                    'burn_execute': '🔥 Execute if burning <50%',
-                    'bleed_payoff': '🩸 Payoff per bleed stack',
-                }.get(f['effect'], f"✨ {f['effect'].replace('_',' ').title()}")
-                extras.append(eff_desc)
-            if f.get('unlock_rank'):    extras.append(f"🔐 Req: {f['unlock_rank']}")
-            if f.get('desc'):           extras.append(f"📝 {f['desc']}")
+            if f.get("hits", 1) > 1:
+                extras.append(f"🔁 ×{f['hits']} hits")
+            if f.get("effect"):
+                extras.append(_EFFECT_LABELS.get(f["effect"], f"✨ {f['effect'].replace('_',' ').title()}"))
+            if f.get("poison"):
+                extras.append("☠️ Poison")
+            if f.get("unlock_rank"):
+                extras.append(f"🔐 Req: {f['unlock_rank']}")
+            if f.get("desc"):
+                extras.append(f"📝 {f['desc']}")
+
             if extras:
-                lines.append(f"   {chr(10) + '   '.join(extras) if len(extras) > 2 else ' | '.join(extras)}")
+                lines.append("   " + " | ".join(extras[:3]))
+                if len(extras) > 3:
+                    lines.append("   " + " | ".join(extras[3:]))
             lines.append("")
 
-    lines.append("━━━━━━━━━━━━━━━━━━━━━")
-    if owned:
-        lines.append("✅ *You own this style!* Use in battle with 💨 Technique")
-    else:
-        lines.append("💡 Obtain via `/breathing` (slayer) or `/art` (demon) gacha")
+    lines += [
+        "━━━━━━━━━━━━━━━━━━━━━",
+        "✅ *You own this style!* Use it in battle." if owns else
+        f"💡 Obtain via {'`/breathing`' if is_breathing else '`/art`'} gacha",
+    ]
+    return "\n".join(lines)
 
-    return '\n'.join(lines)
 
+def _format_style_info(style_meta: dict, player: dict = None) -> str:
+    caption = _format_caption(style_meta)
+    forms_txt = _format_forms(style_meta, player)
+    return caption + "\n\n" + forms_txt
+
+
+
+# ── /info ──────────────────────────────────────────────────────────────────
 
 async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /info               — show YOUR current style details
-    /info Water         — show Water Breathing details
-    /info Ice           — show Ice Manipulation details
-    /info Blood Whip    — show Blood Whip (demon art) details
-    Works for ANY breathing style or demon art, regardless of faction.
-    """
+    """/info [name] — View details of any breathing style or demon art."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
 
-    # If args given — look up that style (anyone can check any style)
-    if context.args:
-        query      = ' '.join(context.args).strip()
-        style_meta = _find_style(query)
-        if not style_meta:
-            # Show all available names as hint
-            all_names = [s['name'] for s in BREATHING_STYLES + DEMON_ARTS]
-            await update.message.reply_text(
-                f"❌ *Style not found:* `{query}`\n\n"
-                f"💡 Try `/info Water` or `/info Blood Whip`\n\n"
-                f"*All styles:*\n" +
-                '\n'.join(f"  {'🗡️' if s in BREATHING_STYLES else '👹'} {s['name']}"
-                           for s in BREATHING_STYLES + DEMON_ARTS),
-                parse_mode='Markdown'
-            )
-            return
-        text = _format_style_info(style_meta, player)
-        await update.message.reply_text(text, parse_mode='Markdown')
-        return
-
-    # No args — show player's own style
-    if not player:
+    if not context.args:
+        faction  = player.get("faction") if player else None
+        own_hint = (
+            "• `/mytechnique` — Your Breathing Style (Slayers)\n"
+            if faction == "slayer" else
+            "• `/myart` — Your Demon Art (Demons)\n"
+            if faction == "demon" else
+            "• `/mytechnique` — Breathing Style\n• `/myart` — Demon Art\n"
+        )
         await update.message.reply_text(
-            "❌ No character found.\n\n"
-            "💡 `/info Water Breathing` — look up any style without an account",
-            parse_mode='Markdown'
+            "🏮 *Style & Art Info*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{own_hint}\n"
+            "🔍 *Search any style:*\n"
+            "• `/info Water Breathing`\n"
+            "• `/info Ice Manipulation`\n"
+            "• `/info Blood Whip`",
+            parse_mode="Markdown",
         )
         return
 
-    style = player.get('style')
-    if not style:
-        await update.message.reply_text("❌ No style assigned. Use /breathing or /art.")
-        return
-
-    all_pool   = BREATHING_STYLES + DEMON_ARTS
-    style_meta = next((s for s in all_pool if s['name'] == style), None)
+    query      = " ".join(context.args).strip()
+    style_meta = _find_style(query)
     if not style_meta:
-        await update.message.reply_text(f"❌ Style `{style}` not found in data.", parse_mode='Markdown')
+        names = "\n".join(
+            f"  {'🗡️' if s in BREATHING_STYLES else '👹'} {s['name']}"
+            for s in BREATHING_STYLES + DEMON_ARTS
+        )
+        await update.message.reply_text(
+            f"❌ *Not found:* `{query}`\n\n*Available styles:*\n{names}",
+            parse_mode="Markdown",
+        )
         return
 
-    text = _format_style_info(style_meta, player)
-    await update.message.reply_text(text, parse_mode='Markdown')
+    await _send_style(update, style_meta, player)
 
 
-# ── /infoall — Owner full breakdown of EVERYTHING ─────────────────────────
+def _format_caption(style_meta: dict) -> str:
+    """Short caption for the image — name, rarity, gacha, description only."""
+    name   = style_meta["name"]
+    emoji  = style_meta.get("emoji", "⚔️")
+    rarity = style_meta.get("rarity", "⭐⭐ COMMON")
+    desc   = style_meta.get("description", "")
+    is_breathing = any(s["name"] == name for s in BREATHING_STYLES)
+    pool   = BREATHING_STYLES if is_breathing else DEMON_ARTS
+    weight = style_meta.get("gacha_weight", 0)
+    total  = sum(s.get("gacha_weight", 0) for s in pool)
+    chance = f"{round(weight/total*100, 2)}%" if total and weight else "UNIQUE"
+    fe     = "🗡️" if is_breathing else "👹"
+    label  = "BREATHING STYLE" if is_breathing else "DEMON ART"
+    return (
+        f"┌─── {fe} {label} ───┐\n"
+        f"{emoji} *{name}*\n"
+        f"🏅 {rarity}\n"
+        f"🎲 Gacha: {chance}  (weight {weight})\n"
+        f"📖 _{desc}_"
+    )
+
+
+def _format_forms_compact(style_meta: dict, player: dict = None) -> str:
+    name   = style_meta["name"]
+    forms  = TECHNIQUES.get(name, [])
+
+    if player:
+        owns = player.get("style") == name or player.get("hybrid_style") == name
+        if owns:
+            level    = _get_level(player.get("xp", 0))
+            unlocked = _get_unlocked_forms(name, level, player.get("rank"))
+        else:
+            owns     = False
+            unlocked = set()
+    else:
+        owns     = False
+        unlocked = set()
+
+    lines = [
+        f"━━━━━━━━━━━━━━━━━━━━━",
+        f"⚔️ *FORMS & TECHNIQUES* ({len(forms)} forms)",
+    ]
+    for f in forms:
+        form_num = f["form"]
+        if owns:
+            locked  = form_num not in unlocked
+            icon    = "🔒" if locked else "✅"
+            req_txt = f" _(Lv.{1+(form_num-1)*3})_" if locked else ""
+        else:
+            icon    = "📋"
+            req_txt = f" _(Lv.{1+(form_num-1)*3})_"
+
+        effect = ""
+        if f.get("effect"):
+            lbl = _EFFECT_LABELS.get(f["effect"], "").strip()
+            # simplify icons
+            lbl = lbl.replace(" Chance", "").replace(" Shatter", "")
+            if lbl:
+                effect = f" | {lbl}"
+
+        lines.append(f"{icon} F{form_num}: *{f['name']}*{req_txt} • 💥{f['dmg_min']}–{f['dmg_max']} | 🌀{f['sta_cost']}{effect}")
+    return "\n".join(lines)
+
+
+async def _send_style(update, style_meta: dict, player: dict = None):
+    caption   = _format_caption(style_meta)
+    forms_txt = _format_forms(style_meta, player)
+    image     = get_style_image(style_meta["name"])
+
+    if image:
+        # 1. Try fully detailed single message
+        full_detailed = caption + "\n" + forms_txt
+        if len(full_detailed) <= 1024:
+            try:
+                await update.message.reply_photo(image, caption=full_detailed, parse_mode="Markdown")
+                return
+            except Exception:
+                pass
+
+        # 2. Try compact single message (guaranteed to fit 99% of the time)
+        forms_compact = _format_forms_compact(style_meta, player)
+        full_compact = caption + "\n" + forms_compact
+        if len(full_compact) <= 1024:
+            try:
+                await update.message.reply_photo(image, caption=full_compact, parse_mode="Markdown")
+                return
+            except Exception:
+                pass
+
+        # 3. Fallback: split message if they both exceed 1024 characters
+        try:
+            await update.message.reply_photo(image, caption=caption, parse_mode="Markdown")
+            if forms_txt:
+                await update.message.reply_text(forms_txt, parse_mode="Markdown")
+            return
+        except Exception as e:
+            log.warning("[INFO] Banner fallback failed: %s", e)
+
+    # No image — send everything as one text block
+    full = caption + "\n\n" + forms_txt
+    await update.message.reply_text(full, parse_mode="Markdown")
+
+
+# ── /mytechnique ───────────────────────────────────────────────────────────
+
+async def mytechnique(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/mytechnique — Slayers: see your breathing style forms."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        return
+    if player.get("faction") != "slayer":
+        await update.message.reply_text("💡 You're a Demon — use `/myart` instead.", parse_mode="Markdown")
+        return
+    style = player.get("style")
+    if not style:
+        await update.message.reply_text("❌ No Breathing Style assigned yet. Use /breathing to roll one.")
+        return
+    style_meta = next((s for s in BREATHING_STYLES if s["name"] == style), None)
+    if not style_meta:
+        await update.message.reply_text(f"❌ Style `{style}` not found in config.")
+        return
+    await _send_style(update, style_meta, player)
+
+
+# ── /myart ─────────────────────────────────────────────────────────────────
+
+async def myart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/myart — Demons: see your demon art forms."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        return
+    if player.get("faction") != "demon":
+        await update.message.reply_text("💡 You're a Slayer — use `/mytechnique` instead.", parse_mode="Markdown")
+        return
+    style = player.get("style")
+    if not style:
+        await update.message.reply_text("❌ No Blood Demon Art assigned. Use /art to roll one.")
+        return
+    style_meta = next((s for s in DEMON_ARTS if s["name"] == style), None)
+    if not style_meta:
+        await update.message.reply_text(f"❌ Art `{style}` not found in config.")
+        return
+    await _send_style(update, style_meta, player)
+
+
+# ── /setstyleimage ─────────────────────────────────────────────────────────
+
+async def setstyleimage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/setstyleimage [style name] [file_id/url]  OR  reply to a photo with /setstyleimage [name]"""
+    user_id = update.effective_user.id
+    if not _is_owner_or_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    args  = context.args or []
+    image = None
+
+    # Check if replying to a photo / animation / document image
+    reply = update.message.reply_to_message
+    if reply:
+        if reply.photo:
+            image = reply.photo[-1].file_id
+        elif reply.animation:
+            image = reply.animation.file_id
+        elif reply.document and (reply.document.mime_type or "").startswith("image/"):
+            image = reply.document.file_id
+
+    if not args:
+        await update.message.reply_text(
+            "📖 *Usage:*\n"
+            "• `/setstyleimage Water Breathing <file_id>`\n"
+            "• Reply to a photo with `/setstyleimage Water Breathing`",
+            parse_mode="Markdown",
+        )
+        return
+
+    if image:
+        style_name_query = " ".join(args).strip()
+    else:
+        if len(args) < 2:
+            await update.message.reply_text("❌ Provide a style name AND a file_id / URL.")
+            return
+        image            = args[-1].strip()
+        style_name_query = " ".join(args[:-1]).strip()
+
+    style_meta = _find_style(style_name_query)
+    if not style_meta:
+        await update.message.reply_text(f"❌ Style *'{style_name_query}'* not found.", parse_mode="Markdown")
+        return
+
+    col("style_images").update_one(
+        {"style_name": style_meta["name"]},
+        {"$set": {"style_name": style_meta["name"], "image": image, "set_by": user_id}},
+        upsert=True,
+    )
+    await update.message.reply_text(
+        f"✅ Banner updated for *{style_meta['name']}*!\n🖼️ `{image[:40]}...`",
+        parse_mode="Markdown",
+    )
+
+
+# ── /infoall ───────────────────────────────────────────────────────────────
 
 async def infoall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/infoall — Owner: full overview or deep-dive into one style."""
     user_id = update.effective_user.id
     if user_id != OWNER_ID:
         await update.message.reply_text("❌ Owner only.")
@@ -199,148 +449,92 @@ async def infoall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args or []
     if args:
-        # /infoall [style name] — detailed view of one
-        target_name = ' '.join(args)
-        forms = TECHNIQUES.get(target_name)
-        if not forms:
-            # Try partial match
-            for key in TECHNIQUES:
-                if target_name.lower() in key.lower():
-                    target_name = key
-                    forms = TECHNIQUES[key]
-                    break
-        if not forms:
-            await update.message.reply_text(f"❌ Style/art not found: `{target_name}`\n\nUse `/infoall` to see all.", parse_mode='Markdown')
+        target = " ".join(args)
+        style_meta = _find_style(target)
+        if not style_meta:
+            await update.message.reply_text(f"❌ `{target}` not found.", parse_mode="Markdown")
             return
-
-        all_pool = BREATHING_STYLES + DEMON_ARTS
-        meta     = next((s for s in all_pool if s['name'] == target_name), {})
-
-        lines = [
-            f"╔══════════════════════╗",
-            f"   👑 𝙊𝙒𝙉𝙀𝙍 𝙄𝙉𝙁𝙊",
-            f"╚══════════════════════╝\n",
-            f"{meta.get('emoji','⚔️')} *{target_name}*",
-            f"🏅 {meta.get('rarity','?')}",
-            f"🎲 Gacha weight: *{meta.get('gacha_weight','?')}*",
-            f"📖 _{meta.get('description','')}_\n",
-            f"━━━━━━━━━━━━━━━━━━━━━",
-        ]
-
-        total_min = sum(f['dmg_min'] for f in forms)
-        total_max = sum(f['dmg_max'] for f in forms)
-        lines.append(f"📊 Total damage potential: *{total_min}–{total_max}*\n")
-
-        for f in forms:
-            lines.append(f"⚔️ *Form {f['form']}: {f['name']}*")
-            lines.append(f"   💥 DMG: {f['dmg_min']}–{f['dmg_max']}")
-            lines.append(f"   🌀 STA cost: {f['sta_cost']}")
-            if f.get('hits',1) > 1:     lines.append(f"   🔁 Hits: ×{f['hits']} (total: {f['dmg_min']*f['hits']}–{f['dmg_max']*f['hits']})")
-            if f.get('effect'):         lines.append(f"   ✨ Effect: {f['effect']}")
-            if f.get('type'):           lines.append(f"   🎯 Type: {f['type']}")
-            if f.get('poison'):         lines.append(f"   ☠️ Applies Poison")
-            if f.get('burn_chance'):    lines.append(f"   🔥 Burn chance: {f['burn_chance']}%")
-            if f.get('unlock_rank'):    lines.append(f"   🔐 Unlock: {f['unlock_rank']}")
-            if f.get('max_uses'):       lines.append(f"   ⚠️ Max uses: {f['max_uses']} (cooldown: {f.get('cooldown','?')} turns)")
-            lines.append("")
-
-        await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+        text = _format_style_info(style_meta)
+        await update.message.reply_text(text, parse_mode="Markdown")
         return
 
-    # /infoall — overview of everything
-    lines = [
-        "╔══════════════════════╗",
-        "   👑 𝘼𝙇𝙇 𝙎𝙏𝙔𝙇𝙀𝙎 & 𝘼𝙍𝙏𝙎",
-        "╚══════════════════════╝\n",
-        "🗡️ *BREATHING STYLES*\n",
-    ]
+    # Full overview
+    def _section(pool, label, icon):
+        lines = [f"\n{icon} *{label}*\n"]
+        for s in pool:
+            forms   = TECHNIQUES.get(s["name"], [])
+            w       = s.get("gacha_weight", 0)
+            total_w = sum(x.get("gacha_weight", 0) for x in pool)
+            chance  = f"{round(w/total_w*100,1)}%" if total_w and w else "UNIQUE"
+            max_dmg = max((f["dmg_max"] for f in forms), default=0)
+            lines.append(f"{s['emoji']} *{s['name']}*  {s['rarity']}")
+            lines.append(f"   🎲 {chance}  |  📋 {len(forms)} forms  |  💥 max {max_dmg}")
+        return "\n".join(lines)
 
-    for s in BREATHING_STYLES:
-        forms  = TECHNIQUES.get(s['name'], [])
-        w      = s.get('gacha_weight', 0)
-        chance = f"{round(w/sum(x.get('gacha_weight',1) for x in BREATHING_STYLES)*100,1)}%" if w > 0 else "UNIQUE"
-        lines.append(f"{s['emoji']} *{s['name']}*  {s['rarity']}")
-        lines.append(f"   🎲 Weight: {w} ({chance})  |  📋 {len(forms)} forms")
-        if forms:
-            max_dmg = max(f['dmg_max'] for f in forms)
-            lines.append(f"   💥 Max single hit: {max_dmg}")
-        lines.append("")
-
-    lines += ["━━━━━━━━━━━━━━━━━━━━━", "👹 *DEMON ARTS*\n"]
-
-    for a in DEMON_ARTS:
-        forms  = TECHNIQUES.get(a['name'], [])
-        w      = a.get('gacha_weight', 0)
-        chance = f"{round(w/sum(x.get('gacha_weight',1) for x in DEMON_ARTS)*100,1)}%" if w > 0 else "UNGETTABLE"
-        lines.append(f"{a['emoji']} *{a['name']}*  {a['rarity']}")
-        lines.append(f"   🎲 Weight: {w} ({chance})  |  📋 {len(forms)} forms")
-        if forms:
-            max_dmg = max(f['dmg_max'] for f in forms)
-            lines.append(f"   💥 Max single hit: {max_dmg}")
-        lines.append("")
-
-    lines.append("━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("💡 `/infoall [name]` — Full detail on one style")
-
-    # Split if too long
-    text = '\n'.join(lines)
+    text = (
+        "╔══════════════════════╗\n"
+        "   👑 ALL STYLES & ARTS\n"
+        "╚══════════════════════╝"
+        + _section(BREATHING_STYLES, "BREATHING STYLES", "🗡️")
+        + "\n━━━━━━━━━━━━━━━━━━━━━"
+        + _section(DEMON_ARTS, "DEMON ARTS", "👹")
+        + "\n\n💡 `/infoall [name]` — deep dive one style"
+    )
     if len(text) > 4000:
-        mid = len(lines) // 2
-        await update.message.reply_text('\n'.join(lines[:mid]), parse_mode='Markdown')
-        await update.message.reply_text('\n'.join(lines[mid:]), parse_mode='Markdown')
+        mid = len(text) // 2
+        split = text.rfind("\n", 0, mid)
+        await update.message.reply_text(text[:split], parse_mode="Markdown")
+        await update.message.reply_text(text[split:], parse_mode="Markdown")
     else:
-        await update.message.reply_text(text, parse_mode='Markdown')
+        await update.message.reply_text(text, parse_mode="Markdown")
 
 
-# ── /is [id] — View full suggestion ───────────────────────────────────────
+# ── /is [id] ───────────────────────────────────────────────────────────────
 
 async def view_suggestion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/is [id] — View a specific player suggestion in full."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
 
     if not context.args:
-        # List recent suggestions
         recent = list(col("suggestions").find({"status": "pending"}).sort("created_at", -1).limit(5))
         if not recent:
-            await update.message.reply_text("📭 No pending suggestions right now.")
+            await update.message.reply_text("📭 No pending suggestions.")
             return
         lines = ["💡 *RECENT SUGGESTIONS*\n━━━━━━━━━━━━━━━━━━━━━\n"]
         for s in recent:
-            sid   = str(s['_id'])[-6:].upper()
-            lines.append(f"📋 `#{sid}` — _{s['text'][:60]}..._")
+            sid = str(s["_id"])[-6:].upper()
+            lines.append(f"📋 `#{sid}` — _{s.get('text','')[:60]}..._")
         lines.append("\n💡 `/is [id]` — View full suggestion")
-        await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return
 
-    sid = context.args[0].lstrip('#').upper()
-
-    # Find by short ID (last 6 chars of ObjectId)
-    all_sug = list(col("suggestions").find().sort("created_at", -1))
-    match   = next((s for s in all_sug if str(s['_id'])[-6:].upper() == sid), None)
+    sid      = context.args[0].lstrip("#").upper()
+    all_sug  = list(col("suggestions").find().sort("created_at", -1))
+    match    = next((s for s in all_sug if str(s["_id"])[-6:].upper() == sid), None)
 
     if not match:
-        await update.message.reply_text(f"❌ Suggestion `#{sid}` not found.", parse_mode='Markdown')
+        await update.message.reply_text(f"❌ Suggestion `#{sid}` not found.", parse_mode="Markdown")
         return
 
-    status_icons = {"pending": "⏳", "approved": "✅", "planned": "⭐", "dismissed": "❌"}
-    icon  = status_icons.get(match['status'], '⏳')
+    icons = {"pending": "⏳", "approved": "✅", "planned": "⭐", "dismissed": "❌"}
+    icon  = icons.get(match.get("status", "pending"), "⏳")
 
     lines = [
-        f"╔══════════════════════╗",
-        f"      💡 𝙎𝙐𝙂𝙂𝙀𝙎𝙏𝙄𝙊𝙉 #{sid}",
-        f"╚══════════════════════╝\n",
-        f"👤 *From:*   {match['name']} (@{match.get('username','?')})",
-        f"📊 *Status:* {icon} {match['status'].upper()}",
-        f"🕐 *Sent:*   {str(match.get('created_at','?'))[:16]}\n",
-        f"━━━━━━━━━━━━━━━━━━━━━",
-        f"💬 *Full Suggestion:*\n",
-        f"{match['text']}",
-        f"━━━━━━━━━━━━━━━━━━━━━",
+        "╔══════════════════════╗",
+        f"      💡 SUGGESTION #{sid}",
+        "╚══════════════════════╝\n",
+        f"👤 *From:*   {match.get('name','?')} (@{match.get('username','?')})",
+        f"📊 *Status:* {icon} {match.get('status','pending').upper()}",
+        f"⏳ *Sent:*   {str(match.get('created_at','?'))[:16]}\n",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        "💬 *Full Suggestion:*\n",
+        match.get("text", ""),
+        "━━━━━━━━━━━━━━━━━━━━━",
     ]
-
-    if match.get('reviewed_by'):
-        reviewer = get_player(match['reviewed_by'])
-        r_name   = reviewer['name'] if reviewer else f"Admin {match['reviewed_by']}"
+    if match.get("reviewed_by"):
+        reviewer = get_player(match["reviewed_by"])
+        r_name   = reviewer["name"] if reviewer else f"Admin {match['reviewed_by']}"
         lines.append(f"👑 *Reviewed by:* {r_name}")
 
-    await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")

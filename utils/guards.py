@@ -46,17 +46,35 @@ async def send_dm_redirect(update: Update, command: str):
     )
 
 
+def owner_only(func):
+    """Restrict command usage to the bot owner only."""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        uid = update.effective_user.id if update.effective_user else None
+        if uid == getattr(config, "OWNER_ID", None):
+            return await func(update, context, *args, **kwargs)
+        # Notify user they lack permission
+        msg = "*Owner only command.*\nYou are not authorized to use this command."
+        if update.message:
+            await update.message.reply_text(msg, parse_mode="Markdown")
+        elif update.callback_query:
+            await update.callback_query.answer(msg, show_alert=True)
+        return
+    return wrapper
+
+
 def dm_only(func):
-    """Keep only a small set of legacy commands private-only."""
 
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         chat = update.effective_chat
         uid = update.effective_user.id if update.effective_user else None
 
+        # Owner bypass
         if uid and uid == getattr(config, "OWNER_ID", None):
             return await func(update, context, *args, **kwargs)
 
+        # If command is strict DM only and used in non‑private chat
         if chat and chat.type != ChatType.PRIVATE and func.__name__ in STRICT_DM_HANDLERS:
             cmd = _current_command_name(update, func)
             bot_link = get_bot_link()
@@ -70,8 +88,7 @@ def dm_only(func):
             )
             if update.callback_query:
                 await update.callback_query.answer(
-                    f"/{cmd} only works in bot DM!",
-                    show_alert=True,
+                    f"/{cmd} only works in bot DM!", show_alert=True
                 )
                 try:
                     await update.callback_query.message.reply_text(
@@ -90,8 +107,9 @@ def dm_only(func):
             return
 
         return await func(update, context, *args, **kwargs)
-
     return wrapper
+
+
 
 
 def owner_only_button(func):
