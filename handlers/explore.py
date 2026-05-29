@@ -1049,7 +1049,7 @@ async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
     player = get_player(user_id)
-    art_name = query.data[4:]
+    art_name = query.data[4:].replace("_", " ")
     level = get_level(player['xp'])
     forms = get_unlocked_forms(art_name, level, player.get('rank'), player.get('faction'))
     if not forms:
@@ -1069,11 +1069,12 @@ async def choose_art(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # One button per form
     buttons = []
     for form in forms:
+        safe_art = art_name.replace(" ", "_")
         buttons.append([InlineKeyboardButton(
             f"F{form['form']} · {form['name']}  [{form['dmg_min']}-{form['dmg_max']} DMG | {form['sta_cost']} STA]",
-            callback_data=f"form_{art_name}_{form['form']}"
+            callback_data=f"form_{safe_art}_{form['form']}"
         )])
-    buttons.append([InlineKeyboardButton("📖 Details", callback_data=f"forminfo_{art_name}")])
+    buttons.append([InlineKeyboardButton("📖 Details", callback_data=f"forminfo_{safe_art}")])
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data='technique')])
 
     await edit_photo_caption(
@@ -1093,7 +1094,7 @@ async def form_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
     player = get_player(user_id)
-    art_name = query.data[9:]
+    art_name = query.data[9:].replace("_", " ")
     level = get_level(player['xp'])
     forms = get_unlocked_forms(art_name, level, player.get('rank'), player.get('faction'))
     lines = [f"📖 *{art_name.upper()} — ALL FORMS*\n"]
@@ -1102,7 +1103,7 @@ async def form_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✨ *Form {form['form']} — {form['name']}*\n"
             f"   💥 DMG: {form['dmg_min']}-{form['dmg_max']} | 🌀 STA: {form['sta_cost']}\n"
         )
-    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"art_{art_name}")]]
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data=f"art_{art_name.replace(' ', '_')}")]]
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
         text='\n'.join(lines),
@@ -1125,7 +1126,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit_photo_caption(context, query.message.chat_id, query.message.message_id, "No active battle.", "ui", "explore")
         return
     parts = query.data.split('_', 2)
-    art_name = parts[1]
+    art_name = parts[1].replace("_", " ")
     form_num = int(parts[2])
     all_forms = TECHNIQUES.get(art_name, [])
     form = next((f for f in all_forms if f['form'] == form_num), None)
