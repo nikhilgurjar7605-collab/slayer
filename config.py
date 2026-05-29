@@ -1551,21 +1551,24 @@ PET_EVOLUTIONS = {
 PET_EGGS = {
     "Basic Egg": {
         "emoji":   "🥚",
-        "pool":    ["Kasugai Crow", "Sparrow", "Wild Fox", "Timber Wolf"],
-        # Common: 40% each, Uncommon: 10% each — heavily skewed toward common
-        "weights": [40, 40, 10, 10],
+        # Common pets only (Kasugai Crow, Sparrow) — 50/50
+        "pool":    ["Kasugai Crow", "Sparrow"],
+        "weights": [50, 50],
+        "rarity_label": "Common pets only",
     },
     "Rare Egg": {
         "emoji":   "🥚🔵",
-        "pool":    ["Wild Fox", "Timber Wolf", "Eagle", "Baby Demon", "Crimson Fox"],
-        # Uncommon: 30% each, Rare: 15% each, Epic: 10%
-        "weights": [30, 30, 15, 15, 10],
+        # Rare pets only (Eagle, Baby Demon) — 50/50
+        "pool":    ["Eagle", "Baby Demon"],
+        "weights": [50, 50],
+        "rarity_label": "Rare pets only",
     },
     "Legendary Egg": {
         "emoji":   "🥚🌟",
-        "pool":    ["Eagle", "Baby Demon", "Crimson Fox", "Shadow Wolf", "Phoenix", "Void Dragon"],
-        # Rare: 25% each, Epic: 20% each, Legendary: 5% each — still hard to get legendary
-        "weights": [25, 25, 20, 20, 5, 5],
+        # Legendary pets only (Phoenix, Void Dragon) — 50/50
+        "pool":    ["Phoenix", "Void Dragon"],
+        "weights": [50, 50],
+        "rarity_label": "Legendary pets only",
     },
 }
 
