@@ -38,7 +38,8 @@ def _help_pages():
             "🏯 *Clan* — Clan raids, roles, members\n"
             "👥 *Party* — Co-op, travel, party\n"
             "📖 *Info* — Guides, ranks, status effects\n"
-            "⚙️ *Settings* — Toggles, deactivate skills\n\n"
+            "⚙️ *Settings* — Toggles, deactivate skills\n"
+            "📢 *Updates* — `/update` to view recent changes\n\n"
             "🔒 = DM only for `/explore` and `/menu`\n"
             "💡 Use /know for the full game guide"
         ),

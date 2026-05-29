@@ -58,6 +58,18 @@ def load_image_map() -> Dict[str, Any]:
 IMAGE_MAP = load_image_map()
 
 def get_image_url(category: str, key: str) -> Optional[str]:
+    # Check MongoDB style_images for custom uploads (file_id or url) with case‑insensitive style name
+    if key:
+        # Use a regex for case‑insensitive exact match
+        doc = col("style_images").find_one({"style_name": {"$regex": f"^{key}$", "$options": "i"}})
+        if doc:
+            if doc.get("file_id"):
+                return doc["file_id"]
+            if doc.get("url"):
+                return doc["url"]
+            if doc.get("image"):
+                return doc["image"]
+
     data = IMAGE_MAP.get(category, {})
     if not key:
         return data.get("default", None)
@@ -330,6 +342,12 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         if context and context.user_data.get(f'pet_low_hp_boost_{user_id}'):
             _boost = context.user_data.pop(f'pet_low_hp_boost_{user_id}')
             dmg = int(dmg * (1 + _boost))
+            
+    # Potential Tier damage boost (5% per Tier)
+    tier = player.get('potential_tier', 0)
+    if tier > 0:
+        dmg = int(dmg * (1 + tier * 0.05))
+        
     return dmg
 
 def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None):
@@ -355,6 +373,12 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
         bonuses = get_active_skill_bonuses(owned_skills, user_id=user_id, used_once=used_once)
         if 'dmg_reduce' in bonuses:
             dmg = max(1, int(dmg * (1 - bonuses['dmg_reduce'])))
+            
+    # Potential Tier damage reduction (3% reduction per Tier)
+    tier = player.get('potential_tier', 0)
+    if tier > 0:
+        dmg = max(1, int(dmg * (1 - tier * 0.03)))
+        
     return dmg
 
 def _safe_get_skills(user_id):
@@ -508,22 +532,14 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     player = get_player(user_id)
     if not player or player.get('banned'):
-        await (query.message.reply_text if is_callback else update.message.reply_text)("❌ Character not found.")
+        # Safely handle reply when there is no callback query
+        if is_callback:
+            await query.message.reply_text("❌ Character not found.")
+        else:
+            await update.message.reply_text("❌ Character not found.")
         return
 
-    existing = get_battle_state(user_id)
-    if existing and existing.get('in_combat'):
-        if not is_callback:
-            clear_battle_state(user_id)
-            existing = None
-        else:
-            await send_photo_message(
-                context, chat_id,
-                text=f"⚔️ *BATTLE IN PROGRESS!*\n\nYou are fighting *{existing['enemy_name']}* (❤️ {existing['enemy_hp']}/{existing['enemy_max_hp']})\n\nType `/explore` to unstuck.",
-                image_category="enemies",
-                image_key=existing['enemy_name']
-            )
-            return
+
 
     if is_in_challenge(user_id):
         await send_photo_message(context, chat_id, "🥊 *CHALLENGE IN PROGRESS!*", "ui", "explore")
@@ -651,6 +667,15 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = get_battle_state(user_id)
     if not state:
         await edit_photo_caption(context, query.message.chat_id, query.message.message_id, "⚔️ No enemy found. Use /explore.", "ui", "explore")
+        return
+    # If already in combat, notify user
+    if state.get('in_combat'):
+        await send_photo_message(
+            context, query.message.chat_id,
+            text=f"⚔️ *UNFINISHED BATTLE!*\\n\\nYou are currently engaged with *{state['enemy_name']}* (❤️ {state['enemy_hp']}/{state['enemy_max_hp']}).\\n\\nFinish this battle before starting a new one.",
+            image_category="enemies",
+            image_key=state['enemy_name']
+        )
         return
 
     set_battle_state_in_combat(user_id)
@@ -817,6 +842,30 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             state_fresh = get_battle_state(user_id)
             await handle_victory(query, user_id, player, state_fresh, log, context)
             return
+
+    # ── Pet combat contribution ──────────────────────────────────────────────
+    active_pet = get_active_pet(user_id)
+    if active_pet and current_enemy_hp > 0:
+        from config import PETS, PET_EVOLUTIONS
+        pet_name = active_pet["name"]
+        pet_cfg = PET_EVOLUTIONS.get(pet_name) or PETS.get(pet_name, {})
+        bond_level = active_pet.get("bond_level", 0)
+        # Base pet damage: scales with bond 0→3 dmg, 1→5, 2→8, 3→12, 4→18
+        pet_base = [3, 5, 8, 12, 18][min(bond_level, 4)]
+        pet_atk_bonus = get_pet_passives(user_id).get("atk_pct", 0)
+        pet_dmg = int(pet_base * (1 + pet_atk_bonus))
+        current_enemy_hp = max(0, current_enemy_hp - pet_dmg)
+        update_battle_enemy_hp(user_id, current_enemy_hp)
+        emoji = pet_cfg.get("emoji", "🐾")
+        log.append(f"{emoji} {pet_name} bites in - {pet_dmg} damage!")
+        # Gain bond XP per battle contribution
+        from handlers.pets import add_pet_bond_xp
+        add_pet_bond_xp(user_id, pet_name, 5)
+        if current_enemy_hp <= 0:
+            state_fresh = get_battle_state(user_id)
+            await handle_victory(query, user_id, player, state_fresh, log, context)
+            return
+    # ────────────────────────────────────────────────────────────────────────
     context.user_data['_counter_ready'] = bonuses.get('counter_chance', 0)
     ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = current_enemy_hp
@@ -1115,6 +1164,23 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ally = get_active_ally(state)
     log = []
     log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
+
+    # Dynamic Form reply image support
+    form_image_doc = col("style_images").find_one({"style_name": form["name"]})
+    if form_image_doc:
+        p_img = form_image_doc.get("file_id") or form_image_doc.get("url") or form_image_doc.get("image")
+        if p_img:
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=p_img,
+                    caption=f"💥 *{player['name']}* executes *{form['name']}*!",
+                    reply_to_message_id=query.message.message_id,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                pass
+
     hits = form.get('hits', 1)
     total_dmg = 0
     for i in range(hits):
@@ -1199,6 +1265,27 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if current_hp <= 0:
             await handle_victory(query, user_id, player, get_battle_state(user_id), log, context)
             return
+
+    # ── Pet combat contribution (technique turn) ─────────────────────────────
+    _pet_doc = get_active_pet(user_id)
+    if _pet_doc and current_hp > 0:
+        from config import PETS as _PETS, PET_EVOLUTIONS as _PET_EVO
+        _pname = _pet_doc["name"]
+        _pcfg = _PET_EVO.get(_pname) or _PETS.get(_pname, {})
+        _bond = _pet_doc.get("bond_level", 0)
+        _pbase = [3, 5, 8, 12, 18][min(_bond, 4)]
+        _patk_bonus = get_pet_passives(user_id).get("atk_pct", 0)
+        _pdmg = int(_pbase * (1 + _patk_bonus))
+        current_hp = max(0, current_hp - _pdmg)
+        update_battle_enemy_hp(user_id, current_hp)
+        _pemoji = _pcfg.get("emoji", "🐾")
+        log.append(f"{_pemoji} {_pname} assists the technique - {_pdmg} damage!")
+        from handlers.pets import add_pet_bond_xp as _apbx
+        _apbx(user_id, _pname, 8)  # Technique turns give more bond XP
+        if current_hp <= 0:
+            await handle_victory(query, user_id, player, get_battle_state(user_id), log, context)
+            return
+    # ─────────────────────────────────────────────────────────────────────────
     ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
     ctx['enemy_hp'] = current_hp
     ctx['enemy_max_hp'] = state.get('enemy_max_hp', state.get('enemy_hp', 1000))

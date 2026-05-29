@@ -287,12 +287,34 @@ async def resetplayer(update: Update, context):
         await update.message.reply_text("❌ Player not found.")
         return
     uid = target["user_id"]
+    name = target["name"]
+
+    # Full wipe — all player-related collections
     col("players").delete_one({"user_id": uid})
     col("inventory").delete_many({"user_id": uid})
     col("battle_state").delete_many({"user_id": uid})
     col("skill_tree").delete_many({"user_id": uid})
-    log_action(update.effective_user.id, "resetplayer", uid, target["name"])
-    await update.message.reply_text(f"✅ *{target['name']}* has been reset.", parse_mode='Markdown')
+    col("pets").delete_many({"user_id": uid})          # ← pets reset
+    col("arts").delete_many({"user_id": uid})           # ← demon arts reset
+    col("missions").delete_many({"user_id": uid})       # ← missions reset
+    col("battle_log").delete_many({"user_id": uid})     # ← battle logs reset
+    col("cooldowns").delete_many({"user_id": uid})      # ← meditation/cooldowns reset
+    col("ally").delete_many({"user_id": uid})            # ← ally reset
+    col("style_scrolls").delete_many({"user_id": uid})  # ← style scrolls reset
+    # Remove from any clan
+    clan_doc = col("clans").find_one({"members.user_id": uid})
+    if clan_doc:
+        col("clans").update_one(
+            {"_id": clan_doc["_id"]},
+            {"$pull": {"members": {"user_id": uid}}}
+        )
+
+    log_action(update.effective_user.id, "resetplayer", uid, name)
+    await update.message.reply_text(
+        f"✅ *{name}* has been completely reset.\n"
+        f"_All data wiped: player, inventory, pets, arts, skills, missions, cooldowns, battle logs, clan membership._",
+        parse_mode='Markdown'
+    )
 
 
 async def announce(update: Update, context):

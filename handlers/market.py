@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import datetime
 from telegram.error import BadRequest, TimedOut
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.guards import dm_only
 from utils.database import (get_player, update_player, col,
@@ -56,10 +56,8 @@ async def _safe_edit(query, text, **kwargs):
 
 # ── /market — browse listings ──────────────────────────────────────────────
 def _seed_npc_market():
-    """Seed default NPC listings if market is empty."""
+    """Seed default NPC listings if they are not active in the market."""
     from utils.database import col as _col
-    if _col("market_listings").count_documents({"status": "active"}) > 0:
-        return
     seeds = [
         {"item_name": "Full Recovery Gourd",  "item_type": "item",     "price": 800,   "seller_id": 0, "quantity": 1, "status": "active"},
         {"item_name": "Stamina Pill",          "item_type": "item",     "price": 400,   "seller_id": 0, "quantity": 5, "status": "active"},
@@ -71,7 +69,14 @@ def _seed_npc_market():
         {"item_name": "Basic Nichirin Blade",  "item_type": "sword",    "price": 3000,  "seller_id": 0, "quantity": 1, "status": "active"},
         {"item_name": "Corps Uniform",         "item_type": "armor",    "price": 2000,  "seller_id": 0, "quantity": 1, "status": "active"},
     ]
-    _col("market_listings").insert_many(seeds)
+    for s in seeds:
+        exists = _col("market_listings").find_one({
+            "seller_id": 0,
+            "item_name": s["item_name"],
+            "status": "active"
+        })
+        if not exists:
+            _col("market_listings").insert_one(s)
 
 
 async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,15 +101,15 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not listings:
-        note = f"for *{_escape(search)}*" if search else ""
+        note = f"for <b>{search}</b>" if search else ""
         await msg.reply_text(
             f"╔══════════════════╗\n"
             f"  🏮 𝑷𝑳𝑨𝒀𝑬𝑹 𝑴𝑨𝑹𝑲𝑬𝑻 🏮\n"
             f"╚══════════════════╝\n\n"
-            f"_No listings found {note}._\n\n"
-            f"💡 `/list [item] [price]` — Sell your items\n"
-            f"🔍 `/market [search]` — Search listings",
-            parse_mode='Markdown'
+            f"<i>No listings found {note}.</i>\n\n"
+            f"💡 <code>/list [item] [price]</code> — Sell your items\n"
+            f"🔍 <code>/market [search]</code> — Search listings",
+            parse_mode='HTML'
         )
         return
 
@@ -134,12 +139,11 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 seller = get_player(item['seller_id'])
                 raw_name = f"@{seller['username']}" if seller and seller.get('username') else "Player"
-                sname = _escape(raw_name)
+                sname = raw_name
             qty = item.get('quantity', 1)
             qty_txt = f" ×{qty}" if qty > 1 else ""
-            safe_name = _escape(item['item_name'])
             lines += [
-                f"❖ {emoji} *{safe_name}*{qty_txt}",
+                f"❖ {emoji} <b>{item['item_name']}</b>{qty_txt}",
                 f"   ├─ 💰 Price  : ¥ {item['price']:,}",
                 f"   └─ 🏷️ Seller : {sname}",
                 "",
@@ -148,19 +152,183 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines += [
         "━━━━━━━━━━━━━━━━━━━",
-        "**🛒 Purchase Command",
-        "└ Use: /buy market [item name] [amount]",
-        "📦 List Command",
-        "└ Use: /list [item] [price]**",
+        "<blockquote><b>🛒 Purchase Command</b>",
+        "└ Use: <code>/buy market [item name] [amount]</code>",
+        "<b>📦 List Command</b>",
+        "└ Use: <code>/list [item] [price]</code></blockquote>",
     ]
 
     main_text = '\n'.join(lines)
 
+    # Generate keyboard buttons for unique sellers
+    keyboard_buttons = []
+    seen_sellers = set()
+    # Fetch all active listings to populate buttons
+    all_active = get_market_listings()
+    for item in all_active:
+        sid = item.get('seller_id', 0)
+        if sid not in seen_sellers:
+            seen_sellers.add(sid)
+            if sid == 0:
+                keyboard_buttons.append(InlineKeyboardButton("🏪 Shop NPC", callback_data="mkt_sel_0"))
+            else:
+                seller = get_player(sid)
+                if seller:
+                    username = seller.get('username') or seller.get('name') or f"Player {sid}"
+                    display_name = f"👤 @{username}" if seller.get('username') else f"👤 {username}"
+                    keyboard_buttons.append(InlineKeyboardButton(display_name, callback_data=f"mkt_sel_{sid}"))
+
+    keyboard_rows = []
+    row = []
+    # Limit inline keyboard to top 8 active sellers to avoid message bloat
+    for btn in keyboard_buttons[:8]:
+        row.append(btn)
+        if len(row) == 2:
+            keyboard_rows.append(row)
+            row = []
+    if row:
+        keyboard_rows.append(row)
+
+    keyboard_rows.append([InlineKeyboardButton("🌐 Show All Listings", callback_data="mkt_sel_all")])
+    reply_markup = InlineKeyboardMarkup(keyboard_rows)
+
     try:
-        await msg.reply_text(main_text, parse_mode='Markdown')
+        await msg.reply_text(main_text, reply_markup=reply_markup, parse_mode='HTML')
     except BadRequest:
-        plain = main_text.replace('*', '').replace('_', '').replace('`', '')
+        plain = main_text.replace('<b>', '').replace('</b>', '').replace('<code>', '').replace('</code>', '').replace('<blockquote>', '').replace('</blockquote>', '').replace('<i>', '').replace('</i>', '')
         await msg.reply_text(plain)
+
+
+async def cb_market_seller(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback query handler to filter market listings by a selected seller."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    player  = get_player(user_id)
+    if not player:
+        return
+
+    data = query.data  # "mkt_sel_<sid>" or "mkt_sel_all"
+    seller_id_str = data.replace("mkt_sel_", "")
+
+    if seller_id_str == "all":
+        seller_id = None
+        title_suffix = ""
+    else:
+        seller_id = int(seller_id_str)
+        if seller_id == 0:
+            title_suffix = " — 🏪 Shop NPC"
+        else:
+            seller = get_player(seller_id)
+            sname = f"@{seller['username']}" if seller and seller.get('username') else (seller.get('name') if seller else f"Player {seller_id}")
+            title_suffix = f" — 👤 {sname}"
+
+    try:
+        _seed_npc_market()
+    except Exception as e:
+        log.error("[EXCEPTION] %s", e)
+
+    try:
+        listings = get_market_listings(seller_id=seller_id)
+    except Exception as e:
+        await _safe_edit(query, "❌ Market temporarily unavailable. Try again.")
+        return
+
+    if not listings:
+        await _safe_edit(
+            query,
+            f"╔══════════════════╗\n"
+            f"  🏮 𝑷𝑳𝑨𝒀𝑬𝑹 𝑴𝑨𝑹𝑲𝑬𝑻{title_suffix} 🏮\n"
+            f"╚══════════════════╝\n\n"
+            f"<i>No active listings found for this seller.</i>\n\n"
+            f"💡 <code>/list [item] [price]</code> — Sell your items\n"
+            f"🔍 <code>/market</code> — Browse all listings",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Show All Listings", callback_data="mkt_sel_all")]]),
+            parse_mode='HTML'
+        )
+        return
+
+    # Group listings by type
+    grouped = {}
+    for item in listings[:20]:
+        itype = item.get('item_type', 'misc')
+        grouped.setdefault(itype, []).append(item)
+
+    lines = [
+        f"╔══════════════════╗",
+        f"  🏮 𝑷𝑳𝑨𝒀𝑬𝑹 𝑴𝑨𝑹𝑲𝑬𝑻{title_suffix} 🏮",
+        f"╚══════════════════╝",
+        "",
+        f"👛 Balance: ¥ {player['yen']:,}  |  📋 {len(listings)} Listing(s)",
+        "",
+    ]
+
+    for itype, items in grouped.items():
+        header = TYPE_HEADERS.get(itype, f"📦  {itype.capitalize()}")
+        lines.append(f"     {header}")
+        lines.append("━━━━━━━━━━━━━━━━━━━")
+        for item in items:
+            emoji = TYPE_EMOJI.get(itype, '📦')
+            if item.get('seller_id', 0) == 0:
+                sname = "🏪 Shop"
+            else:
+                seller = get_player(item['seller_id'])
+                raw_name = f"@{seller['username']}" if seller and seller.get('username') else "Player"
+                sname = raw_name
+            qty = item.get('quantity', 1)
+            qty_txt = f" ×{qty}" if qty > 1 else ""
+            lines += [
+                f"❖ {emoji} <b>{item['item_name']}</b>{qty_txt}",
+                f"   ├─ 💰 Price  : ¥ {item['price']:,}",
+                f"   └─ 🏷️ Seller : {sname}",
+                "",
+            ]
+        lines.append("")
+
+    lines += [
+        "━━━━━━━━━━━━━━━━━━━",
+        "<blockquote><b>🛒 Purchase Command</b>",
+        "└ Use: <code>/buy market [item name] [amount]</code>",
+        "<b>📦 List Command</b>",
+        "└ Use: <code>/list [item] [price]</code></blockquote>",
+    ]
+
+    main_text = '\n'.join(lines)
+
+    # Generate keyboard buttons for unique sellers
+    keyboard_buttons = []
+    seen_sellers = set()
+    all_active = get_market_listings()
+    for item in all_active:
+        sid = item.get('seller_id', 0)
+        if sid not in seen_sellers:
+            seen_sellers.add(sid)
+            if sid == 0:
+                keyboard_buttons.append(InlineKeyboardButton("🏪 Shop NPC", callback_data="mkt_sel_0"))
+            else:
+                seller = get_player(sid)
+                if seller:
+                    username = seller.get('username') or seller.get('name') or f"Player {sid}"
+                    display_name = f"👤 @{username}" if seller.get('username') else f"👤 {username}"
+                    keyboard_buttons.append(InlineKeyboardButton(display_name, callback_data=f"mkt_sel_{sid}"))
+
+    keyboard_rows = []
+    row = []
+    # Limit inline keyboard to top 8 active sellers
+    for btn in keyboard_buttons[:8]:
+        row.append(btn)
+        if len(row) == 2:
+            keyboard_rows.append(row)
+            row = []
+    if row:
+        keyboard_rows.append(row)
+
+    keyboard_rows.append([InlineKeyboardButton("🌐 Show All Listings", callback_data="mkt_sel_all")])
+    reply_markup = InlineKeyboardMarkup(keyboard_rows)
+
+    await _safe_edit(query, main_text, reply_markup=reply_markup, parse_mode='HTML')
+
 
 
 # ── /list — list an item for sale ─────────────────────────────────────────

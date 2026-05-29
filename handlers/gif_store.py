@@ -499,6 +499,14 @@ async def gifstore_successful_payment(update: Update, context: ContextTypes.DEFA
     name  = gif.get("name", "GIF Banner")
     price = payment.total_amount  # in Stars
 
+    # Credit Stars to the Owner's account in database
+    from config import OWNER_ID
+    col("players").update_one(
+        {"user_id": OWNER_ID},
+        {"$inc": {"stars": price}}
+    )
+    log.info("[GIF_STORE] Credited %s stars to owner %s", price, OWNER_ID)
+
     await update.message.reply_text(
         f"Purchase Successful!\n\n"
         f"'{name}' has been set as your profile banner.\n"
