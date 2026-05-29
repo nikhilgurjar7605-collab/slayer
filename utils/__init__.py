@@ -57,6 +57,8 @@ from .pressure import (
     pressure_display
 )
 
+from .send_logs import send_error
+
 
 __all__ = [
     # database
@@ -95,4 +97,7 @@ __all__ = [
 
     # pressure
     "calc_pressure", "get_chaos_modifier", "pressure_display",
+
+    #send_error
+    "send_error"
 ]
