@@ -584,12 +584,12 @@ async def ownerplayers_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def ownersetyen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownersetyen @user amount — Set a player's yen to exact value."""
     from utils.guards import dm_only
-    if not _is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("Usage: `/ownersetyen @username amount`", parse_mode="Markdown")
         return
-    target = _find_player(context.args[0])
+    target = get_player(context.args[0])
     if not target:
         await update.message.reply_text("❌ Player not found.")
         return
@@ -606,12 +606,12 @@ async def ownersetyen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ownersetsp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownersetsp @user amount — Set a player's skill points."""
-    if not _is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("Usage: `/ownersetsp @username amount`", parse_mode="Markdown")
         return
-    target = _find_player(context.args[0])
+    target = get_player(context.args[0])
     if not target:
         await update.message.reply_text("❌ Player not found.")
         return
@@ -628,12 +628,12 @@ async def ownersetsp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ownerclearinv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownerclearinv @user — Clear all inventory for a player."""
-    if not _is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     if not context.args:
         await update.message.reply_text("Usage: `/ownerclearinv @username`", parse_mode="Markdown")
         return
-    target = _find_player(context.args[0])
+    target = get_player(context.args[0])
     if not target:
         await update.message.reply_text("❌ Player not found.")
         return
@@ -645,12 +645,12 @@ async def ownerclearinv(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ownersetfaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownersetfaction @user slayer|demon — Force-change player faction."""
-    if not _is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("Usage: `/ownersetfaction @username slayer|demon`", parse_mode="Markdown")
         return
-    target = _find_player(context.args[0])
+    target = get_player(context.args[0])
     if not target:
         await update.message.reply_text("❌ Player not found.")
         return
@@ -666,12 +666,12 @@ async def ownersetfaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ownergivepet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownergivepet @user PetName — Give a pet directly to a player."""
-    if not _is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     if not context.args or len(context.args) < 2:
         await update.message.reply_text("Usage: `/ownergivepet @username Pet Name`", parse_mode="Markdown")
         return
-    target = _find_player(context.args[0])
+    target = get_player(context.args[0])
     if not target:
         await update.message.reply_text("❌ Player not found.")
         return
@@ -697,7 +697,7 @@ async def ownergivepet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ownersetloc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownersetloc @user location — Teleport player to any region."""
-    if not _is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
@@ -706,7 +706,7 @@ async def ownersetloc(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return
-    target = _find_player(context.args[0])
+    target = get_player(context.args[0])
     if not target:
         await update.message.reply_text("❌ Player not found.")
         return
@@ -723,7 +723,7 @@ async def ownersetloc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownerhelp — Full owner command list."""
-    if not _is_owner(update.effective_user.id):
+    if not is_owner(update.effective_user.id):
         return
     await update.message.reply_text(
         "👑 *OWNER COMMANDS*\n"
