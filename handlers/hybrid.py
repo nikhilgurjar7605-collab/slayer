@@ -164,8 +164,7 @@ async def hybrid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔥 Slayer Mark: {s_mark}\n"
         f"🔴 Demon Mark:  {d_mark}\n\n"
         f"_Both arts are now available in /explore!_\n"
-        f"_Tap Technique in battle → both styles appear._\n\n"
-        f"🔄 *Want to change later?* Use `/rehybrid` (one-time change)",
+        f"_Tap Technique in battle → both styles appear._\n\n",
         parse_mode='Markdown'
     )
 
