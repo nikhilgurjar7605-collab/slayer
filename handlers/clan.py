@@ -5,6 +5,7 @@ import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import get_player, update_player, get_clan, get_clan_by_name, col
+from utils.helpers import get_level
 from datetime import datetime
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,38 @@ def get_clan_members(clan_data):
             log.error("[EXCEPTION] %s", e)
             return []
     return m if isinstance(m, list) else []
+
+
+def check_clan_requirements(player, clan_data):
+    """Check if a player meets the clan's join requirements.
+    Returns (ok: bool, reason: str | None).
+    """
+    req = clan_data.get('requirements', {})
+    if not req:
+        return True, None
+
+    # Minimum level
+    min_level = req.get('min_level')
+    if min_level is not None:
+        player_level = get_level(player.get('xp', 0))
+        if player_level < min_level:
+            return False, f"❌ Minimum level required: *{min_level}* (you are level *{player_level}*)"
+
+    # Minimum XP
+    min_xp = req.get('min_xp')
+    if min_xp is not None:
+        player_xp = player.get('xp', 0)
+        if player_xp < min_xp:
+            return False, f"❌ Minimum XP required: *{min_xp:,}* (you have *{player_xp:,}*)"
+
+    # Faction restriction
+    required_faction = req.get('faction')
+    if required_faction:
+        player_faction = (player.get('faction') or '').lower()
+        if player_faction != required_faction:
+            return False, f"❌ This clan is *{required_faction}* only (you are *{player_faction or 'none'}*)"
+
+    return True, None
 
 
 async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -158,6 +191,16 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        # Check clan requirements before sending join request
+        ok, reason = check_clan_requirements(player, clan_data)
+        if not ok:
+            await update.message.reply_text(
+                f"❌ *You don't meet the requirements for {clan_data['name']}!*\n\n"
+                f"{reason}",
+                parse_mode='Markdown'
+            )
+            return
+
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Accept",  callback_data=f"clan_accept_{user_id}_{clan_data['id']}"),
             InlineKeyboardButton("❌ Reject",  callback_data=f"clan_reject_{user_id}_{clan_data['id']}"),
@@ -203,6 +246,14 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if target.get('clan_id'):
             await update.message.reply_text("❌ That player is already in a clan!")
+            return
+        # Check clan requirements for the invitee
+        ok, reason = check_clan_requirements(target, clan_data)
+        if not ok:
+            await update.message.reply_text(
+                f"❌ *{target['name']}* doesn't meet your clan's requirements!\n\n{reason}",
+                parse_mode='Markdown'
+            )
             return
         col("clan_invites").insert_one({
             "clan_id": clan_data['id'], "user_id": target['user_id'],
@@ -279,6 +330,29 @@ async def clan_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     new_member = get_player(new_member_id)
     if not new_member:
         await query.answer("Player not found!", show_alert=True)
+        return
+
+    # Race-condition guard: player may have joined another clan between request and accept
+    if new_member.get('clan_id'):
+        await _safe_edit(query, "❌ That player has already joined another clan!", parse_mode='Markdown')
+        col("clan_invites").update_one(
+            {"clan_id": clan_id, "user_id": new_member_id},
+            {"$set": {"status": "cancelled"}}
+        )
+        return
+
+    # Re-validate requirements at accept time
+    ok, reason = check_clan_requirements(new_member, clan_data)
+    if not ok:
+        await _safe_edit(
+            query,
+            f"❌ *{new_member['name']}* no longer meets your clan's requirements.\n\n{reason}",
+            parse_mode='Markdown'
+        )
+        col("clan_invites").update_one(
+            {"clan_id": clan_id, "user_id": new_member_id},
+            {"$set": {"status": "rejected"}}
+        )
         return
 
     members = get_clan_members(clan_data)
