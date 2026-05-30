@@ -9,11 +9,10 @@ from utils.helpers import get_level
 from datetime import datetime
 log = logging.getLogger(__name__)
 
-CLAN_MAX_MEMBERS  = 20    # max players per clan
-CLAN_CREATE_COST  = 50000 # yen to create a clan
+CLAN_MAX_MEMBERS  = 20
+CLAN_CREATE_COST  = 50000
 
 async def _safe_edit(query, text, **kwargs):
-    """Edit a message safely, falling back to reply on failure."""
     try:
         await query.edit_message_text(text, **kwargs)
     except Exception as e:
@@ -37,34 +36,24 @@ def get_clan_members(clan_data):
 
 
 def check_clan_requirements(player, clan_data):
-    """Check if a player meets the clan's join requirements.
-    Returns (ok: bool, reason: str | None).
-    """
     req = clan_data.get('requirements', {})
     if not req:
         return True, None
-
-    # Minimum level
     min_level = req.get('min_level')
     if min_level is not None:
         player_level = get_level(player.get('xp', 0))
         if player_level < min_level:
             return False, f"❌ Minimum level required: *{min_level}* (you are level *{player_level}*)"
-
-    # Minimum XP
     min_xp = req.get('min_xp')
     if min_xp is not None:
         player_xp = player.get('xp', 0)
         if player_xp < min_xp:
             return False, f"❌ Minimum XP required: *{min_xp:,}* (you have *{player_xp:,}*)"
-
-    # Faction restriction
     required_faction = req.get('faction')
     if required_faction:
         player_faction = (player.get('faction') or '').lower()
         if player_faction != required_faction:
             return False, f"❌ This clan is *{required_faction}* only (you are *{player_faction or 'none'}*)"
-
     return True, None
 
 
@@ -163,14 +152,14 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         arg = ' '.join(context.args[1:]).strip()
+        clan_data = None
 
         # Try by telegram ID of the leader first
-        clan_data = None
         if arg.isdigit():
             leader_id = int(arg)
-            clan_data = col("clans").find_one({"leader_id": leader_id})
-            if clan_data:
-                clan_data.pop("_id", None)
+            raw = col("clans").find_one({"leader_id": leader_id})
+            if raw:
+                clan_data = {k: v for k, v in raw.items() if k != '_id'}
 
         # Try by clan name
         if not clan_data:
@@ -191,7 +180,6 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Check clan requirements before sending join request
         ok, reason = check_clan_requirements(player, clan_data)
         if not ok:
             await update.message.reply_text(
@@ -201,9 +189,10 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        # Use pipe separator to avoid splitting issues with underscore in IDs
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Accept",  callback_data=f"clan_accept_{user_id}_{clan_data['id']}"),
-            InlineKeyboardButton("❌ Reject",  callback_data=f"clan_reject_{user_id}_{clan_data['id']}"),
+            InlineKeyboardButton("✅ Accept", callback_data=f"clanaccept|{user_id}|{clan_data['id']}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"clanreject|{user_id}|{clan_data['id']}"),
         ]])
         try:
             await context.bot.send_message(
@@ -225,11 +214,11 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
         except Exception as e:
-            # Leader blocked the bot or hasn't DM'd it — let them know
             await update.message.reply_text(
                 f"❌ *Could not reach the clan leader!*\n\n"
-                f"_The leader may have not started the bot in DM. Ask them to message the bot first._"
-            , parse_mode='Markdown')
+                f"_The leader may have not started the bot in DM. Ask them to message the bot first._",
+                parse_mode='Markdown'
+            )
 
     elif sub == 'invite':
         clan_data = get_clan(player.get('clan_id')) if player.get('clan_id') else None
@@ -247,7 +236,6 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if target.get('clan_id'):
             await update.message.reply_text("❌ That player is already in a clan!")
             return
-        # Check clan requirements for the invitee
         ok, reason = check_clan_requirements(target, clan_data)
         if not ok:
             await update.message.reply_text(
@@ -259,9 +247,10 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "clan_id": clan_data['id'], "user_id": target['user_id'],
             "status": "pending", "created_at": datetime.now()
         })
+        # Use pipe separator here too
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Accept",  callback_data=f"clan_accept_{target['user_id']}_{clan_data['id']}"),
-            InlineKeyboardButton("❌ Decline", callback_data=f"clan_reject_{target['user_id']}_{clan_data['id']}"),
+            InlineKeyboardButton("✅ Accept",  callback_data=f"clanaccept|{target['user_id']}|{clan_data['id']}"),
+            InlineKeyboardButton("❌ Decline", callback_data=f"clanreject|{target['user_id']}|{clan_data['id']}"),
         ]])
         try:
             await context.bot.send_message(
@@ -310,13 +299,16 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def clan_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    # Parse using pipe separator: "clanaccept|<user_id>|<clan_id>"
     try:
-        parts         = query.data.split('_')
-        new_member_id = int(parts[2])
-        clan_id       = int(parts[3])
+        _, new_member_id_str, clan_id_str = query.data.split('|')
+        new_member_id = int(new_member_id_str)
+        clan_id       = int(clan_id_str)
     except (ValueError, IndexError):
         await query.answer("❌ Invalid request!", show_alert=True)
         return
+
     approver_id = query.from_user.id
 
     clan_data = get_clan(clan_id)
@@ -332,7 +324,6 @@ async def clan_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("Player not found!", show_alert=True)
         return
 
-    # Race-condition guard: player may have joined another clan between request and accept
     if new_member.get('clan_id'):
         await _safe_edit(query, "❌ That player has already joined another clan!", parse_mode='Markdown')
         col("clan_invites").update_one(
@@ -341,7 +332,6 @@ async def clan_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    # Re-validate requirements at accept time
     ok, reason = check_clan_requirements(new_member, clan_data)
     if not ok:
         await _safe_edit(
@@ -365,8 +355,9 @@ async def clan_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     col("clan_invites").update_one({"clan_id": clan_id, "user_id": new_member_id}, {"$set": {"status": "accepted"}})
     update_player(new_member_id, clan_id=clan_id, clan_role='recruit')
 
-    await _safe_edit(query, 
-        f"✅ *{new_member['name']}* has been accepted into *{clan_data['name']}*!"
+    await _safe_edit(query,
+        f"✅ *{new_member['name']}* has been accepted into *{clan_data['name']}*!",
+        parse_mode='Markdown'
     )
 
     group_link = clan_data.get('group_link', '')
@@ -395,13 +386,16 @@ async def clan_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def clan_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    # Parse using pipe separator: "clanreject|<user_id>|<clan_id>"
     try:
-        parts         = query.data.split('_')
-        new_member_id = int(parts[2])
-        clan_id       = int(parts[3])
+        _, new_member_id_str, clan_id_str = query.data.split('|')
+        new_member_id = int(new_member_id_str)
+        clan_id       = int(clan_id_str)
     except (ValueError, IndexError):
         await query.answer("❌ Invalid request!", show_alert=True)
         return
+
     col("clan_invites").update_one({"clan_id": clan_id, "user_id": new_member_id}, {"$set": {"status": "rejected"}})
     decliner = get_player(query.from_user.id)
     dname    = decliner['name'] if decliner else "Someone"
@@ -447,20 +441,12 @@ async def setclanlink(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ *Clan group link updated!*\n\n🔗 {link}", parse_mode='Markdown')
 
 
-# ── Aliases / extra commands expected by bot.py ──────────────────────────
-
 async def createclan(update, context):
-    """Alias: /clan createclan"""
     context.args = ['createclan'] + (context.args or [])
     await clan(update, context)
 
 async def joinclan(update, context):
-    """
-    /joinclan [clan name]  OR  /clan joinclan [clan name]
-    Both work. If no name given, shows usage.
-    """
     if not context.args:
-        # Show list of clans to join
         clans = list(col("clans").find().sort("xp", -1).limit(10))
         if not clans:
             await update.message.reply_text(
@@ -486,7 +472,6 @@ async def leaveclan(update, context):
     await clan(update, context)
 
 async def clandisband(update, context):
-    from utils.database import get_player, update_player, col, get_clan
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -503,12 +488,10 @@ async def clandisband(update, context):
     await update.message.reply_text(f"💔 *{clan_data['name']}* has been disbanded.", parse_mode='Markdown')
 
 async def claninfo_cmd(update, context):
-    """Redirect to claninfo handler"""
     from handlers.claninfo import claninfo as _ci
     await _ci(update, context)
 
 async def clanmembers(update, context):
-    from utils.database import get_player, get_clan, col
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -526,7 +509,6 @@ async def clanmembers(update, context):
     await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
 
 async def promotevice(update, context):
-    from utils.database import get_player, update_player, get_clan, col
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -548,7 +530,6 @@ async def promotevice(update, context):
     await update.message.reply_text(f"✅ *{target['name']}* promoted to Officer!", parse_mode='Markdown')
 
 async def demote(update, context):
-    from utils.database import get_player, update_player, get_clan, col
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -570,7 +551,6 @@ async def demote(update, context):
     await update.message.reply_text(f"✅ *{target['name']}* demoted to Recruit.", parse_mode='Markdown')
 
 async def kick(update, context):
-    from utils.database import get_player, update_player, get_clan, col
     user_id   = update.effective_user.id
     player    = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -595,7 +575,6 @@ async def kick(update, context):
     await update.message.reply_text(f"✅ *{target['name']}* kicked from the clan.", parse_mode='Markdown')
 
 async def renameclan(update, context):
-    from utils.database import get_player, get_clan, col
     user_id   = update.effective_user.id
     player    = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -613,7 +592,6 @@ async def renameclan(update, context):
     await update.message.reply_text(f"✅ Clan renamed to *{new_name}*!", parse_mode='Markdown')
 
 async def clanannounce(update, context):
-    from utils.database import get_player, get_clan
     user_id   = update.effective_user.id
     player    = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -642,9 +620,7 @@ async def clanannounce(update, context):
     await update.message.reply_text(f"✅ Announced to *{sent}* members.", parse_mode='Markdown')
 
 
-# ── /clanslogan ───────────────────────────────────────────────────────────
 async def clanslogan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/clanslogan [text] — Set your clan's slogan."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -663,9 +639,7 @@ async def clanslogan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── /clanimage ────────────────────────────────────────────────────────────
 async def clanimage(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/clanimage [url] — Set clan image (shown in /claninfo)."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -689,15 +663,7 @@ async def clanimage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Clan image updated! View with `/claninfo`", parse_mode='Markdown')
 
 
-# ── /clanreq ─────────────────────────────────────────────────────────────
 async def clanreq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /clanreq                       — view current requirements
-    /clanreq level [n]             — set minimum level
-    /clanreq xp [n]                — set minimum XP
-    /clanreq faction [slayer|demon]— faction restriction
-    /clanreq clear                 — remove all requirements
-    """
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player or not player.get('clan_id'):
@@ -707,8 +673,8 @@ async def clanreq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Only Leader or Chief can set requirements.")
         return
 
-    clan = col("clans").find_one({"id": player['clan_id']})
-    req  = clan.get('requirements', {}) if clan else {}
+    clan_doc = col("clans").find_one({"id": player['clan_id']})
+    req  = clan_doc.get('requirements', {}) if clan_doc else {}
 
     if not context.args:
         lines = ["📋 *CLAN REQUIREMENTS*", "━━━━━━━━━━━━━━━━━━━━━"]
