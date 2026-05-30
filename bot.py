@@ -836,7 +836,7 @@ def main():
     app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
     # ── group=1: these must never be swallowed by the ConvHandler fallback ──
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'), group=1)
-    app.add_handler(CallbackQueryHandler(gifstore_page_callback,   pattern=r'^gifstore_page_\\d+$'),          group=1)
+    app.add_handler(CallbackQueryHandler(gifstore_page_callback, pattern=r'^gifstore_page_\d+$'), group=1)
     # ── Meditate callback handler ──
     app.add_handler(CallbackQueryHandler(meditate_callback, pattern=r'^meditate_'), group=1)
 
