@@ -90,8 +90,6 @@ async def addgifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Owner only.")
         return
 
-    # Need at least 3 args: name, price, file_id
-    # Name can be multi-word if quoted; simplest: everything before last two tokens
     args = context.args
     if not args or len(args) < 3:
         await update.message.reply_text(
@@ -185,8 +183,8 @@ async def listgifbanners(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"GIF Banner Store ({len(gifs)} items)\n"]
     for g in gifs:
-        gid  = str(g["_id"])
-        name = g.get("name", "?")
+        gid   = str(g["_id"])
+        name  = g.get("name", "?")
         price = g.get("price", "?")
         lines.append(f"• {name} — {price} ⭐\n  ID: `{gid}`")
 
@@ -206,9 +204,7 @@ async def setmygifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await update.message.reply_text(
-            "Usage: /setmygifbanner <file_id>\n\n"
-        )
+        await update.message.reply_text("Usage: /setmygifbanner <file_id>\n\n")
         return
 
     file_id = context.args[0].strip()
@@ -243,7 +239,6 @@ def _store_keyboard(index: int, total: int, gif_id: str, price: int, bot_usernam
         nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"gifstore_page_{index - 1}"))
     if index < total - 1:
         nav.append(InlineKeyboardButton("Next ▶", callback_data=f"gifstore_page_{index + 1}"))
-    # Deep-link: opens bot DM and auto-triggers the invoice
     buy_url = f"https://t.me/{bot_username}?start=gifbuy_{gif_id}"
     buy_row = [InlineKeyboardButton(f"🛒 Buy {price} ⭐", url=buy_url)]
     rows = []
@@ -299,7 +294,7 @@ async def _show_gif_page(update, context, gifs: list, index: int, edit: bool):
                 pass  # ignore if already deleted
 
             await context.bot.send_animation(
-                chat_id=chat_id,          # use saved chat_id, not stale message.chat
+                chat_id=chat_id,
                 animation=g["file_id"],
                 caption=caption,
                 parse_mode=None,
@@ -329,8 +324,6 @@ async def gifstore_page_callback(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
 
-    # callback_data format: "gifstore_page_<index>"
-    # Use rsplit from the right to safely extract the index
     try:
         index = int(query.data.rsplit("_", 1)[-1])
     except (ValueError, IndexError):
@@ -382,7 +375,6 @@ async def gifstore_handle_deeplink(update: Update, context: ContextTypes.DEFAULT
     name  = gif.get("name", "GIF Banner")
     price = gif.get("price", 1)
 
-    # Show a preview of the GIF before the invoice
     try:
         await context.bot.send_animation(
             chat_id=user_id,
@@ -396,7 +388,7 @@ async def gifstore_handle_deeplink(update: Update, context: ContextTypes.DEFAULT
             parse_mode="Markdown",
         )
     except Exception:
-        pass  # preview failing shouldn't block the invoice
+        pass
 
     try:
         await context.bot.send_invoice(
@@ -407,7 +399,7 @@ async def gifstore_handle_deeplink(update: Update, context: ContextTypes.DEFAULT
                 f"Applied to your profile instantly. No approval needed!"
             ),
             payload=f"gifstore_{gif_id}",
-            provider_token="",  # Empty string required for Telegram Stars (XTR)
+            provider_token="",
             currency="XTR",
             prices=[LabeledPrice(name, price)],
         )
@@ -451,11 +443,10 @@ async def gifstore_buy_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 f"No approval needed!"
             ),
             payload=f"gifstore_{gif_id}",
-            provider_token="",  # Empty string required for Telegram Stars (XTR)
+            provider_token="",
             currency="XTR",
             prices=[LabeledPrice(name, price)],
         )
-        # Tell user in-chat that invoice was sent to DM
         chat_id = update.callback_query.message.chat_id if update.callback_query.message else None
         if chat_id and chat_id != user_id:
             await query.answer("Invoice sent to your DM! Check your messages.", show_alert=True)
@@ -472,7 +463,6 @@ async def gifstore_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TY
     if query.invoice_payload.startswith("gifstore_"):
         await query.answer(ok=True)
     else:
-        # Not our payload — pass (other handlers may take it)
         await query.answer(ok=False, error_message="Unknown payment.")
 
 
@@ -494,7 +484,6 @@ async def gifstore_successful_payment(update: Update, context: ContextTypes.DEFA
         return
 
     if not gif:
-        # GIF was removed after purchase — refund note + manual resolution
         await update.message.reply_text(
             "Payment received but the GIF is no longer available.\n"
             "Please contact an admin for a refund."
@@ -513,14 +502,6 @@ async def gifstore_successful_payment(update: Update, context: ContextTypes.DEFA
 
     name  = gif.get("name", "GIF Banner")
     price = payment.total_amount  # in Stars
-
-    # Credit Stars to the Owner's account in database
-    from config import OWNER_ID
-    col("players").update_one(
-        {"user_id": OWNER_ID},
-        {"$inc": {"stars": price}}
-    )
-    log.info("[GIF_STORE] Credited %s stars to owner %s", price, OWNER_ID)
 
     await update.message.reply_text(
         f"Purchase Successful!\n\n"
