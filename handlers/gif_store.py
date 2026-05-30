@@ -291,15 +291,24 @@ async def _show_gif_page(update, context, gifs: list, index: int, edit: bool):
 
     try:
         if edit and update.callback_query:
-            await update.callback_query.message.delete()
-            await update.callback_query.message.chat.send_animation(
+            # Save chat_id BEFORE deleting — message object becomes stale after delete
+            chat_id = update.callback_query.message.chat_id
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass  # ignore if already deleted
+
+            await context.bot.send_animation(
+                chat_id=chat_id,          # use saved chat_id, not stale message.chat
                 animation=g["file_id"],
                 caption=caption,
                 parse_mode=None,
                 reply_markup=keyboard,
             )
         else:
-            msg = update.message or (update.callback_query.message if update.callback_query else None)
+            msg = update.message or (
+                update.callback_query.message if update.callback_query else None
+            )
             await msg.reply_animation(
                 animation=g["file_id"],
                 caption=caption,
@@ -320,9 +329,15 @@ async def gifstore_page_callback(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
 
-    index = int(query.data.split("_")[-1])
-    gifs  = _all_gifs()
+    # callback_data format: "gifstore_page_<index>"
+    # Use rsplit from the right to safely extract the index
+    try:
+        index = int(query.data.rsplit("_", 1)[-1])
+    except (ValueError, IndexError):
+        await query.answer("Invalid page.", show_alert=True)
+        return
 
+    gifs = _all_gifs()
     if not gifs:
         await query.answer("Store is empty.", show_alert=True)
         return
