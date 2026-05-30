@@ -388,7 +388,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'duel_accept_', 'duel_decline_',
         'duel_attack_', 'duel_technique_', 'duel_art_', 'duel_view_', 'duel_surrender_', 'duel_surrender_me',
         'duel_items_', 'duel_form_', 'duel_useitem_', 'duel_wait',
-        'clanaccept|', 'clanreject|',, 'claninfo_',
+        'clanaccept|', 'clanreject|', 'claninfo_',
         'alliance_accept_', 'alliance_decline_',
         'coop_join_', 'coop_attack', 'coop_technique', 'coop_items',
         'coop_leave', 'coop_back',
