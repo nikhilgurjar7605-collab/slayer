@@ -63,10 +63,14 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔮 Your potential has reached its peak (*100%*)!{tier_label}\n\n"
             f"You stand at the edge of physical limitations. Unleash your inner spirit and break your boundaries to ascend to the next tier!\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚡ Permanent rewards upon Ascension:\n"
-            f"• ❤️ Max HP:  *+15 permanently*\n"
-            f"• 🌀 Max Stamina: *+10 permanently*\n"
-            f"• 💪 Passive combat bonus: *+5% DMG, +3% Def (stacked)*",
+            f"⚡ *Permanent rewards upon Ascension:*\n"
+            f"• ❤️ Max HP:       *+15*\n"
+            f"• 🌀 Max Stamina:  *+10*\n"
+            f"• 💪 STR:          *+2*\n"
+            f"• ⚡ SPD:          *+1*\n"
+            f"• 🛡️ DEF:          *+1*\n"
+            f"• ⚔️ Combat DMG:   *+5% per tier (stacked)*\n"
+            f"• 🔰 DMG Reduce:   *+3% per tier (stacked)*",
             parse_mode="Markdown",
             reply_markup=keyboard
         )
@@ -124,10 +128,22 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if potential < 100:
             await query.edit_message_text("❌ You haven't reached 100% potential yet!")
             return
-        
+
         new_tier = player.get("potential_tier", 0) + 1
-        new_max_hp = player["max_hp"] + 15
-        new_max_sta = player["max_sta"] + 10
+
+        # ── Permanent stat boosts on every awakening ──────────────────────
+        HP_BOOST  = 15
+        STA_BOOST = 10
+        STR_BOOST = 2
+        SPD_BOOST = 1
+        DEF_BOOST = 1
+
+        new_max_hp  = player["max_hp"]  + HP_BOOST
+        new_max_sta = player["max_sta"] + STA_BOOST
+        new_str     = player.get("str_stat", 22) + STR_BOOST
+        new_spd     = player.get("spd",      20) + SPD_BOOST
+        new_def     = player.get("def_stat", 18) + DEF_BOOST
+
         update_player(
             user_id,
             potential=0,
@@ -135,16 +151,26 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             max_hp=new_max_hp,
             max_sta=new_max_sta,
             hp=new_max_hp,
-            sta=new_max_sta
+            sta=new_max_sta,
+            str_stat=new_str,
+            spd=new_spd,
+            def_stat=new_def,
         )
-        
+
         await query.edit_message_text(
             f"🎆 *LIMIT SHATTERED — AWAKENED!* 🎇\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"Your spirit surges with raw, unbridled energy! The barriers holding your breathing and technique back have dissolved!\n\n"
             f"🔮 Meditation Rank:  *{_get_tier_title(new_tier)}*\n"
-            f"❤️ Permanent Max HP:   *+{new_max_hp - player['max_hp']}* ({new_max_hp} total)\n"
-            f"🌀 Permanent Max Stamina: *+{new_max_sta - player['max_sta']}* ({new_max_sta} total)\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📈 *PERMANENT STAT GAINS:*\n"
+            f"❤️  Max HP:       *+{HP_BOOST}*  →  {new_max_hp}\n"
+            f"🌀  Max Stamina:  *+{STA_BOOST}*  →  {new_max_sta}\n"
+            f"💪  STR:          *+{STR_BOOST}*  →  {new_str}\n"
+            f"⚡  SPD:          *+{SPD_BOOST}*  →  {new_spd}\n"
+            f"🛡️  DEF:          *+{DEF_BOOST}*  →  {new_def}\n"
+            f"⚔️  DMG Bonus:    *+{new_tier * 5}%* (stacked per tier)\n"
+            f"🔰  DMG Reduce:   *+{new_tier * 3}%* (stacked per tier)\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"_Your potential has been reset to 0%. Continue meditating to ascend to the next Tier!_",
             parse_mode="Markdown"
