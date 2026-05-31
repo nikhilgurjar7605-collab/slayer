@@ -961,18 +961,58 @@ async def ownerviewstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _calc_tier_stats(faction: str, level: int, tier: int) -> dict:
+    """Calculate the correct stats for a player based on faction, level, and tier."""
+    if faction == "demon":
+        BASE = {"max_hp": 280, "max_sta": 160, "str_stat": 26, "spd": 20, "def_stat": 14}
+    else:  # slayer (default)
+        BASE = {"max_hp": 240, "max_sta": 170, "str_stat": 22, "spd": 20, "def_stat": 18}
+
+    LEVEL_GROWTH = {"max_hp": 15, "max_sta": 10, "str_stat": 2, "spd": 1, "def_stat": 1}
+    TIER_BOOST   = {"max_hp": 15, "max_sta": 10, "str_stat": 2, "spd": 1, "def_stat": 1}
+
+    level_steps = max(0, level - 1)
+    result = {}
+    for stat in BASE:
+        result[stat] = (
+            BASE[stat]
+            + (level_steps * LEVEL_GROWTH[stat])
+            + (tier * TIER_BOOST[stat])
+        )
+    return result
+
+
+TIER_NAMES = {
+    0: "None",
+    1: "🌟 Tier I (Awakened)",
+    2: "✨ Tier II (Ascended)",
+    3: "💎 Tier III (Transcended)",
+    4: "🌌 Tier IV (Demi-God)",
+    5: "👑 Tier V (Supreme Sovereign)",
+}
+
+STAT_LABELS = {
+    "max_hp":        "❤️  Max HP",
+    "hp":            "❤️  HP",
+    "max_sta":       "🌀 Max STA",
+    "sta":           "🌀 STA",
+    "str_stat":      "💪 STR",
+    "spd":           "⚡ SPD",
+    "def_stat":      "🛡️  DEF",
+    "potential_tier":"🏆 Tier",
+}
+
+
 async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownerfixtierstats @user [tier]
-    Auto-calculate and apply the correct stats for a player based on their
-    level, faction, and tier. If tier is omitted, uses their current tier.
 
     Usage:
-      /ownerfixtierstats @user        — fix using current tier
-      /ownerfixtierstats @user 2      — fix and set to tier 2
-      /ownerfixtierstats @user 0      — reset to base (no tier)
+      /ownerfixtierstats @user        — VIEW current stats (no changes applied)
+      /ownerfixtierstats @user 2      — APPLY tier 2 stats (never nerfs; only raises stats)
+      /ownerfixtierstats @user 0      — APPLY base stats for tier 0
+      /ownerfixtierstats @user 2 fix  — APPLY and correct old nerfed stats upward
 
-    Formula:
-      stat = base_faction_stat + (level-1) * growth_per_level + tier * tier_boost
+    Stats are NEVER reduced — the command always takes the higher value.
     """
     uid = update.effective_user.id
     if not is_owner(uid):
@@ -984,11 +1024,11 @@ async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📋 *OWNER FIX TIER STATS — Usage*\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "`/ownerfixtierstats @user` — fix stats using current tier\n"
-            "`/ownerfixtierstats @user 2` — fix stats and set to tier 2\n"
-            "`/ownerfixtierstats @user 0` — reset to base stats (tier 0)\n\n"
-            "_Automatically calculates correct HP, STA, STR, SPD, DEF_\n"
-            "_based on the player's level, faction, and tier. No math needed._",
+            "`/ownerfixtierstats @user` — 👁 VIEW current stats (no changes)\n"
+            "`/ownerfixtierstats @user 2` — ✅ Apply tier 2 stats (never nerfs)\n"
+            "`/ownerfixtierstats @user 0` — 🔄 Apply base stats (tier 0)\n\n"
+            "_Stats are NEVER reduced — always takes the higher value._\n"
+            "_Use `/ownersetstats` to manually set exact values._",
             parse_mode="Markdown"
         )
         return
@@ -998,93 +1038,87 @@ async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Player not found.")
         return
 
-    # Determine target tier
-    if len(args) >= 2:
-        try:
-            new_tier = int(args[1])
-            if not (0 <= new_tier <= 5):
-                await update.message.reply_text("❌ Tier must be between 0 and 5.")
-                return
-        except ValueError:
-            await update.message.reply_text("❌ Tier must be a number (0–5).")
-            return
-    else:
-        new_tier = target.get("potential_tier", 0)
-
-    # ── Base stats per faction ──────────────────────────────────────────
     faction = target.get("faction", "slayer")
-    if faction == "demon":
-        BASE = {"max_hp": 280, "max_sta": 160, "str_stat": 26, "spd": 20, "def_stat": 14}
-    else:  # slayer (default)
-        BASE = {"max_hp": 240, "max_sta": 170, "str_stat": 22, "spd": 20, "def_stat": 18}
+    level   = max(1, get_level(target.get("xp", 0)))
+    cur_tier = target.get("potential_tier", 0)
+    faction_emoji = "👹" if faction == "demon" else "🗡️"
 
-    # ── Growth per level-up ─────────────────────────────────────────────
-    LEVEL_GROWTH = {"max_hp": 15, "max_sta": 10, "str_stat": 2, "spd": 1, "def_stat": 1}
+    # ── VIEW MODE: no tier argument → just show stats, apply nothing ─────
+    if len(args) < 2:
+        calc = _calc_tier_stats(faction, level, cur_tier)
+        tier_name = TIER_NAMES.get(cur_tier, "?")
 
-    # ── Boost per tier (from meditate awaken) ───────────────────────────
-    TIER_BOOST = {"max_hp": 15, "max_sta": 10, "str_stat": 2, "spd": 1, "def_stat": 1}
+        lines = [
+            f"👁 *STATS SNAPSHOT — {target['name'].upper()}*",
+            f"━━━━━━━━━━━━━━━━━━━━━",
+            f"{faction_emoji} Faction: *{faction.title()}*  |  📈 Level: *{level}*  |  🏆 *{tier_name}*",
+            f"━━━━━━━━━━━━━━━━━━━━━",
+            f"*Current (live) stats:*",
+            f"  ❤️  Max HP : *{target.get('max_hp', 0):,}*  |  HP: *{target.get('hp', 0):,}*",
+            f"  🌀 Max STA: *{target.get('max_sta', 0):,}*  |  STA: *{target.get('sta', 0):,}*",
+            f"  💪 STR    : *{target.get('str_stat', 0):,}*",
+            f"  ⚡ SPD    : *{target.get('spd', 0):,}*",
+            f"  🛡️  DEF    : *{target.get('def_stat', 0):,}*",
+            f"━━━━━━━━━━━━━━━━━━━━━",
+            f"*Formula-correct values for Lv{level} T{cur_tier}:*",
+            f"  ❤️  Max HP : *{calc['max_hp']:,}*",
+            f"  🌀 Max STA: *{calc['max_sta']:,}*",
+            f"  💪 STR    : *{calc['str_stat']:,}*",
+            f"  ⚡ SPD    : *{calc['spd']:,}*",
+            f"  🛡️  DEF    : *{calc['def_stat']:,}*",
+            f"━━━━━━━━━━━━━━━━━━━━━",
+            f"_To apply corrections: `/ownerfixtierstats @{target.get('username','user')} {cur_tier}`_",
+        ]
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        return
 
-    level = max(1, get_level(target.get("xp", 0)))
-    level_steps = level - 1
+    # ── APPLY MODE: tier argument given ──────────────────────────────────
+    try:
+        new_tier = int(args[1])
+        if not (0 <= new_tier <= 5):
+            await update.message.reply_text("❌ Tier must be 0–5.")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Tier must be a number (0–5).")
+        return
 
-    # Calculate correct values
-    correct = {}
-    for stat in BASE:
-        correct[stat] = (
-            BASE[stat]
-            + (level_steps * LEVEL_GROWTH[stat])
-            + (new_tier * TIER_BOOST[stat])
-        )
+    calc = _calc_tier_stats(faction, level, new_tier)
 
-    # Also set hp/sta to full
-    correct["hp"]  = correct["max_hp"]
-    correct["sta"] = correct["max_sta"]
-    correct["potential_tier"] = new_tier
+    # NEVER NERF: take the maximum of formula value and current value
+    to_apply = {}
+    for stat, formula_val in calc.items():
+        current_val = int(target.get(stat, 0) or 0)
+        to_apply[stat] = max(formula_val, current_val)
 
-    # ── Build snapshot of old values ────────────────────────────────────
-    tier_names = {
-        0: "None",
-        1: "🌟 Tier I (Awakened)",
-        2: "✨ Tier II (Ascended)",
-        3: "💎 Tier III (Transcended)",
-        4: "🌌 Tier IV (Demi-God)",
-        5: "👑 Tier V (Supreme Sovereign)",
-    }
-    old_tier_name = tier_names.get(target.get("potential_tier", 0), "?")
-    new_tier_name = tier_names.get(new_tier, "?")
+    # Set hp/sta to their (possibly raised) max
+    to_apply["hp"]  = to_apply["max_hp"]
+    to_apply["sta"] = to_apply["max_sta"]
+    to_apply["potential_tier"] = new_tier
+
+    old_tier_name = TIER_NAMES.get(cur_tier, "?")
+    new_tier_name = TIER_NAMES.get(new_tier, "?")
 
     changes = []
-    stat_labels = {
-        "max_hp":   "❤️  Max HP",
-        "hp":       "❤️  HP",
-        "max_sta":  "🌀 Max STA",
-        "sta":      "🌀 STA",
-        "str_stat": "💪 STR",
-        "spd":      "⚡ SPD",
-        "def_stat": "🛡️  DEF",
-        "potential_tier": "🏆 Tier",
-    }
-    for field, new_val in correct.items():
+    for field, new_val in to_apply.items():
         old_val = target.get(field, 0)
-        label   = stat_labels.get(field, field)
+        label   = STAT_LABELS.get(field, field)
         if field == "potential_tier":
             changes.append(f"  {label}: *{old_tier_name}* → *{new_tier_name}*")
         else:
             diff = new_val - old_val
             sign = "+" if diff >= 0 else ""
-            changes.append(f"  {label}: *{old_val:,}* → *{new_val:,}* ({sign}{diff:,})")
+            flag = " _(no change)_" if diff == 0 else ""
+            changes.append(f"  {label}: *{old_val:,}* → *{new_val:,}* ({sign}{diff:,}){flag}")
 
-    # Apply
-    update_player(target["user_id"], **correct)
+    # Apply changes
+    update_player(target["user_id"], **to_apply)
 
     from handlers.logs import log_action
     log_action(uid, "ownerfixtierstats", target["user_id"], target["name"],
                f"lv={level} faction={faction} tier={new_tier}")
 
-    faction_emoji = "👹" if faction == "demon" else "🗡️"
-
     result = (
-        f"✅ *TIER STATS FIXED — {target['name'].upper()}*\n"
+        f"✅ *TIER STATS APPLIED — {target['name'].upper()}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{faction_emoji} Faction: *{faction.title()}*\n"
         f"📈 Level: *{level}*\n"
@@ -1092,7 +1126,7 @@ async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚔️ DMG Bonus: *+{new_tier * 5}%*\n"
         f"🔰 DMG Reduce: *+{new_tier * 3}%*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 *Changes Applied:*\n"
+        f"📊 *Changes (stats NEVER reduced):*\n"
         + "\n".join(changes)
     )
 
@@ -1105,8 +1139,8 @@ async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚙️ *Your stats have been corrected by the admin!*\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏆 Tier: *{new_tier_name}*\n"
-                f"❤️ HP fully restored to *{correct['max_hp']:,}*\n"
-                f"🌀 STA fully restored to *{correct['max_sta']:,}*\n"
+                f"❤️ HP fully restored to *{to_apply['max_hp']:,}*\n"
+                f"🌀 STA fully restored to *{to_apply['max_sta']:,}*\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"_Use /profile to view your updated stats._"
             ),
@@ -1120,10 +1154,12 @@ async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownerhelp — Full owner command list."""
     if not is_owner(update.effective_user.id):
         return
-    await update.message.reply_text(
-        "👑 *OWNER COMMANDS*\n"
+
+    # Split into two messages to avoid Telegram 4096-char limit
+    msg1 = (
+        "👑 *OWNER COMMANDS — Part 1/2*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "*Player Management:*\n"
+        "👤 *Player Management:*\n"
         "`/owneraccess @u` — view player info\n"
         "`/ownersetlevel @u lvl` — set level\n"
         "`/ownersetstyle @u style` — set style\n"
@@ -1134,25 +1170,41 @@ async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/ownerclearinv @u` — wipe inventory\n"
         "`/ownerreset @u` — full reset\n"
         "`/ownerban @u` / `/ownerunban @u`\n\n"
-        "*Stats & Anti-Scam:*\n"
+        "📊 *Stats & Anti-Scam:*\n"
         "`/ownersetstats @u stat val [stat val ...]` — manually fix any stat\n"
-        "`/ownerviewstats @u` — full stats snapshot with old values\n"
-        "`/ownerfixtierstats @u [tier]` — auto-fix all stats by level+faction+tier\n\n"
-        "*Giving:*\n"
+        "`/ownerviewstats @u` — full stats snapshot\n"
+        "`/ownerfixtierstats @u` — 👁 VIEW stats (no changes)\n"
+        "`/ownerfixtierstats @u [tier]` — ✅ Apply tier stats (never nerfs)\n\n"
+        "🎁 *Giving:*\n"
         "`/ownergive @u xp|yen|sp|items amount` — give anything\n"
         "`/ownergivepet @u PetName` — give pet directly\n"
-        "`/givegifbanner @u <store_id>` — give GIF banner free (by store ID)\n"
-        "`/givegifbanner @u file <file_id>` — give custom GIF banner free\n"
+        "`/givegifbanner @u <store_id>` — give GIF banner free\n"
+        "`/givegifbanner @u file <file_id>` — give custom GIF banner\n"
         "`/giveultimate @u` — give legendary demon art\n"
-        "`/giveslayermark @u` / `/givedemonmark @u`\n\n"
-        "*Bot Control:*\n"
+        "`/giveslayermark @u` / `/givedemonmark @u`"
+    )
+
+    msg2 = (
+        "👑 *OWNER COMMANDS — Part 2/2*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🤖 *Bot Control:*\n"
         "`/ownermode on|off` — maintenance mode\n"
         "`/ownerstats` — full bot stats\n"
         "`/ownerplayers` — browse all players\n"
         "`/ownermsg @u text` — DM any player\n"
         "`/backup` — export DB\n"
         "`/restore` — import DB\n"
-        "`/master` — emergency owner panel\n"
-        "`/ownerhelp` — this list",
-        parse_mode="Markdown"
+        "`/master` — emergency owner panel\n\n"
+        "📖 *Info & Dex:*\n"
+        "`/itemdex` — 🗂 browse ALL items (shop, drops, black market)\n"
+        "`/itemdex swords` — filter by category\n"
+        "`/itemdex potion` — search by name\n\n"
+        "🔧 *Help:*\n"
+        "`/ownerhelp` — this list\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "_Tip: `/ownerfixtierstats @u` without tier shows stats only._\n"
+        "_Stats are NEVER reduced by fixtierstats — always takes max value._"
     )
+
+    await update.message.reply_text(msg1, parse_mode="Markdown")
+    await update.message.reply_text(msg2, parse_mode="Markdown")
