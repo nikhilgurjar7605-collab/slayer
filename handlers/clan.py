@@ -247,10 +247,10 @@ async def clan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "clan_id": clan_data['id'], "user_id": target['user_id'],
             "status": "pending", "created_at": datetime.now()
         })
-        # Use pipe separator here too
+        # claninvite| prefix = invitee accepts (different from clanaccept| which is leader approving a join request)
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Accept",  callback_data=f"clanaccept|{target['user_id']}|{clan_data['id']}"),
-            InlineKeyboardButton("❌ Decline", callback_data=f"clanreject|{target['user_id']}|{clan_data['id']}"),
+            InlineKeyboardButton("✅ Accept",  callback_data=f"claninvite|{target['user_id']}|{clan_data['id']}"),
+            InlineKeyboardButton("❌ Decline", callback_data=f"claninvdecline|{target['user_id']}|{clan_data['id']}"),
         ]])
         try:
             await context.bot.send_message(
@@ -731,3 +731,123 @@ async def clanreq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text("❓ Unknown option. Use `/clanreq` to see options.", parse_mode='Markdown')
+
+
+# ── Invite accept/decline — clicked by the INVITEE ───────────────────────
+
+async def clan_invite_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Invitee clicks ✅ Accept on a leader-sent invite."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, invitee_id_str, clan_id_str = query.data.split('|')
+        invitee_id = int(invitee_id_str)
+        clan_id    = int(clan_id_str)
+    except (ValueError, IndexError):
+        await query.answer("❌ Invalid request!", show_alert=True)
+        return
+
+    # Only the invited player can click their own accept button
+    if query.from_user.id != invitee_id:
+        await query.answer("❌ This invite is not for you!", show_alert=True)
+        return
+
+    clan_data = get_clan(clan_id)
+    if not clan_data:
+        await _safe_edit(query, "❌ That clan no longer exists.")
+        return
+
+    player = get_player(invitee_id)
+    if not player:
+        await query.answer("❌ Player not found!", show_alert=True)
+        return
+
+    if player.get('clan_id'):
+        await _safe_edit(query, "❌ You are already in a clan!")
+        col("clan_invites").update_one(
+            {"clan_id": clan_id, "user_id": invitee_id},
+            {"$set": {"status": "cancelled"}}
+        )
+        return
+
+    ok, reason = check_clan_requirements(player, clan_data)
+    if not ok:
+        await _safe_edit(query, f"❌ You no longer meet the clan requirements.\n\n{reason}", parse_mode='Markdown')
+        col("clan_invites").update_one(
+            {"clan_id": clan_id, "user_id": invitee_id},
+            {"$set": {"status": "rejected"}}
+        )
+        return
+
+    members = get_clan_members(clan_data)
+    if len(members) >= CLAN_MAX_MEMBERS:
+        await _safe_edit(query, "❌ Clan is now full! Sorry.")
+        return
+
+    members.append(invitee_id)
+    col("clans").update_one({"id": clan_id}, {"$set": {"members": members}})
+    col("clan_invites").update_one(
+        {"clan_id": clan_id, "user_id": invitee_id},
+        {"$set": {"status": "accepted"}}
+    )
+    update_player(invitee_id, clan_id=clan_id, clan_role='recruit')
+
+    await _safe_edit(query,
+        f"✅ *You joined {clan_data['name']}!*\n\nRole: Recruit\nUse /claninfo to see your clan!",
+        parse_mode='Markdown'
+    )
+
+    group_link = clan_data.get('group_link', '')
+    link_line  = f"\n\n🔗 *Group:* {group_link}" if group_link else ""
+
+    # Notify the leader
+    try:
+        await context.bot.send_message(
+            chat_id=clan_data['leader_id'],
+            text=(
+                f"✅ *{player['name']}* accepted your clan invite and joined *{clan_data['name']}*!\n"
+                f"👥 Members: *{len(members)}*{link_line}"
+            ),
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        log.error("[CLAN_INVITE] Could not notify leader: %s", e)
+
+
+async def clan_invite_decline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Invitee clicks ❌ Decline on a leader-sent invite."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, invitee_id_str, clan_id_str = query.data.split('|')
+        invitee_id = int(invitee_id_str)
+        clan_id    = int(clan_id_str)
+    except (ValueError, IndexError):
+        await query.answer("❌ Invalid request!", show_alert=True)
+        return
+
+    if query.from_user.id != invitee_id:
+        await query.answer("❌ This invite is not for you!", show_alert=True)
+        return
+
+    col("clan_invites").update_one(
+        {"clan_id": clan_id, "user_id": invitee_id},
+        {"$set": {"status": "declined"}}
+    )
+
+    clan_data = get_clan(clan_id)
+    clan_name = clan_data['name'] if clan_data else "the clan"
+    await _safe_edit(query, f"❌ You declined the invite to *{clan_name}*.", parse_mode='Markdown')
+
+    player = get_player(invitee_id)
+    pname  = player['name'] if player else "The player"
+    try:
+        await context.bot.send_message(
+            chat_id=clan_data['leader_id'] if clan_data else 0,
+            text=f"❌ *{pname}* declined your invite to *{clan_name}*.",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        log.error("[CLAN_INVITE] Could not notify leader of decline: %s", e)
