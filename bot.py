@@ -75,6 +75,7 @@ from handlers.lottery import lottery, lottery_play
 from handlers.slayermark import slayermark
 from handlers.gif_store import (
     addgifbanner, removegifbanner, listgifbanners, setmygifbanner,
+    givegifbanner,
     gifstore, gifstore_page_callback,
     gifstore_successful_payment,
 )
@@ -151,7 +152,8 @@ except ImportError:
 from handlers.logs import logs, logs_callback, logstats, logsearch, loguser, log_user_activity
 from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle,
     ownergive, ownerreset, ownerban, ownerunban, ownermsg, ownerstats,
-    ownerplayers, ownerplayers_callback, owner_godmode_active)
+    ownerplayers, ownerplayers_callback, owner_godmode_active,
+    ownersetstats, ownerviewstats, ownerhelp)
 from handlers.maintenance import (
     maintenance, approveuser, unapproveuser, approvedlist,
     is_maintenance_on, is_approved_user
@@ -720,6 +722,9 @@ def main():
         ('ownermsg',        ownermsg),
         ('ownerstats',      ownerstats),
         ('ownerplayers',    ownerplayers),
+        ('ownersetstats',   ownersetstats),
+        ('ownerviewstats',  ownerviewstats),
+        ('ownerhelp',       ownerhelp),
         ('maintenance',     maintenance),
         ('approveuser',     approveuser),
         ('unapproveuser',   unapproveuser),
@@ -790,6 +795,7 @@ def main():
         ('removegifbanner', removegifbanner),
         ('listgifbanners',  listgifbanners),
         ('setmygifbanner',  setmygifbanner),
+        ('givegifbanner',   givegifbanner),
         ('adminhelp',       adminhelp),
         ('adminunstuck',    admin_unstuck),
         ('bankgiveaway',    bankgiveaway),
