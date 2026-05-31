@@ -599,3 +599,653 @@ async def skin_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def skin_noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """No-op for the 'Equipped' button."""
     await update.callback_query.answer("Already equipped!", show_alert=False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ACCESSORY / CHARACTER-CUSTOMISE SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════
+"""
+Accessory system appended to skin_customise.py
+────────────────────────────────────────────────────────────────────────────
+Owner / Admin commands:
+  /addaccessory <slot> <name> <rarity> <file_id>
+      Slots: hat | weapon | cape | mask | badge
+  /removeaccessory <acc_id>
+  /listaccessories
+  /giveaccessory <user_id> <acc_id>
+
+Player commands:
+  /customise     — browse & equip accessories per slot
+  /mycharacter   — preview current character with all equipped accessories
+"""
+
+import io
+import logging
+
+from bson import ObjectId
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+from utils.database import get_player, update_player, col
+
+log = logging.getLogger(__name__)
+
+ACC_COL   = "accessories"
+ACC_SLOTS = ["hat", "weapon", "cape", "mask", "badge"]
+
+ACC_RARITIES = {
+    "common":    {"label": "Common",    "emoji": "⚪", "price": 3_000},
+    "rare":      {"label": "Rare",      "emoji": "🔵", "price": 12_000},
+    "legendary": {"label": "Legendary", "emoji": "🟡", "price": 40_000},
+}
+
+
+# ── DB helpers ─────────────────────────────────────────────────────────────
+
+def _all_accessories(slot: str | None = None) -> list:
+    query = {"slot": slot} if slot else {}
+    return list(col(ACC_COL).find(query))
+
+
+def _get_accessory(acc_id: str) -> dict | None:
+    try:
+        return col(ACC_COL).find_one({"_id": ObjectId(acc_id)})
+    except Exception:
+        return None
+
+
+def _player_owns_acc(user_id: int, acc_id: str) -> bool:
+    return col("player_accessories").find_one(
+        {"user_id": user_id, "acc_id": acc_id}
+    ) is not None
+
+
+def _give_acc_to_player(user_id: int, acc_id: str):
+    if not _player_owns_acc(user_id, acc_id):
+        col("player_accessories").insert_one({"user_id": user_id, "acc_id": acc_id})
+
+
+# ── Character image composer (stub — works even without PIL) ───────────────
+
+async def _build_character_image(bot, player: dict):
+    """
+    Composite the equipped skin + accessories into one image.
+    Returns a BytesIO buffer or None if PIL isn't available / skin is a GIF.
+    """
+    try:
+        from PIL import Image, ImageDraw
+        import requests, io as _io
+    except ImportError:
+        return None
+
+    skin_id = player.get("equipped_skin_id")
+    if not skin_id:
+        return None
+
+    skin = _get_skin(skin_id)
+    if not skin or skin.get("is_gif"):
+        return None
+
+    try:
+        file = await bot.get_file(skin["file_id"])
+        resp = requests.get(file.file_path, timeout=10)
+        base = Image.open(_io.BytesIO(resp.content)).convert("RGBA")
+    except Exception as e:
+        log.warning("[CUSTOMISE] Could not load base skin: %s", e)
+        return None
+
+    # Overlay each equipped accessory
+    equipped_accs = player.get("equipped_accessories", {}) or {}
+    for slot, acc_id in equipped_accs.items():
+        if not acc_id:
+            continue
+        acc = _get_accessory(str(acc_id))
+        if not acc:
+            continue
+        try:
+            f   = await bot.get_file(acc["file_id"])
+            r2  = requests.get(f.file_path, timeout=10)
+            overlay = Image.open(_io.BytesIO(r2.content)).convert("RGBA")
+            overlay = overlay.resize(base.size, Image.LANCZOS)
+            base    = Image.alpha_composite(base, overlay)
+        except Exception as e:
+            log.warning("[CUSTOMISE] Could not overlay accessory %s: %s", slot, e)
+
+    buf = _io.BytesIO()
+    base.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+# ── Guard helpers ──────────────────────────────────────────────────────────
+
+def _acc_is_owner(user_id: int) -> bool:
+    from config import OWNER_ID
+    return user_id == OWNER_ID
+
+
+def _acc_is_owner_or_admin(user_id: int) -> bool:
+    from utils.database import is_admin
+    return _acc_is_owner(user_id) or is_admin(user_id)
+
+
+# ── /addaccessory ──────────────────────────────────────────────────────────
+
+async def addaccessory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Owner/admin only.
+    /addaccessory <slot> <name> <rarity> <file_id>
+    Slot: hat | weapon | cape | mask | badge
+    """
+    user_id = update.effective_user.id
+    if not _acc_is_owner_or_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    args = context.args or []
+    if len(args) < 4:
+        await update.message.reply_text(
+            "Usage: `/addaccessory <slot> <name> <rarity> <file_id>`\n\n"
+            f"Slots: {', '.join(f'`{s}`' for s in ACC_SLOTS)}\n"
+            "Rarity: `common` | `rare` | `legendary`\n\n"
+            "Example:\n`/addaccessory hat SamuraiHelmet rare AgACAgIA...`",
+            parse_mode="Markdown"
+        )
+        return
+
+    slot    = args[0].lower()
+    file_id = args[-1].strip()
+    rarity  = args[-2].strip().lower()
+    name    = " ".join(args[1:-2]).replace("_", " ").strip()
+
+    if slot not in ACC_SLOTS:
+        await update.message.reply_text(
+            f"❌ Invalid slot `{slot}`.\nValid slots: {', '.join(ACC_SLOTS)}",
+            parse_mode="Markdown"
+        )
+        return
+
+    if rarity not in ACC_RARITIES:
+        await update.message.reply_text(
+            f"❌ Invalid rarity `{rarity}`.\nMust be: `common`, `rare`, or `legendary`",
+            parse_mode="Markdown"
+        )
+        return
+
+    if not name:
+        await update.message.reply_text("❌ Please provide a name for the accessory.")
+        return
+
+    result = col(ACC_COL).insert_one({
+        "slot":    slot,
+        "name":    name,
+        "rarity":  rarity,
+        "file_id": file_id,
+    })
+    acc_id = str(result.inserted_id)
+    r = ACC_RARITIES[rarity]
+
+    await update.message.reply_text(
+        f"✅ *Accessory Added!*\n\n"
+        f"Slot: `{slot}`\n"
+        f"Name: *{name}*\n"
+        f"Rarity: {r['emoji']} {r['label']}\n"
+        f"Price: {r['price']:,} ¥\n"
+        f"ID: `{acc_id}`",
+        parse_mode="Markdown"
+    )
+
+
+# ── /removeaccessory ───────────────────────────────────────────────────────
+
+async def removeaccessory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner/admin only. /removeaccessory <acc_id>"""
+    user_id = update.effective_user.id
+    if not _acc_is_owner_or_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `/removeaccessory <acc_id>`",
+            parse_mode="Markdown"
+        )
+        return
+
+    acc_id = context.args[0].strip()
+    try:
+        res = col(ACC_COL).delete_one({"_id": ObjectId(acc_id)})
+        if res.deleted_count:
+            await update.message.reply_text(f"✅ Accessory `{acc_id}` removed.", parse_mode="Markdown")
+        else:
+            await update.message.reply_text(f"❌ No accessory found with ID `{acc_id}`.", parse_mode="Markdown")
+    except Exception:
+        await update.message.reply_text("❌ Invalid ID format.")
+
+
+# ── /listaccessories ───────────────────────────────────────────────────────
+
+async def listaccessories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner/admin only."""
+    user_id = update.effective_user.id
+    if not _acc_is_owner_or_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    accs = _all_accessories()
+    if not accs:
+        await update.message.reply_text("No accessories in the database yet.\n\nAdd with /addaccessory.")
+        return
+
+    lines = [f"🎒 *Accessories* ({len(accs)} total)\n"]
+    for a in accs:
+        r    = ACC_RARITIES.get(a.get("rarity", "common"), ACC_RARITIES["common"])
+        aid  = str(a["_id"])
+        name = a.get("name", "?")
+        slot = a.get("slot", "?")
+        lines.append(f"{r['emoji']} *{name}* [{slot}] — {r['label']}\n  `{aid}`")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+# ── /giveaccessory ─────────────────────────────────────────────────────────
+
+async def giveaccessory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner/admin only. /giveaccessory <user_id> <acc_id>"""
+    user_id = update.effective_user.id
+    if not _acc_is_owner_or_admin(user_id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: `/giveaccessory <user_id> <acc_id>`",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+
+    acc_id = context.args[1].strip()
+    acc    = _get_accessory(acc_id)
+    if not acc:
+        await update.message.reply_text(f"❌ Accessory `{acc_id}` not found.", parse_mode="Markdown")
+        return
+
+    target = get_player(target_id)
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+
+    _give_acc_to_player(target_id, acc_id)
+    await update.message.reply_text(
+        f"✅ Gave *{acc['name']}* accessory to *{target['name']}*!",
+        parse_mode="Markdown"
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=f"🎁 You received the *{acc['name']}* accessory!\nUse /customise to equip it.",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
+# ── /customise — player UI ─────────────────────────────────────────────────
+
+async def customise(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/customise — browse accessories by slot"""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🎩 Hat",    callback_data="cust_slot|hat"),
+         InlineKeyboardButton(f"⚔️ Weapon", callback_data="cust_slot|weapon")],
+        [InlineKeyboardButton(f"🧣 Cape",   callback_data="cust_slot|cape"),
+         InlineKeyboardButton(f"😷 Mask",   callback_data="cust_slot|mask")],
+        [InlineKeyboardButton(f"🏅 Badge",  callback_data="cust_slot|badge")],
+        [InlineKeyboardButton("🔙 Close",   callback_data="cust_close")],
+    ])
+
+    equipped = player.get("equipped_accessories", {}) or {}
+    lines    = ["🎒 *Character Customisation*\n\nChoose a slot to browse accessories:\n"]
+    for s in ACC_SLOTS:
+        eid  = equipped.get(s)
+        if eid:
+            acc = _get_accessory(str(eid))
+            lines.append(f"• `{s.capitalize()}`: ✅ *{acc['name'] if acc else 'Unknown'}*")
+        else:
+            lines.append(f"• `{s.capitalize()}`: _(none)_")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
+
+
+async def _show_acc_slot_page(update, context, slot: str, index: int, edit: bool):
+    """Show one accessory page within a slot."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        return
+
+    accs = _all_accessories(slot)
+    if not accs:
+        txt = f"No accessories available for slot *{slot.capitalize()}* yet."
+        if update.callback_query:
+            await update.callback_query.message.reply_text(txt, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(txt, parse_mode="Markdown")
+        return
+
+    index = max(0, min(index, len(accs) - 1))
+    acc   = accs[index]
+    aid   = str(acc["_id"])
+    name  = acc.get("name", "?")
+    rarity = acc.get("rarity", "common")
+    r     = ACC_RARITIES.get(rarity, ACC_RARITIES["common"])
+    price = r["price"]
+    total = len(accs)
+
+    owned    = _player_owns_acc(user_id, aid)
+    equipped = (player.get("equipped_accessories", {}) or {}).get(slot) == aid
+
+    # Build keyboard
+    rows = []
+    nav  = []
+    if index > 0:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"cust_page|{slot}|{index-1}"))
+    if index < total - 1:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"cust_page|{slot}|{index+1}"))
+    if nav:
+        rows.append(nav)
+
+    if equipped:
+        rows.append([InlineKeyboardButton("✅ Equipped", callback_data="cust_noop")])
+        rows.append([InlineKeyboardButton("🗑 Unequip", callback_data=f"cust_unequip|{slot}")])
+    elif owned:
+        rows.append([InlineKeyboardButton("👘 Equip", callback_data=f"cust_equip|{slot}|{aid}")])
+    else:
+        rows.append([InlineKeyboardButton(f"🛒 Buy — {price:,} ¥", callback_data=f"cust_buy|{slot}|{aid}")])
+
+    rows.append([InlineKeyboardButton("🔙 Back to Slots", callback_data="cust_back")])
+    rows.append([InlineKeyboardButton("❌ Close",          callback_data="cust_close")])
+    keyboard = InlineKeyboardMarkup(rows)
+
+    status = "✅ Equipped" if equipped else ("✔ Owned" if owned else f"💰 {price:,} ¥")
+    caption = (
+        f"🎒 *{slot.capitalize()} Accessories*\n\n"
+        f"Name: *{name}*\n"
+        f"{r['emoji']} Rarity: *{r['label']}*\n"
+        f"Status: {status}\n\n"
+        f"({index+1} / {total})"
+    )
+
+    try:
+        file_id = acc.get("file_id")
+        if edit and update.callback_query:
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_photo(
+                chat_id=update.callback_query.message.chat_id,
+                photo=file_id, caption=caption,
+                parse_mode="Markdown", reply_markup=keyboard
+            )
+        else:
+            msg = update.message or (update.callback_query.message if update.callback_query else None)
+            await msg.reply_photo(
+                photo=file_id, caption=caption,
+                parse_mode="Markdown", reply_markup=keyboard
+            )
+    except Exception as e:
+        log.error("[CUSTOMISE] Could not send acc page: %s", e)
+
+
+# ── Accessory callbacks ─────────────────────────────────────────────────────
+
+async def cust_slot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User tapped a slot button."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        slot = query.data.split("|")[1]
+    except IndexError:
+        return
+    await _show_acc_slot_page(update, context, slot, index=0, edit=True)
+
+
+async def cust_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prev / Next within a slot."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        _, slot, idx = query.data.split("|")
+        index = int(idx)
+    except (ValueError, IndexError):
+        return
+    await _show_acc_slot_page(update, context, slot, index=index, edit=True)
+
+
+async def cust_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Buy an accessory."""
+    query   = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    try:
+        _, slot, acc_id = query.data.split("|")
+    except (ValueError, IndexError):
+        return
+
+    acc = _get_accessory(acc_id)
+    if not acc:
+        await query.answer("❌ Accessory not found.", show_alert=True)
+        return
+
+    player = get_player(user_id)
+    if not player:
+        await query.answer("❌ Player not found.", show_alert=True)
+        return
+
+    if _player_owns_acc(user_id, acc_id):
+        await query.answer("You already own this!", show_alert=True)
+        return
+
+    rarity = acc.get("rarity", "common")
+    price  = ACC_RARITIES.get(rarity, ACC_RARITIES["common"])["price"]
+
+    if player.get("yen", 0) < price:
+        needed = price - player.get("yen", 0)
+        await query.answer(f"❌ Need {needed:,} ¥ more.", show_alert=True)
+        return
+
+    update_player(user_id, yen=player["yen"] - price)
+    _give_acc_to_player(user_id, acc_id)
+
+    player = get_player(user_id)
+    await _show_acc_slot_page(update, context, slot, index=0, edit=True)
+    await query.answer(f"✅ Bought {acc['name']} for {price:,} ¥!", show_alert=False)
+
+
+async def cust_equip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Equip an owned accessory."""
+    query   = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    try:
+        _, slot, acc_id = query.data.split("|")
+    except (ValueError, IndexError):
+        return
+
+    if not _player_owns_acc(user_id, acc_id):
+        await query.answer("❌ You don't own this.", show_alert=True)
+        return
+
+    acc = _get_accessory(acc_id)
+    # Merge into equipped_accessories dict
+    player   = get_player(user_id)
+    equipped = dict(player.get("equipped_accessories", {}) or {})
+    equipped[slot] = acc_id
+    update_player(user_id, equipped_accessories=equipped)
+
+    player = get_player(user_id)
+    await _show_acc_slot_page(update, context, slot, index=0, edit=True)
+    await query.answer(f"✅ {acc['name'] if acc else 'Accessory'} equipped!", show_alert=False)
+
+
+async def cust_unequip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unequip a slot."""
+    query   = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    try:
+        slot = query.data.split("|")[1]
+    except IndexError:
+        return
+
+    player   = get_player(user_id)
+    equipped = dict(player.get("equipped_accessories", {}) or {})
+    equipped.pop(slot, None)
+    update_player(user_id, equipped_accessories=equipped)
+
+    await _show_acc_slot_page(update, context, slot, index=0, edit=True)
+    await query.answer(f"✅ {slot.capitalize()} slot cleared.", show_alert=False)
+
+
+async def cust_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Go back to slot selection."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    # Re-send the slot picker via a fake update
+    user_id = query.from_user.id
+    player  = get_player(user_id)
+    if not player:
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎩 Hat",    callback_data="cust_slot|hat"),
+         InlineKeyboardButton("⚔️ Weapon", callback_data="cust_slot|weapon")],
+        [InlineKeyboardButton("🧣 Cape",   callback_data="cust_slot|cape"),
+         InlineKeyboardButton("😷 Mask",   callback_data="cust_slot|mask")],
+        [InlineKeyboardButton("🏅 Badge",  callback_data="cust_slot|badge")],
+        [InlineKeyboardButton("🔙 Close",  callback_data="cust_close")],
+    ])
+
+    equipped = player.get("equipped_accessories", {}) or {}
+    lines    = ["🎒 *Character Customisation*\n\nChoose a slot:\n"]
+    for s in ACC_SLOTS:
+        eid = equipped.get(s)
+        if eid:
+            acc = _get_accessory(str(eid))
+            lines.append(f"• `{s.capitalize()}`: ✅ *{acc['name'] if acc else 'Unknown'}*")
+        else:
+            lines.append(f"• `{s.capitalize()}`: _(none)_")
+
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def cust_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Close customise menu."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+
+async def cust_noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer("Already equipped!", show_alert=False)
+
+
+async def cust_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Preview character with all accessories."""
+    query   = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    player  = get_player(user_id)
+    if not player:
+        return
+    buf = await _build_character_image(context.bot, player)
+    if buf:
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=buf,
+            caption="🧑 *Your Character*",
+            parse_mode="Markdown"
+        )
+    else:
+        await query.answer("❌ Could not generate preview (no skin equipped or PIL missing).", show_alert=True)
+
+
+# ── /mycharacter ───────────────────────────────────────────────────────────
+
+async def mycharacter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/mycharacter — show character card with accessories"""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ No character found. Use /start.")
+        return
+
+    buf = await _build_character_image(context.bot, player)
+
+    equipped_skin_id = player.get("equipped_skin_id")
+    skin_name = "None"
+    if equipped_skin_id:
+        s = _get_skin(equipped_skin_id)
+        if s:
+            skin_name = s.get("name", "Unknown")
+
+    equipped_accs = player.get("equipped_accessories", {}) or {}
+    acc_lines = []
+    for slot in ACC_SLOTS:
+        eid = equipped_accs.get(slot)
+        if eid:
+            a = _get_accessory(str(eid))
+            acc_lines.append(f"  • {slot.capitalize()}: *{a['name'] if a else 'Unknown'}*")
+        else:
+            acc_lines.append(f"  • {slot.capitalize()}: _(none)_")
+
+    caption = (
+        f"🧑 *{player['name']}*\n\n"
+        f"🎭 Skin: *{skin_name}*\n"
+        f"🎒 Accessories:\n" + "\n".join(acc_lines)
+    )
+
+    if buf:
+        await update.message.reply_photo(
+            photo=buf, caption=caption, parse_mode="Markdown"
+        )
+    elif equipped_skin_id:
+        skin = _get_skin(equipped_skin_id)
+        if skin:
+            fn = context.bot.send_animation if skin.get("is_gif") else context.bot.send_photo
+            field = "animation" if skin.get("is_gif") else "photo"
+            await fn(**{
+                "chat_id": update.effective_chat.id,
+                field:     skin["file_id"],
+                "caption": caption,
+                "parse_mode": "Markdown"
+            })
+            return
+    else:
+        await update.message.reply_text(caption, parse_mode="Markdown")
