@@ -828,7 +828,9 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bond_level = active_pet.get("bond_level", 0)
         pet_base = [3, 5, 8, 12, 18][min(bond_level, 4)]
         pet_atk_bonus = get_pet_passives(user_id).get("atk_pct", 0)
-        pet_dmg = int(pet_base * (1 + pet_atk_bonus))
+        from utils.helpers import get_level
+        _player_level = get_level(player.get('xp', 0))
+        pet_dmg = int((pet_base + _player_level * 2) * (1 + pet_atk_bonus))
         current_enemy_hp = max(0, current_enemy_hp - pet_dmg)
         update_battle_enemy_hp(user_id, current_enemy_hp)
         emoji = pet_cfg.get("emoji", "🐾")
@@ -1244,7 +1246,9 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _bond = _pet_doc.get("bond_level", 0)
         _pbase = [3, 5, 8, 12, 18][min(_bond, 4)]
         _patk_bonus = get_pet_passives(user_id).get("atk_pct", 0)
-        _pdmg = int(_pbase * (1 + _patk_bonus))
+        from utils.helpers import get_level as _get_level
+        _plevel = _get_level(player.get('xp', 0))
+        _pdmg = int((_pbase + _plevel * 2) * (1 + _patk_bonus))
         current_hp = max(0, current_hp - _pdmg)
         update_battle_enemy_hp(user_id, current_hp)
         _pemoji = _pcfg.get("emoji", "🐾")
