@@ -231,6 +231,131 @@ async def setmygifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+
+# -- /givegifbanner - owner gives a banner to any player/admin for free --
+
+async def givegifbanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Owner only. Give any GIF banner from the store to any player (including
+    admins) completely free - no Stars charged.
+
+    Usage:
+      /givegifbanner @username <store_id>
+          -> give a banner from the store by its Mongo ID
+      /givegifbanner @username file <file_id>
+          -> give any custom file_id directly (not from store)
+
+    Examples:
+      /givegifbanner @hashira 665f1a2b3c4d5e6f7a8b9c0d
+      /givegifbanner @hashira file CgACAgIAAx...
+    """
+    user_id = update.effective_user.id
+    if not _is_owner(user_id):
+        await update.message.reply_text("Owner only.")
+        return
+
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "GIVE GIF BANNER - Usage\n"
+            "Give from store (by ID):\n"
+            "  /givegifbanner @user <store_id>\n\n"
+            "Give custom file_id directly:\n"
+            "  /givegifbanner @user file <file_id>\n\n"
+            "Use /listgifbanners to see store IDs.",
+        )
+        return
+
+    # Resolve target player
+    target_arg = args[0]
+    from handlers.owner import _find_any_player
+    target = _find_any_player(target_arg)
+    if not target:
+        await update.message.reply_text(
+            f"Player not found: {target_arg}\nTry @username or numeric user ID."
+        )
+        return
+
+    gif_file_id = None
+    banner_name = None
+
+    if args[1].lower() == "file":
+        # Direct file_id mode: /givegifbanner @user file CgACAgIAA...
+        if len(args) < 3:
+            await update.message.reply_text(
+                "Please provide the file_id after 'file'.\n"
+                "Example: /givegifbanner @user file CgACAgIAAx..."
+            )
+            return
+        gif_file_id = args[2].strip()
+        banner_name = "Custom GIF Banner"
+    else:
+        # Store ID mode: /givegifbanner @user <store_id>
+        store_id = args[1].strip()
+        gif = _get_gif(store_id)
+        if not gif:
+            await update.message.reply_text(
+                f"No GIF found with store ID: {store_id}\n"
+                "Use /listgifbanners to see valid IDs."
+            )
+            return
+        gif_file_id = gif["file_id"]
+        banner_name = gif.get("name", "GIF Banner")
+
+    # Apply banner to target player profile
+    update_player(
+        target["user_id"],
+        profile_banner_gif_id=gif_file_id,
+        profile_banner_file_id=None,
+        profile_banner_url=None,
+    )
+    log.info(
+        "[GIF_STORE] Owner gave gif banner '%s' to user=%s (%s)",
+        banner_name, target["user_id"], target.get("username", target["name"])
+    )
+
+    # Log the action
+    try:
+        from handlers.logs import log_action
+        log_action(user_id, "givegifbanner", target["user_id"], target["name"], banner_name)
+    except Exception as e:
+        log.warning("[GIF_STORE] Could not log action: %s", e)
+
+    # Confirm to owner with preview
+    try:
+        await context.bot.send_animation(
+            chat_id=user_id,
+            animation=gif_file_id,
+            caption=(
+                f"GIF Banner given successfully!\n"
+                f"Banner: {banner_name}\n"
+                f"Player: {target['name']}\n"
+                f"User ID: {target['user_id']}\n"
+                f"Cost: Free (owner gift)"
+            ),
+        )
+    except Exception as e:
+        log.warning("[GIF_STORE] Could not send preview to owner: %s", e)
+        await update.message.reply_text(
+            f"GIF banner '{banner_name}' given to {target['name']}!\n"
+            "(Preview failed - banner was still applied successfully.)"
+        )
+
+    # Notify the recipient player
+    try:
+        await context.bot.send_animation(
+            chat_id=target["user_id"],
+            animation=gif_file_id,
+            caption=(
+                f"You received a GIF Banner gift!\n\n"
+                f"'{banner_name}' has been set as your profile banner!\n"
+                f"Use /profile to see it in action."
+            ),
+        )
+    except Exception as e:
+        log.warning("[GIF_STORE] Could not notify recipient %s: %s", target["user_id"], e)
+
+
 # ── /gifstore — player browsing UI ────────────────────────────────────────
 
 def _store_keyboard(index: int, total: int, gif_id: str, price: int, bot_username: str) -> InlineKeyboardMarkup:
