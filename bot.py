@@ -192,6 +192,11 @@ from handlers.coop import (
     coop_art_callback,
 )
 from handlers.admin_tools import get_media_file_id
+from handlers.character_skins import (
+    addskin, removeskin, listskins, giveskin, skins,
+    skin_page_callback, skin_buy_callback, skin_equip_callback,
+    skin_remove_callback, skin_close_callback, skin_noop_callback,
+)
 
 logger = logging.getLogger(__name__)
 log = logger  # alias used in some handlers
@@ -412,6 +417,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'travel_locked',
         'travel_to_',
         'goto_start',
+        'skin_page|', 'skin_buy|', 'skin_equip|',
+        'skin_remove', 'skin_close', 'skin_noop',
         'mkt_sel_',
     )
     is_cross = any(data.startswith(p) or data == p for p in cross_user)
@@ -524,6 +531,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('shop_'):             await shop_page_callback(update, context)
     elif data.startswith('myskills_'):          await myskills_callback(update, context)
     elif data == 'goto_start':                await start(update, context)
+    elif data.startswith('skin_page|'):   await skin_page_callback(update, context)
+    elif data.startswith('skin_buy|'):    await skin_buy_callback(update, context)
+    elif data.startswith('skin_equip|'):  await skin_equip_callback(update, context)
+    elif data == 'skin_remove':           await skin_remove_callback(update, context)
+    elif data == 'skin_close':            await skin_close_callback(update, context)
+    elif data == 'skin_noop':             await skin_noop_callback(update, context)
     elif data.startswith('know_'):               await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
@@ -768,6 +781,11 @@ def main():
         ('spwithdraw',      spwithdraw),
         ('spgiveaway',      spgiveaway),
         ('spjoin',          spjoin),
+        ('addskin',         addskin),
+        ('removeskin',      removeskin),
+        ('listskins',       listskins),
+        ('giveskin',        giveskin),
+        ('skins',           skins),
         ('banktax',         banktax),
     ]
     for cmd, handler in everywhere:
