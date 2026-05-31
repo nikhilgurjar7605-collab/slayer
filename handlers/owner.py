@@ -961,6 +961,161 @@ async def ownerviewstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownerfixtierstats @user [tier]
+    Auto-calculate and apply the correct stats for a player based on their
+    level, faction, and tier. If tier is omitted, uses their current tier.
+
+    Usage:
+      /ownerfixtierstats @user        — fix using current tier
+      /ownerfixtierstats @user 2      — fix and set to tier 2
+      /ownerfixtierstats @user 0      — reset to base (no tier)
+
+    Formula:
+      stat = base_faction_stat + (level-1) * growth_per_level + tier * tier_boost
+    """
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await update.message.reply_text("❌ Owner only.")
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "📋 *OWNER FIX TIER STATS — Usage*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "`/ownerfixtierstats @user` — fix stats using current tier\n"
+            "`/ownerfixtierstats @user 2` — fix stats and set to tier 2\n"
+            "`/ownerfixtierstats @user 0` — reset to base stats (tier 0)\n\n"
+            "_Automatically calculates correct HP, STA, STR, SPD, DEF_\n"
+            "_based on the player's level, faction, and tier. No math needed._",
+            parse_mode="Markdown"
+        )
+        return
+
+    target = _find_any_player(args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+
+    # Determine target tier
+    if len(args) >= 2:
+        try:
+            new_tier = int(args[1])
+            if not (0 <= new_tier <= 5):
+                await update.message.reply_text("❌ Tier must be between 0 and 5.")
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Tier must be a number (0–5).")
+            return
+    else:
+        new_tier = target.get("potential_tier", 0)
+
+    # ── Base stats per faction ──────────────────────────────────────────
+    faction = target.get("faction", "slayer")
+    if faction == "demon":
+        BASE = {"max_hp": 280, "max_sta": 160, "str_stat": 26, "spd": 20, "def_stat": 14}
+    else:  # slayer (default)
+        BASE = {"max_hp": 240, "max_sta": 170, "str_stat": 22, "spd": 20, "def_stat": 18}
+
+    # ── Growth per level-up ─────────────────────────────────────────────
+    LEVEL_GROWTH = {"max_hp": 15, "max_sta": 10, "str_stat": 2, "spd": 1, "def_stat": 1}
+
+    # ── Boost per tier (from meditate awaken) ───────────────────────────
+    TIER_BOOST = {"max_hp": 15, "max_sta": 10, "str_stat": 2, "spd": 1, "def_stat": 1}
+
+    level = max(1, get_level(target.get("xp", 0)))
+    level_steps = level - 1
+
+    # Calculate correct values
+    correct = {}
+    for stat in BASE:
+        correct[stat] = (
+            BASE[stat]
+            + (level_steps * LEVEL_GROWTH[stat])
+            + (new_tier * TIER_BOOST[stat])
+        )
+
+    # Also set hp/sta to full
+    correct["hp"]  = correct["max_hp"]
+    correct["sta"] = correct["max_sta"]
+    correct["potential_tier"] = new_tier
+
+    # ── Build snapshot of old values ────────────────────────────────────
+    tier_names = {
+        0: "None",
+        1: "🌟 Tier I (Awakened)",
+        2: "✨ Tier II (Ascended)",
+        3: "💎 Tier III (Transcended)",
+        4: "🌌 Tier IV (Demi-God)",
+        5: "👑 Tier V (Supreme Sovereign)",
+    }
+    old_tier_name = tier_names.get(target.get("potential_tier", 0), "?")
+    new_tier_name = tier_names.get(new_tier, "?")
+
+    changes = []
+    stat_labels = {
+        "max_hp":   "❤️  Max HP",
+        "hp":       "❤️  HP",
+        "max_sta":  "🌀 Max STA",
+        "sta":      "🌀 STA",
+        "str_stat": "💪 STR",
+        "spd":      "⚡ SPD",
+        "def_stat": "🛡️  DEF",
+        "potential_tier": "🏆 Tier",
+    }
+    for field, new_val in correct.items():
+        old_val = target.get(field, 0)
+        label   = stat_labels.get(field, field)
+        if field == "potential_tier":
+            changes.append(f"  {label}: *{old_tier_name}* → *{new_tier_name}*")
+        else:
+            diff = new_val - old_val
+            sign = "+" if diff >= 0 else ""
+            changes.append(f"  {label}: *{old_val:,}* → *{new_val:,}* ({sign}{diff:,})")
+
+    # Apply
+    update_player(target["user_id"], **correct)
+
+    from handlers.logs import log_action
+    log_action(uid, "ownerfixtierstats", target["user_id"], target["name"],
+               f"lv={level} faction={faction} tier={new_tier}")
+
+    faction_emoji = "👹" if faction == "demon" else "🗡️"
+
+    result = (
+        f"✅ *TIER STATS FIXED — {target['name'].upper()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{faction_emoji} Faction: *{faction.title()}*\n"
+        f"📈 Level: *{level}*\n"
+        f"🏆 Tier: *{new_tier_name}*\n"
+        f"⚔️ DMG Bonus: *+{new_tier * 5}%*\n"
+        f"🔰 DMG Reduce: *+{new_tier * 3}%*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *Changes Applied:*\n"
+        + "\n".join(changes)
+    )
+
+    await update.message.reply_text(result, parse_mode="Markdown")
+
+    try:
+        await context.bot.send_message(
+            chat_id=target["user_id"],
+            text=(
+                f"⚙️ *Your stats have been corrected by the admin!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏆 Tier: *{new_tier_name}*\n"
+                f"❤️ HP fully restored to *{correct['max_hp']:,}*\n"
+                f"🌀 STA fully restored to *{correct['max_sta']:,}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"_Use /profile to view your updated stats._"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        log.error("[ownerfixtierstats notify] %s", e)
+
+
 async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownerhelp — Full owner command list."""
     if not is_owner(update.effective_user.id):
@@ -981,7 +1136,8 @@ async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/ownerban @u` / `/ownerunban @u`\n\n"
         "*Stats & Anti-Scam:*\n"
         "`/ownersetstats @u stat val [stat val ...]` — manually fix any stat\n"
-        "`/ownerviewstats @u` — full stats snapshot with old values\n\n"
+        "`/ownerviewstats @u` — full stats snapshot with old values\n"
+        "`/ownerfixtierstats @u [tier]` — auto-fix all stats by level+faction+tier\n\n"
         "*Giving:*\n"
         "`/ownergive @u xp|yen|sp|items amount` — give anything\n"
         "`/ownergivepet @u PetName` — give pet directly\n"
