@@ -154,7 +154,7 @@ from handlers.logs import logs, logs_callback, logstats, logsearch, loguser, log
 from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle,
     ownergive, ownerreset, ownerban, ownerunban, ownermsg, ownerstats,
     ownerplayers, ownerplayers_callback, owner_godmode_active,
-    ownersetstats, ownerviewstats, ownerhelp)
+    ownersetstats, ownerviewstats, ownerfixtierstats, ownerhelp)
 from handlers.maintenance import (
     maintenance, approveuser, unapproveuser, approvedlist,
     is_maintenance_on, is_approved_user
@@ -723,8 +723,9 @@ def main():
         ('ownermsg',        ownermsg),
         ('ownerstats',      ownerstats),
         ('ownerplayers',    ownerplayers),
-        ('ownersetstats',   ownersetstats),
-        ('ownerviewstats',  ownerviewstats),
+        ('ownersetstats',      ownersetstats),
+        ('ownerviewstats',     ownerviewstats),
+        ('ownerfixtierstats',  ownerfixtierstats),
         ('ownerhelp',       ownerhelp),
         ('maintenance',     maintenance),
         ('approveuser',     approveuser),
