@@ -83,30 +83,45 @@ def end_coop_battle(host_id):
     )
 
 
+async def _jb_reply(update, text, **kwargs):
+    """Reply helper that works for both /joinbattle command and callback triggers."""
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(text, **kwargs)
+        except Exception:
+            try:
+                await update.callback_query.message.reply_text(text, **kwargs)
+            except Exception as e:
+                log.error("[joinbattle reply] %s", e)
+    elif update.message:
+        await update.message.reply_text(text, **kwargs)
+
+
 @dm_only
 async def joinbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player:
-        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        await _jb_reply(update, "❌ No character found. Use /start to create one.")
         return
 
     party = get_party(user_id)
     if not party:
-        await update.message.reply_text(
+        await _jb_reply(
+            update,
             "👥 *No party found!*\nJoin a party first with `/party`.",
             parse_mode='Markdown'
         )
         return
 
     leader_id = party['leader_id']
-    members   = get_party_member_ids(party)
 
     # ── LEADER: show battle status ────────────────────────────────────────
     if leader_id == user_id:
         my_state = get_battle_state(user_id)
         if not my_state or not my_state.get('in_combat'):
-            await update.message.reply_text(
+            await _jb_reply(
+                update,
                 "⚔️ *You need to be in combat first!*\n\n"
                 "Use /explore to find an enemy, press *Fight*, then your party members can `/joinbattle`!",
                 parse_mode='Markdown'
@@ -120,7 +135,8 @@ async def joinbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if gp: g_names.append(f"👤 {gp['name']}")
 
         bar = hp_bar(my_state['enemy_hp'], my_state['enemy_max_hp'])
-        await update.message.reply_text(
+        await _jb_reply(
+            update,
             f"⚔️ *YOUR BATTLE IS OPEN!*\n\n"
             f"{my_state['enemy_emoji']} *{my_state['enemy_name']}*\n"
             f"❤️ {my_state['enemy_hp']}/{my_state['enemy_max_hp']} {bar}\n\n"
@@ -133,7 +149,8 @@ async def joinbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── MEMBER: join the leader's active battle ───────────────────────────
     if get_battle_state(user_id):
-        await update.message.reply_text(
+        await _jb_reply(
+            update,
             "⚔️ *You're already in your own battle!*\nFinish it first before joining another.",
             parse_mode='Markdown'
         )
@@ -141,7 +158,8 @@ async def joinbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     leader_state = get_battle_state(leader_id)
     if not leader_state or not leader_state.get('in_combat'):
-        await update.message.reply_text(
+        await _jb_reply(
+            update,
             "❌ *Your party leader is not in combat.*\nWait for them to start a fight!",
             parse_mode='Markdown'
         )
@@ -149,7 +167,18 @@ async def joinbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     existing = col("coop_battles").find_one({"guest_id": user_id, "host_id": leader_id, "status": "active"})
     if existing:
-        await update.message.reply_text("⚔️ You're already in this co-op battle!")
+        # Already joined — show the battle screen with buttons so they can continue
+        state = leader_state
+        bar   = hp_bar(state['enemy_hp'], state['enemy_max_hp'])
+        await _jb_reply(
+            update,
+            f"⚔️ *Already in this co-op battle!*\n\n"
+            f"{state['enemy_emoji']} *{state['enemy_name']}*\n"
+            f"❤️ {state['enemy_hp']}/{state['enemy_max_hp']} {bar}\n\n"
+            f"Use the buttons below to attack!",
+            parse_mode='Markdown',
+            reply_markup=build_coop_keyboard()
+        )
         return
 
     col("coop_battles").insert_one({
@@ -163,7 +192,8 @@ async def joinbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state  = leader_state
     bar    = hp_bar(state['enemy_hp'], state['enemy_max_hp'])
 
-    await update.message.reply_text(
+    await _jb_reply(
+        update,
         f"✅ *JOINED CO-OP BATTLE!*\n\n"
         f"Helping *{leader['name']}* fight:\n"
         f"{state['enemy_emoji']} *{state['enemy_name']}*\n"
