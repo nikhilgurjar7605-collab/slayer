@@ -12,6 +12,17 @@ def _get_display_bank_doc(user_id: int) -> dict:
     return get_bank(user_id) or {}
 
 
+def _get_current_interest_rate() -> float:
+    """Pull interest rate from bank_settings collection."""
+    try:
+        doc = col("bank_settings").find_one({"key": "interest_rate"})
+        if doc and "value" in doc:
+            return float(doc["value"])
+    except Exception:
+        pass
+    return 0.0
+
+
 @dm_only
 async def bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -24,6 +35,7 @@ async def bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lvl = b.get("bank_level", 1)
     bal = int(b.get("balance", 0) or 0)
     limit = 999999999
+    rate  = _get_current_interest_rate()
 
     await update.message.reply_text(
         f"*DEMON SLAYER BANK*\n"
@@ -32,9 +44,11 @@ async def bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Balance: *{bal:,} Yen*\n"
         f"Limit: *{limit:,} Yen*\n"
         f"Wallet: *{player['yen']:,} Yen*\n"
+        f"\U0001f4b0 Daily Interest: *{rate:.2f}%*\n"
         f"---------------------\n"
         f"`/deposit [amount]` - Deposit Yen\n"
         f"`/withdraw [amount]` - Withdraw\n"
+        f"`/claiminterest` - Claim daily interest\n"
         f"`/bankupgrade` - Upgrade bank level",
         parse_mode="Markdown",
     )
