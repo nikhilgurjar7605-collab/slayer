@@ -197,6 +197,13 @@ from handlers.character_skins import (
     skin_page_callback, skin_buy_callback, skin_equip_callback,
     skin_remove_callback, skin_close_callback, skin_noop_callback,
 )
+from handlers.skin_customise import (
+    addaccessory, removeaccessory, listaccessories, giveaccessory,
+    customise, mycharacter,
+    cust_slot_callback, cust_buy_callback, cust_equip_callback,
+    cust_unequip_callback, cust_back_callback, cust_close_callback,
+    cust_noop_callback, cust_preview_callback,
+)
 
 logger = logging.getLogger(__name__)
 log = logger  # alias used in some handlers
@@ -419,6 +426,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'goto_start',
         'skin_page|', 'skin_buy|', 'skin_equip|',
         'skin_remove', 'skin_close', 'skin_noop',
+        'cust_slot|', 'cust_buy|', 'cust_equip|', 'cust_unequip|',
+        'cust_back', 'cust_close', 'cust_noop', 'cust_preview',
         'mkt_sel_',
     )
     is_cross = any(data.startswith(p) or data == p for p in cross_user)
@@ -537,7 +546,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'skin_remove':           await skin_remove_callback(update, context)
     elif data == 'skin_close':            await skin_close_callback(update, context)
     elif data == 'skin_noop':             await skin_noop_callback(update, context)
-    elif data.startswith('know_'):               await know_callback(update, context)
+    elif data.startswith('cust_slot|'):   await cust_slot_callback(update, context)
+    elif data.startswith('cust_buy|'):    await cust_buy_callback(update, context)
+    elif data.startswith('cust_equip|'):  await cust_equip_callback(update, context)
+    elif data.startswith('cust_unequip|'): await cust_unequip_callback(update, context)
+    elif data == 'cust_back':             await cust_back_callback(update, context)
+    elif data == 'cust_close':            await cust_close_callback(update, context)
+    elif data == 'cust_noop':             await cust_noop_callback(update, context)
+    elif data == 'cust_preview':          await cust_preview_callback(update, context)
+    elif data.startswith('know_'):        await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
     else:
@@ -781,12 +798,18 @@ def main():
         ('spwithdraw',      spwithdraw),
         ('spgiveaway',      spgiveaway),
         ('spjoin',          spjoin),
-        ('addskin',         addskin),
-        ('removeskin',      removeskin),
-        ('listskins',       listskins),
-        ('giveskin',        giveskin),
-        ('skins',           skins),
-        ('banktax',         banktax),
+        ('addskin',          addskin),
+        ('removeskin',       removeskin),
+        ('listskins',        listskins),
+        ('giveskin',         giveskin),
+        ('skins',            skins),
+        ('addaccessory',     addaccessory),
+        ('removeaccessory',  removeaccessory),
+        ('listaccessories',  listaccessories),
+        ('giveaccessory',    giveaccessory),
+        ('customise',        customise),
+        ('mycharacter',      mycharacter),
+        ('banktax',          banktax),
     ]
     for cmd, handler in everywhere:
         app.add_handler(CommandHandler(cmd, handler))  # no filter = works everywhere
