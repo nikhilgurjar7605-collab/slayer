@@ -65,7 +65,7 @@ from handlers.auction import auction, bid
 from handlers.mission import mission, select_mission, confirm_mission, abandon_mission, mission_back
 from handlers.daily import daily, streak
 from handlers.gift import gift
-from handlers.social import check, givesp as user_givesp
+from handlers.social import check, givesp as user_givesp  # user /givesp — gives from own SP
 from handlers.pets import (
     pets, pet, hatchegg, feedpet, petskill,
     petbattle, releasepet, catch,
@@ -91,7 +91,7 @@ from handlers.clan_raid import (clanraid, clanrole,
     raid_items_callback, raid_use_item_callback,
     raid_retreat_callback, raid_back_callback)
 from handlers.admin import (addsudo, removesudo, listadmins, announce, ban, unban, giveultimate,
-                             resetplayer, givexp, giveyen, givesp, botstats,
+                             resetplayer, givexp, giveyen, givesp as admin_givesp, botstats,
                              startraid, stopraid, addauction,
                              openblackmarket, closeblackmarket, addblackmarket,
                              adminhelp, myid, admin_unstuck, activeusers, backup, restore,
@@ -106,6 +106,7 @@ from handlers.challenge import (challenge, duel_accept_callback, duel_decline_ca
                                   duel_items_menu, duel_use_item, duel_surrender, duel_back)
 from handlers.market import market, market_list, unlist, markethistory, market_buy
 from handlers.bank import bank, deposit, withdraw, bankupgrade, banktax
+from handlers.bank_interest import setinterest, interestinfo, claiminterest
 from handlers.worldbank import (
     worldbank,
     worlddeposit,
@@ -769,7 +770,8 @@ def main():
         ('giveyen',         giveyen),
         ('giveitem',        giveitem),
         ('resetplayer',     resetplayer),
-        ('givesp',          givesp),
+        ('givesp',          user_givesp),   # ALL players — gives from own SP
+        ('adminsp',         admin_givesp),  # admin only — grants SP freely
         ('check',           check),
         ('pets',            pets),
         ('catch',           catch),
@@ -780,7 +782,6 @@ def main():
         ('petbattle',       petbattle),
         ('releasepet',      releasepet),
         ('inspect',         check),
-        ('usersp',          user_givesp),
         ('botstats',        botstats),
         ('startraid',       startraid),
         ('stopraid',        stopraid),
@@ -816,6 +817,9 @@ def main():
         ('customise',        customise),
         ('mycharacter',      mycharacter),
         ('banktax',          banktax),
+        ('setinterest',      setinterest),
+        ('interestinfo',     interestinfo),
+        ('claiminterest',    claiminterest),
     ]
     for cmd, handler in everywhere:
         app.add_handler(CommandHandler(cmd, handler))  # no filter = works everywhere
