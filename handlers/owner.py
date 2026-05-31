@@ -721,6 +721,246 @@ async def ownersetloc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def ownersetstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownersetstats @user stat value [stat value ...]
+    Manually set or adjust any combat stat for a player.
+    
+    Supported stats: hp, max_hp, sta, max_sta, str, spd, def,
+                     xp, yen, skill_points, potential, potential_tier
+    
+    Usage examples:
+      /ownersetstats @user str 30 def 20
+      /ownersetstats @user max_hp 300 max_sta 200 str 40 spd 25 def 22
+      /ownersetstats @user potential_tier 2 potential 0
+    """
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await update.message.reply_text("❌ Owner only.")
+        return
+
+    args = context.args or []
+    if len(args) < 3:
+        await update.message.reply_text(
+            "📋 *OWNER SET STATS — Usage*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "`/ownersetstats @user <stat> <value> [<stat> <value> ...]`\n\n"
+            "*Supported stats:*\n"
+            "• `hp` / `max_hp`\n"
+            "• `sta` / `max_sta`\n"
+            "• `str` → str\\_stat\n"
+            "• `spd`\n"
+            "• `def` → def\\_stat\n"
+            "• `xp`\n"
+            "• `yen`\n"
+            "• `skill_points` / `sp`\n"
+            "• `potential`\n"
+            "• `potential_tier`\n\n"
+            "*Examples:*\n"
+            "`/ownersetstats @user str 35 def 25 spd 22`\n"
+            "`/ownersetstats @user max_hp 350 max_sta 220`\n"
+            "`/ownersetstats @user potential_tier 3 potential 0`",
+            parse_mode="Markdown"
+        )
+        return
+
+    target = _find_any_player(args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+
+    # Stat alias map: user-friendly name → DB field name
+    STAT_ALIASES = {
+        "hp":             "hp",
+        "max_hp":         "max_hp",
+        "sta":            "sta",
+        "stamina":        "sta",
+        "max_sta":        "max_sta",
+        "max_stamina":    "max_sta",
+        "str":            "str_stat",
+        "str_stat":       "str_stat",
+        "strength":       "str_stat",
+        "spd":            "spd",
+        "speed":          "spd",
+        "def":            "def_stat",
+        "def_stat":       "def_stat",
+        "defense":        "def_stat",
+        "xp":             "xp",
+        "yen":            "yen",
+        "sp":             "skill_points",
+        "skill_points":   "skill_points",
+        "potential":      "potential",
+        "potential_tier": "potential_tier",
+        "tier":           "potential_tier",
+    }
+
+    stat_pairs = args[1:]
+    if len(stat_pairs) % 2 != 0:
+        await update.message.reply_text(
+            "❌ Stats must come in pairs: `stat value stat value ...`\n"
+            "Example: `/ownersetstats @user str 30 def 20`",
+            parse_mode="Markdown"
+        )
+        return
+
+    updates = {}
+    errors  = []
+    changes = []  # human-readable list of what changed
+
+    # Save old stats snapshot before applying changes
+    OLD_STAT_SNAPSHOT = {
+        "HP":             f"{target.get('hp', '?')}/{target.get('max_hp', '?')}",
+        "STA":            f"{target.get('sta', '?')}/{target.get('max_sta', '?')}",
+        "STR":            str(target.get('str_stat', '?')),
+        "SPD":            str(target.get('spd', '?')),
+        "DEF":            str(target.get('def_stat', '?')),
+        "XP":             str(target.get('xp', '?')),
+        "YEN":            f"{target.get('yen', 0):,}¥",
+        "SP":             str(target.get('skill_points', '?')),
+        "Potential":      f"{target.get('potential', 0)}%",
+        "Potential Tier": str(target.get('potential_tier', 0)),
+    }
+
+    for i in range(0, len(stat_pairs), 2):
+        raw_stat  = stat_pairs[i].lower()
+        raw_value = stat_pairs[i + 1]
+
+        db_field = STAT_ALIASES.get(raw_stat)
+        if not db_field:
+            errors.append(f"Unknown stat: `{raw_stat}`")
+            continue
+
+        try:
+            value = int(raw_value)
+        except ValueError:
+            errors.append(f"Bad value for `{raw_stat}`: `{raw_value}` (must be integer)")
+            continue
+
+        # Clamp potential to 0–100
+        if db_field == "potential":
+            value = max(0, min(100, value))
+
+        old_val = target.get(db_field, 0)
+        updates[db_field] = value
+        changes.append(f"  • `{db_field}`: *{old_val}* → *{value}*")
+
+    if errors:
+        await update.message.reply_text(
+            "❌ *Errors found:*\n" + "\n".join(errors),
+            parse_mode="Markdown"
+        )
+        return
+
+    if not updates:
+        await update.message.reply_text("❌ No valid stat changes provided.")
+        return
+
+    # Apply all updates atomically
+    update_player(target["user_id"], **updates)
+
+    # Log the action
+    from handlers.logs import log_action
+    log_action(uid, "ownersetstats", target["user_id"], target["name"],
+               " | ".join(f"{k}={v}" for k, v in updates.items()))
+
+    # Build old stats display
+    old_stats_text = "\n".join(f"  {k}: {v}" for k, v in OLD_STAT_SNAPSHOT.items())
+
+    result_msg = (
+        f"✅ *STATS UPDATED — {target['name'].upper()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *Changes Applied:*\n"
+        + "\n".join(changes) + "\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 *Old Stats (before change):*\n"
+        f"{old_stats_text}"
+    )
+
+    await update.message.reply_text(result_msg, parse_mode="Markdown")
+
+    # Optionally notify the player
+    try:
+        notif_lines = [f"  {c.strip().lstrip('• ')}" for c in changes]
+        await context.bot.send_message(
+            chat_id=target["user_id"],
+            text=(
+                f"⚙️ *Admin has adjusted your stats!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                + "\n".join(notif_lines) + "\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"_Use /profile to view your updated stats._"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        log.error("[ownersetstats notify] %s", e)
+
+
+async def ownerviewstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownerviewstats @user — View a player's full stats snapshot (owner only)."""
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await update.message.reply_text("❌ Owner only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `/ownerviewstats @username`", parse_mode="Markdown"
+        )
+        return
+
+    target = _find_any_player(context.args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+
+    tier = target.get("potential_tier", 0)
+    tier_labels = {
+        0: "None",
+        1: "🌟 Tier I (Awakened)",
+        2: "✨ Tier II (Ascended)",
+        3: "💎 Tier III (Transcended)",
+        4: "🌌 Tier IV (Demi-God)",
+        5: "👑 Tier V (Supreme Sovereign)",
+    }
+    tier_label = tier_labels.get(tier, f"🔥 Tier {tier}")
+    dmg_bonus  = tier * 5
+    def_bonus  = tier * 3
+
+    from utils.helpers import get_level
+    level = get_level(target.get("xp", 0))
+
+    await update.message.reply_text(
+        f"🔍 *STATS SNAPSHOT — {target['name'].upper()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🆔 User ID:        `{target['user_id']}`\n"
+        f"👤 Username:       @{target.get('username', 'N/A')}\n"
+        f"⚔️  Faction:       {target.get('faction', '?').title()}\n"
+        f"🌬️  Style:         {target.get('style', '?')}\n"
+        f"📈 Level:          {level}\n"
+        f"⭐ XP:             {target.get('xp', 0):,}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"❤️  HP:            {target.get('hp', '?')} / {target.get('max_hp', '?')}\n"
+        f"🌀 STA:            {target.get('sta', '?')} / {target.get('max_sta', '?')}\n"
+        f"💪 STR:            {target.get('str_stat', '?')}\n"
+        f"⚡ SPD:            {target.get('spd', '?')}\n"
+        f"🛡️  DEF:           {target.get('def_stat', '?')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔮 Potential:      {target.get('potential', 0)}%\n"
+        f"🏆 Tier:           {tier_label}\n"
+        f"⚔️  DMG Bonus:     +{dmg_bonus}% (from tier)\n"
+        f"🔰 DMG Reduce:     +{def_bonus}% (from tier)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Yen:            {target.get('yen', 0):,}¥\n"
+        f"💠 Skill Points:   {target.get('skill_points', 0)}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🗡️ Sword:          {target.get('equipped_sword', 'None')}\n"
+        f"👘 Armor:          {target.get('equipped_armor', 'None')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"_Use /ownersetstats @{target.get('username', target['name'])} to fix any value._",
+        parse_mode="Markdown"
+    )
+
+
 async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownerhelp — Full owner command list."""
     if not is_owner(update.effective_user.id):
@@ -739,9 +979,14 @@ async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/ownerclearinv @u` — wipe inventory\n"
         "`/ownerreset @u` — full reset\n"
         "`/ownerban @u` / `/ownerunban @u`\n\n"
+        "*Stats & Anti-Scam:*\n"
+        "`/ownersetstats @u stat val [stat val ...]` — manually fix any stat\n"
+        "`/ownerviewstats @u` — full stats snapshot with old values\n\n"
         "*Giving:*\n"
         "`/ownergive @u xp|yen|sp|items amount` — give anything\n"
         "`/ownergivepet @u PetName` — give pet directly\n"
+        "`/givegifbanner @u <store_id>` — give GIF banner free (by store ID)\n"
+        "`/givegifbanner @u file <file_id>` — give custom GIF banner free\n"
         "`/giveultimate @u` — give legendary demon art\n"
         "`/giveslayermark @u` / `/givedemonmark @u`\n\n"
         "*Bot Control:*\n"
