@@ -71,8 +71,8 @@ GIF_BANNER_STAR_COST = int(os.environ.get("GIF_BANNER_STAR_COST", 50))
 # ═══════════════════════════════════════════════════
 
 # Game Settings
-MAX_PARTY_SIZE = 3
-MIN_RAID_PLAYERS = 20
+MAX_PARTY_SIZE = 4
+MIN_RAID_PLAYERS = 15
 STARTING_YEN = 1000
 STARTING_HP = 200
 STARTING_STA = 150
