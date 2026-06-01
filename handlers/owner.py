@@ -1150,61 +1150,638 @@ async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.error("[ownerfixtierstats notify] %s", e)
 
 
+async def ownerrestorestats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ownerrestorestats @user stat:value [stat:value ...]
+
+    Restore a player's stats to specific old values — never reduces below current.
+    Use this when a previous command accidentally nerfed someone's stats.
+
+    Supported stats:
+      max_hp  hp  max_sta  sta  str_stat  spd  def_stat  potential_tier
+
+    Example:
+      /ownerrestorestats @darkslayer max_hp:4500 str_stat:320 spd:180
+      /ownerrestorestats @darkslayer max_hp:4500 hp:4500 max_sta:2100 sta:2100 str_stat:320 spd:180 def_stat:150
+
+    The command ONLY raises stats — it will never reduce a stat that is already higher.
+    To force-set exact values regardless, use /ownersetstats instead.
+    """
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await update.message.reply_text("❌ Owner only.")
+        return
+
+    args = context.args or []
+
+    if len(args) < 2:
+        await update.message.reply_text(
+            "📋 *RESTORE STATS — Usage*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "`/ownerrestorestats @user stat:value [stat:value ...]`\n\n"
+            "*Valid stats:*\n"
+            "`max_hp` `hp` `max_sta` `sta`\n"
+            "`str_stat` `spd` `def_stat` `potential_tier`\n\n"
+            "*Example:*\n"
+            "`/ownerrestorestats @darkslayer max_hp:4500 str_stat:320 spd:180`\n\n"
+            "_Stats are NEVER reduced — only raised to the provided value._\n"
+            "_To force-set exact values, use /ownersetstats._",
+            parse_mode="Markdown"
+        )
+        return
+
+    target = _find_any_player(args[0])
+    if not target:
+        await update.message.reply_text("❌ Player not found.")
+        return
+
+    VALID_STATS = {
+        "max_hp", "hp", "max_sta", "sta",
+        "str_stat", "spd", "def_stat", "potential_tier"
+    }
+
+    parsed   = {}
+    bad_args = []
+
+    for token in args[1:]:
+        if ":" not in token:
+            bad_args.append(f"`{token}` (missing colon — use stat:value)")
+            continue
+        stat_key, _, raw_val = token.partition(":")
+        stat_key = stat_key.strip().lower()
+        if stat_key not in VALID_STATS:
+            bad_args.append(f"`{token}` (unknown stat '{stat_key}')")
+            continue
+        try:
+            val = int(raw_val.strip().replace(",", ""))
+            if val < 0:
+                bad_args.append(f"`{token}` (value must be ≥ 0)")
+                continue
+            parsed[stat_key] = val
+        except ValueError:
+            bad_args.append(f"`{token}` ('{raw_val}' is not a number)")
+
+    if bad_args:
+        await update.message.reply_text(
+            "⚠️ *Some arguments were invalid:*\n" + "\n".join(bad_args) +
+            "\n\nFix them and try again.",
+            parse_mode="Markdown"
+        )
+        return
+
+    if not parsed:
+        await update.message.reply_text("❌ No valid stat:value pairs provided.")
+        return
+
+    # ── Apply: NEVER reduce — take max(old, new) ──────────────────────
+    to_apply = {}
+    changes  = []
+
+    for stat, restore_val in parsed.items():
+        old_val = int(target.get(stat, 0) or 0)
+        new_val = max(old_val, restore_val)
+        to_apply[stat] = new_val
+
+        label = STAT_LABELS.get(stat, stat)
+        diff  = new_val - old_val
+        if diff == 0:
+            changes.append(f"  {label}: *{old_val:,}* _(no change — already higher)_")
+        else:
+            changes.append(f"  {label}: *{old_val:,}* → *{new_val:,}* _(+{diff:,} restored)_")
+
+    # If max_hp/max_sta was raised, also bring hp/sta up proportionally
+    if "max_hp" in to_apply and "hp" not in to_apply:
+        old_hp  = int(target.get("hp", 0) or 0)
+        new_hp  = max(old_hp, to_apply["max_hp"])
+        to_apply["hp"] = new_hp
+        if new_hp != old_hp:
+            changes.append(f"  ❤️  HP: *{old_hp:,}* → *{new_hp:,}* _(auto-raised to match MaxHP)_")
+
+    if "max_sta" in to_apply and "sta" not in to_apply:
+        old_sta = int(target.get("sta", 0) or 0)
+        new_sta = max(old_sta, to_apply["max_sta"])
+        to_apply["sta"] = new_sta
+        if new_sta != old_sta:
+            changes.append(f"  🌀 STA: *{old_sta:,}* → *{new_sta:,}* _(auto-raised to match MaxSTA)_")
+
+    update_player(target["user_id"], **to_apply)
+
+    from handlers.logs import log_action
+    summary = " ".join(f"{k}={v}" for k, v in parsed.items())
+    log_action(uid, "ownerrestorestats", target["user_id"], target["name"], summary)
+
+    faction_e = "👹" if target.get("faction") == "demon" else "🗡️"
+
+    await update.message.reply_text(
+        f"✅ *STATS RESTORED — {target['name'].upper()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{faction_e} {target.get('faction','slayer').title()}\n\n"
+        f"📊 *Result (stats never reduced):*\n"
+        + "\n".join(changes) +
+        f"\n\n_Use /ownerviewstats @{target.get('username', target['name'])} to verify._",
+        parse_mode="Markdown"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=target["user_id"],
+            text=(
+                f"⚙️ *Your stats have been restored by an admin.*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"_Use /profile to see your updated stats._"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        log.error("[ownerrestorestats notify] %s", e)
+
+
+# ── Owner Help Pages ──────────────────────────────────────────────────────
+# Each page is (button_label, page_key, text_content)
+_OWNER_HELP_PAGES = {
+
+    "menu": None,   # special — the main category picker
+
+    "player": (
+        "👤 Player Management",
+        "👤 *PLAYER MANAGEMENT*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔍 *View & Info:*\n"
+        "`/owneraccess @u` — full player data dump\n"
+        "`/ownerviewstats @u` — detailed stats snapshot\n"
+        "`/check @u` / `/inspect @u` — quick player view\n"
+        "`/ownerplayers` — browse all players with pagination\n"
+        "`/activeusers` — recently active players\n"
+        "`/botstats` — total players, economy, usage stats\n\n"
+        "✏️ *Edit Player:*\n"
+        "`/ownersetlevel @u <lvl>` — set exact level (1–100)\n"
+        "`/ownersetstyle @u <style>` — force any breathing style\n"
+        "`/ownersetfaction @u slayer|demon` — change faction\n"
+        "`/ownersetloc @u <location>` — teleport to any region\n"
+        "`/ownersetyen @u <amount>` — set yen balance\n"
+        "`/ownersetsp @u <amount>` — set skill points\n"
+        "`/ownerclearinv @u` — wipe entire inventory\n"
+        "`/ownerreset @u` — full reset (keeps user ID)\n"
+        "`/resetplayer @u` — alias for full reset\n"
+        "`/adminunstuck @u` — unstuck stuck battle state\n"
+        "`/unstuck` / `/forceunstuck` — player self-unstuck\n\n"
+        "🔒 *Bans:*\n"
+        "`/ownerban @u` — owner-level ban\n"
+        "`/ownerunban @u` — owner-level unban\n"
+        "`/ban @u [reason]` — admin ban\n"
+        "`/unban @u` — admin unban\n"
+    ),
+
+    "stats": (
+        "📊 Stats & Anti-Nerf",
+        "📊 *STATS & ANTI-NERF COMMANDS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚠️ _All commands below NEVER reduce stats — only raise them._\n\n"
+        "👁 *View:*\n"
+        "`/ownerviewstats @u` — full live stats snapshot\n"
+        "`/ownerfixtierstats @u` — VIEW stats vs formula (no changes)\n\n"
+        "🔧 *Fix / Restore:*\n"
+        "`/ownersetstats @u stat val [stat val ...]`\n"
+        "  → Force-set exact values (can reduce — use carefully)\n"
+        "  → Stats: `max_hp hp max_sta sta str_stat spd def_stat`\n\n"
+        "`/ownerfixtierstats @u <tier>`\n"
+        "  → Apply formula-correct stats for level+faction+tier\n"
+        "  → Never reduces — takes max(formula, current)\n"
+        "  → Tiers: 0=None 1=Awakened 2=Ascended 3=Transcended\n"
+        "           4=Demi-God 5=Supreme Sovereign\n\n"
+        "`/ownerrestorestats @u stat:value [stat:value ...]`\n"
+        "  → Restore specific old values — never nerfs\n"
+        "  → Example: `/ownerrestorestats @u max_hp:4500 str_stat:320`\n"
+        "  → Stats: `max_hp hp max_sta sta str_stat spd def_stat potential_tier`\n\n"
+        "💡 *Workflow for nerfed player:*\n"
+        "  1. `/ownerviewstats @u` — see current vs correct\n"
+        "  2. `/ownerrestorestats @u max_hp:X str_stat:Y` — restore\n"
+        "  3. `/ownerviewstats @u` — verify\n"
+    ),
+
+    "giving": (
+        "🎁 Giving Commands",
+        "🎁 *GIVING COMMANDS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💰 *Resources:*\n"
+        "`/ownergive @u xp|yen|sp|items <amount>` — bulk give anything\n"
+        "`/add @u yen|exp|sp|items <amount>` — admin give\n"
+        "`/givexp @u <amount>` — give XP directly\n"
+        "`/giveyen @u <amount>` — give Yen directly\n"
+        "`/givesp @u <amount>` — give Skill Points\n"
+        "`/giveitem @u <item name>` — give specific item\n"
+        "`/adminsp @u <amount>` — admin grant SP freely\n\n"
+        "🎴 *Styles & Arts:*\n"
+        "`/givestyle @u <style name>` — give any breathing style\n"
+        "`/giveart @u <art name>` — give any demon art\n"
+        "`/giveultimate @u` — give Absolute Biokinesis (legendary)\n\n"
+        "🏆 *Marks & Special:*\n"
+        "`/giveslayermark @u` — give Slayer Mark\n"
+        "`/givedemonmark @u` — give Demon Mark\n"
+        "`/ownergivepet @u <PetName>` — give pet directly\n\n"
+        "🖼 *Banners & Cosmetics:*\n"
+        "`/givegifbanner @u <store_id>` — give GIF banner (by store ID)\n"
+        "`/givegifbanner @u file <file_id>` — give custom GIF banner\n"
+        "`/giveskin @u <skin name>` — give skin\n"
+        "`/giveaccessory @u <name>` — give accessory\n\n"
+        "🌟 *Master Give:*\n"
+        "`/master @u` — give EVERYTHING to a player at once\n"
+    ),
+
+    "moderation": (
+        "🛡️ Moderation",
+        "🛡️ *MODERATION COMMANDS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👑 *Owner — Admin Control:*\n"
+        "`/addsudo @u` — promote user to admin\n"
+        "`/removesudo @u` — remove admin rights\n"
+        "`/listadmins` — list all current admins\n\n"
+        "🔨 *Bans:*\n"
+        "`/ownerban @u` — owner-level ban (strongest)\n"
+        "`/ownerunban @u` — owner-level unban\n"
+        "`/ban @u [reason]` — standard admin ban\n"
+        "`/unban @u` — standard admin unban\n\n"
+        "🔇 *Maintenance:*\n"
+        "`/ownermode on|off` — toggle maintenance mode\n"
+        "`/maintenance` — check maintenance status\n"
+        "`/approveuser @u` — whitelist user during maintenance\n"
+        "`/unapproveuser @u` — remove whitelist\n"
+        "`/approvedlist` — see all whitelisted users\n\n"
+        "📢 *Broadcasts:*\n"
+        "`/announce <text>` — broadcast to all players\n"
+        "`/bcast <text>` — alias for announce\n"
+        "`/ownermsg @u <text>` — DM any specific player\n"
+        "`/clanannounce <text>` — announce inside a clan\n\n"
+        "📋 *Logs:*\n"
+        "`/logs` — recent admin action log\n"
+        "`/logstats` — log usage statistics\n"
+        "`/logsearch <term>` — search log entries\n"
+        "`/loguser @u` — all actions on a player\n"
+        "`/suggestions` — view player suggestions\n"
+    ),
+
+    "economy": (
+        "💰 Economy & Market",
+        "💰 *ECONOMY & MARKET COMMANDS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🏦 *World Bank:*\n"
+        "`/worldbank` — view world bank\n"
+        "`/worlddeposit <amount>` — deposit into world bank\n"
+        "`/worldwithdraw <amount>` — withdraw\n"
+        "`/wbaddstock <item> <qty>` — add stock\n"
+        "`/wbsetprice <item> <price>` — set price\n"
+        "`/wbinfo` — bank info\n"
+        "`/wbevent` — trigger bank event\n"
+        "`/wbblackmarket` — world bank black market\n"
+        "`/bankgiveaway 24hr|15m|25s` — start bank giveaway\n"
+        "`/banktax 0.1%` _(reply to user)_ — charge tax\n"
+        "`/setinterest <rate>` — set interest rate\n"
+        "`/interestinfo` — view current rate\n\n"
+        "🌑 *Black Market:*\n"
+        "`/openblackmarket` — open the black market\n"
+        "`/closeblackmarket` — close it\n"
+        "`/addblackmarket <item> <price> <stock>` — add item\n"
+        "`/blackmarket` — player-facing BM view\n\n"
+        "🏪 *Auction:*\n"
+        "`/addauction` — add new auction item\n"
+        "`/auction` — view active auctions\n"
+        "`/bid <amount>` — bid on an item\n\n"
+        "🏦 *SP Bank:*\n"
+        "`/spbank` — SP bank overview\n"
+        "`/spdeposit <amount>` — deposit SP\n"
+        "`/spwithdraw <amount>` — withdraw SP\n"
+        "`/spgiveaway` — start SP giveaway\n"
+        "`/spjoin` — join SP giveaway\n\n"
+        "🎰 *Lottery:*\n"
+        "`/lottery` — play the lottery\n"
+    ),
+
+    "events_raids": (
+        "⚔️ Events & Raids",
+        "⚔️ *EVENTS & RAIDS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🎉 *Events:*\n"
+        "`/event` — view current event\n"
+        "`/events` — list all events\n"
+        "`/eventlist` — event list (admin)\n"
+        "`/eventend` — end active event\n"
+        "`/eventresults` — view event results\n"
+        "`/vote` — vote in event\n\n"
+        "⚔️ *Global Raids:*\n"
+        "`/startraid <BossName>` — launch a global raid\n"
+        "`/stopraid` — cancel active raid\n"
+        "`/joinraid` — join active raid\n"
+        "`/raidattack` — attack in raid\n\n"
+        "🏰 *Clan Raids:*\n"
+        "`/clanraid` — start a clan raid\n\n"
+        "📋 *Missions:*\n"
+        "`/addmission` — add new mission\n"
+        "`/removemission <id>` — remove mission\n"
+        "`/listmissions` — list all missions\n"
+        "`/mission` — player mission view\n\n"
+        "🤝 *Co-op:*\n"
+        "`/joinbattle` — join party leader's battle\n"
+        "`/party` — view/manage party\n"
+        "`/invite @u` — invite to party\n"
+    ),
+
+    "cosmetics": (
+        "🎨 Cosmetics & Skins",
+        "🎨 *COSMETICS & SKINS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🖼 *GIF Banners:*\n"
+        "`/gifstore` — view GIF banner store\n"
+        "`/addgifbanner` — add banner to store\n"
+        "`/removegifbanner <id>` — remove banner\n"
+        "`/listgifbanners` — list all banners\n"
+        "`/setmygifbanner <id>` — equip a banner\n"
+        "`/givegifbanner @u <id>` — give banner to player\n"
+        "`/setbanner` — set profile banner (image)\n"
+        "`/clearbanner` — remove profile banner\n"
+        "`/bannershow` — show banner preview\n"
+        "`/bannerpending` — banners pending approval\n"
+        "`/approvebanner` — approve a banner\n\n"
+        "👘 *Skins:*\n"
+        "`/skins` — view your skins\n"
+        "`/addskin` — add skin to pool\n"
+        "`/removeskin <name>` — remove skin\n"
+        "`/listskins` — list all skins\n"
+        "`/giveskin @u <name>` — give skin to player\n\n"
+        "💎 *Accessories:*\n"
+        "`/customise` — open customisation menu\n"
+        "`/mycharacter` — view character appearance\n"
+        "`/addaccessory` — add accessory to pool\n"
+        "`/removeaccessory <name>` — remove accessory\n"
+        "`/listaccessories` — list all accessories\n"
+        "`/giveaccessory @u <name>` — give accessory\n\n"
+        "🖼 *Style Images:*\n"
+        "`/setstyleimage <style>` — set image for a style\n"
+        "`/setimage` — set a general image\n"
+        "`/listimages` — list stored images\n"
+    ),
+
+    "clans": (
+        "🏯 Clans",
+        "🏯 *CLAN COMMANDS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🏗 *Clan Admin:*\n"
+        "`/createclan <name>` — create a new clan\n"
+        "`/clandisband` — disband your clan\n"
+        "`/renameclan <new name>` — rename clan\n"
+        "`/clanimage` — set clan image\n"
+        "`/clanslogan <text>` — set clan slogan\n"
+        "`/clanreq <level>` — set join requirement\n"
+        "`/setclanlink` — set clan invite link\n\n"
+        "👥 *Clan Members:*\n"
+        "`/clan` — your clan overview\n"
+        "`/claninfo <name>` — view any clan's info\n"
+        "`/clanmembers` — list all members\n"
+        "`/clan_list` — browse all clans\n"
+        "`/clanleaderboard` — clan rankings\n"
+        "`/joinclan <name>` — join a clan\n"
+        "`/leaveclan` — leave clan\n"
+        "`/kick @u` — kick member\n"
+        "`/promotevice @u` — promote to vice-leader\n"
+        "`/demote @u` — demote vice-leader\n"
+        "`/clanrole @u <role>` — set member role\n\n"
+        "💰 *Clan Economy:*\n"
+        "`/clandeposit <amount>` — deposit to clan bank\n"
+        "`/clanwithdraw <amount>` — withdraw from clan bank\n"
+        "`/clanannounce <text>` — announce to clan members\n"
+        "`/clanraid` — start a clan raid\n"
+    ),
+
+    "bot_control": (
+        "🤖 Bot Control",
+        "🤖 *BOT CONTROL*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚙️ *Owner Controls:*\n"
+        "`/ownermode on|off` — toggle maintenance / lockdown\n"
+        "`/ownermode` — view current mode\n"
+        "`/ownerstats` — full bot analytics & counts\n"
+        "`/ownerplayers` — paginated player browser\n"
+        "`/master` — emergency owner super-panel\n\n"
+        "💾 *Backup & Restore:*\n"
+        "`/backup` — export full database as JSON file\n"
+        "`/restore` — import database from JSON file\n\n"
+        "🗄 *Database:*\n"
+        "`/sqlview` — run raw DB query (read-only)\n\n"
+        "🔧 *Maintenance:*\n"
+        "`/maintenance` — check maintenance status\n"
+        "`/approveuser @u` — whitelist during maintenance\n"
+        "`/unapproveuser @u` — remove whitelist\n"
+        "`/approvedlist` — list whitelisted users\n\n"
+        "🔑 *Admin Rights:*\n"
+        "`/addsudo @u` — promote to admin\n"
+        "`/removesudo @u` — revoke admin\n"
+        "`/listadmins` — all current admins\n\n"
+        "📊 *Logs & Monitoring:*\n"
+        "`/logs` — recent action log\n"
+        "`/logstats` — log statistics\n"
+        "`/logsearch <term>` — search logs\n"
+        "`/loguser @u` — all actions on a user\n"
+        "`/botstats` — player counts + economy overview\n"
+        "`/activeusers` — recently active players\n\n"
+        "💬 *Messaging:*\n"
+        "`/ownermsg @u <text>` — DM any player\n"
+        "`/announce <text>` — broadcast to all\n"
+        "`/bcast <text>` — broadcast alias\n"
+    ),
+
+    "info_dex": (
+        "📖 Info & Item Dex",
+        "📖 *INFO & ITEM DEX*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🗂 *Item Dex — Browse all game items:*\n"
+        "`/itemdex` — category menu\n"
+        "`/itemdex swords` — ⚔️ Nichirin blades + prices\n"
+        "`/itemdex items` — 🧪 Consumables (potions, pills)\n"
+        "`/itemdex armor` — 🥋 Armor & haori\n"
+        "`/itemdex pet_items` — 🐾 Pet traps, eggs, food\n"
+        "`/itemdex breathing` — 💧 All breathing styles\n"
+        "`/itemdex demon_arts` — 🩸 All demon arts\n"
+        "`/itemdex pets` — All catchable pets & passives\n"
+        "`/itemdex drops` — Enemy drop items\n"
+        "`/itemdex blackmarket` — 🌑 Live black market stock\n"
+        "`/itemdex <search>` — Search across all categories\n"
+        "`/itemdex swords 2` — Page 2 of swords\n\n"
+        "🔍 *Style & Skill Lookup:*\n"
+        "`/info <style name>` — Full style info + forms\n"
+        "`/infoall` — All styles overview\n"
+        "`/skillinfo <name>` — Skill details & bonuses\n"
+        "`/skilllist` — List all available skills\n"
+        "`/know` — Game encyclopedia (tabbed UI)\n"
+        "`/guide` — Full gameplay guide\n\n"
+        "🖼 *Image Management:*\n"
+        "`/listimages` — All stored style images\n"
+        "`/setstyleimage <style>` — Set image for a style\n"
+        "`/setimage` — Set general game image\n"
+        "`/listgifbanners` — All GIF banners\n"
+        "`/bannerpending` — Banners awaiting approval\n"
+        "`/approvebanner` — Approve a banner\n\n"
+        "📋 *Suggestions:*\n"
+        "`/suggest <text>` — Submit suggestion (player)\n"
+        "`/suggestions` — View all suggestions (admin)\n"
+        "`/is <id>` — View specific suggestion\n"
+        "`/myid` — Your Telegram user ID\n"
+    ),
+
+    "combat_pets": (
+        "⚔️ Combat & Pets",
+        "⚔️ *COMBAT & PETS*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🐾 *Pet Admin:*\n"
+        "`/ownergivepet @u <PetName>` — give pet directly\n"
+        "`/pets` — view your pet stable\n"
+        "`/pet <name>` — activate a pet\n"
+        "`/releasepet <name>` — release a pet\n"
+        "`/feedpet` — feed active pet\n"
+        "`/petskill` — use pet's battle skill\n"
+        "`/petbattle @u` — challenge someone's pet\n"
+        "`/hatchegg` — hatch a pet egg\n"
+        "`/catch` — attempt to catch a wild pet\n\n"
+        "🤝 *Pet Trades:*\n"
+        "`/petoffer @u` — send a pet trade offer\n"
+        "`/petoffer` _(reply to message)_ — offer to replier\n"
+        "`/pettrade @u` — alias for petoffer\n\n"
+        "⚔️ *Combat:*\n"
+        "`/explore` — explore and find enemies\n"
+        "`/meditate` — meditate to awaken tier\n"
+        "`/challenge @u` — duel another player\n"
+        "`/joinbattle` — join party leader's coop battle\n"
+        "`/joinraid` — join active global raid\n"
+        "`/raidattack` — attack in raid\n"
+        "`/clanraid` — start clan raid\n\n"
+        "🗡 *Styles & Arts:*\n"
+        "`/breathing` — your breathing styles\n"
+        "`/art` — your demon arts\n"
+        "`/mytechnique` — your unlocked techniques\n"
+        "`/myart` — your active demon arts\n"
+        "`/changestyle` — switch active style\n"
+        "`/slayermark` — activate Slayer Mark\n"
+        "`/demonmark` — activate Demon Mark\n"
+        "`/hybrid` — enter hybrid mode\n"
+        "`/re_hybrid` — reset hybrid\n"
+        "`/upgrade` — upgrade your style\n"
+        "`/upgradetoggle` / `/hybridtoggle` — toggle auto\n"
+    ),
+}
+
+
+def _ownerhelp_menu_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👤 Player Mgmt",   callback_data="ownerhelp_player"),
+            InlineKeyboardButton("📊 Stats",          callback_data="ownerhelp_stats"),
+        ],
+        [
+            InlineKeyboardButton("🎁 Giving",         callback_data="ownerhelp_giving"),
+            InlineKeyboardButton("🛡️ Moderation",     callback_data="ownerhelp_moderation"),
+        ],
+        [
+            InlineKeyboardButton("💰 Economy",        callback_data="ownerhelp_economy"),
+            InlineKeyboardButton("⚔️ Events & Raids", callback_data="ownerhelp_events_raids"),
+        ],
+        [
+            InlineKeyboardButton("🎨 Cosmetics",      callback_data="ownerhelp_cosmetics"),
+            InlineKeyboardButton("🏯 Clans",          callback_data="ownerhelp_clans"),
+        ],
+        [
+            InlineKeyboardButton("🤖 Bot Control",    callback_data="ownerhelp_bot_control"),
+            InlineKeyboardButton("📖 Info & Dex",     callback_data="ownerhelp_info_dex"),
+        ],
+        [
+            InlineKeyboardButton("⚔️ Combat & Pets",  callback_data="ownerhelp_combat_pets"),
+        ],
+    ])
+
+
+def _ownerhelp_back_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 Back to Menu", callback_data="ownerhelp_menu")
+    ]])
+
+
 async def ownerhelp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/ownerhelp — Full owner command list."""
+    """/ownerhelp — Interactive paginated owner command list."""
     if not is_owner(update.effective_user.id):
         return
 
-    # Split into two messages to avoid Telegram 4096-char limit
-    msg1 = (
-        "👑 *OWNER COMMANDS — Part 1/2*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👤 *Player Management:*\n"
-        "`/owneraccess @u` — view player info\n"
-        "`/ownersetlevel @u lvl` — set level\n"
-        "`/ownersetstyle @u style` — set style\n"
-        "`/ownersetyen @u amount` — set yen\n"
-        "`/ownersetsp @u amount` — set skill points\n"
-        "`/ownersetfaction @u slayer|demon` — change faction\n"
-        "`/ownersetloc @u location` — teleport player\n"
-        "`/ownerclearinv @u` — wipe inventory\n"
-        "`/ownerreset @u` — full reset\n"
-        "`/ownerban @u` / `/ownerunban @u`\n\n"
-        "📊 *Stats & Anti-Scam:*\n"
-        "`/ownersetstats @u stat val [stat val ...]` — manually fix any stat\n"
-        "`/ownerviewstats @u` — full stats snapshot\n"
-        "`/ownerfixtierstats @u` — 👁 VIEW stats (no changes)\n"
-        "`/ownerfixtierstats @u [tier]` — ✅ Apply tier stats (never nerfs)\n\n"
-        "🎁 *Giving:*\n"
-        "`/ownergive @u xp|yen|sp|items amount` — give anything\n"
-        "`/ownergivepet @u PetName` — give pet directly\n"
-        "`/givegifbanner @u <store_id>` — give GIF banner free\n"
-        "`/givegifbanner @u file <file_id>` — give custom GIF banner\n"
-        "`/giveultimate @u` — give legendary demon art\n"
-        "`/giveslayermark @u` / `/givedemonmark @u`"
-    )
-
-    msg2 = (
-        "👑 *OWNER COMMANDS — Part 2/2*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🤖 *Bot Control:*\n"
-        "`/ownermode on|off` — maintenance mode\n"
-        "`/ownerstats` — full bot stats\n"
-        "`/ownerplayers` — browse all players\n"
-        "`/ownermsg @u text` — DM any player\n"
-        "`/backup` — export DB\n"
-        "`/restore` — import DB\n"
-        "`/master` — emergency owner panel\n\n"
-        "📖 *Info & Dex:*\n"
-        "`/itemdex` — 🗂 browse ALL items (shop, drops, black market)\n"
-        "`/itemdex swords` — filter by category\n"
-        "`/itemdex potion` — search by name\n\n"
-        "🔧 *Help:*\n"
-        "`/ownerhelp` — this list\n\n"
+    menu_text = (
+        "👑 *OWNER COMMAND CENTRE*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "_Tip: `/ownerfixtierstats @u` without tier shows stats only._\n"
-        "_Stats are NEVER reduced by fixtierstats — always takes max value._"
+        "Select a category to view all commands:\n\n"
+        "👤 Player Mgmt — view/edit/reset players\n"
+        "📊 Stats — fix/restore/view stats\n"
+        "🎁 Giving — give yen, XP, items, arts, pets\n"
+        "🛡️ Moderation — bans, admins, logs, broadcasts\n"
+        "💰 Economy — bank, market, auction, black market\n"
+        "⚔️ Events & Raids — events, raids, missions, coop\n"
+        "🎨 Cosmetics — skins, banners, accessories\n"
+        "🏯 Clans — clan creation, members, bank\n"
+        "🤖 Bot Control — maintenance, backup, DB\n"
+        "📖 Info & Dex — itemdex, guide, styles, images\n"
+        "⚔️ Combat & Pets — pets, trade, combat, styles"
     )
 
-    await update.message.reply_text(msg1, parse_mode="Markdown")
-    await update.message.reply_text(msg2, parse_mode="Markdown")
+    await update.message.reply_text(
+        menu_text,
+        parse_mode="Markdown",
+        reply_markup=_ownerhelp_menu_markup()
+    )
+
+
+async def ownerhelp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all ownerhelp_ button presses."""
+    query   = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if not is_owner(user_id):
+        await query.answer("❌ Owner only.", show_alert=True)
+        return
+
+    data = query.data  # e.g. "ownerhelp_player" or "ownerhelp_menu"
+    page_key = data[len("ownerhelp_"):]   # strip prefix
+
+    if page_key == "menu":
+        menu_text = (
+            "👑 *OWNER COMMAND CENTRE*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "Select a category to view all commands:\n\n"
+            "👤 Player Mgmt — view/edit/reset players\n"
+            "📊 Stats — fix/restore/view stats\n"
+            "🎁 Giving — give yen, XP, items, arts, pets\n"
+            "🛡️ Moderation — bans, admins, logs, broadcasts\n"
+            "💰 Economy — bank, market, auction, black market\n"
+            "⚔️ Events & Raids — events, raids, missions, coop\n"
+            "🎨 Cosmetics — skins, banners, accessories\n"
+            "🏯 Clans — clan creation, members, bank\n"
+            "🤖 Bot Control — maintenance, backup, DB\n"
+            "📖 Info & Dex — itemdex, guide, styles, images\n"
+            "⚔️ Combat & Pets — pets, trade, combat, styles"
+        )
+        try:
+            await query.edit_message_text(
+                menu_text,
+                parse_mode="Markdown",
+                reply_markup=_ownerhelp_menu_markup()
+            )
+        except Exception:
+            pass
+        return
+
+    page = _OWNER_HELP_PAGES.get(page_key)
+    if not page:
+        await query.answer("Unknown page.", show_alert=True)
+        return
+
+    _label, content = page
+    try:
+        await query.edit_message_text(
+            content,
+            parse_mode="Markdown",
+            reply_markup=_ownerhelp_back_markup()
+        )
+    except Exception as e:
+        if "not modified" not in str(e).lower():
+            log.error("[ownerhelp_callback] %s", e)
