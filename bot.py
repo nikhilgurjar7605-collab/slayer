@@ -154,7 +154,7 @@ from handlers.logs import logs, logs_callback, logstats, logsearch, loguser, log
 from handlers.owner import (ownermode, owneraccess, ownersetlevel, ownersetstyle,
     ownergive, ownerreset, ownerban, ownerunban, ownermsg, ownerstats,
     ownerplayers, ownerplayers_callback, owner_godmode_active,
-    ownersetstats, ownerviewstats, ownerfixtierstats, ownerhelp,
+    ownersetstats, ownerviewstats, ownerfixtierstats, ownerhelp, ownerhelp_callback,
     ownersetyen, ownersetsp, ownerclearinv, ownersetfaction, ownergivepet, ownersetloc)
 from handlers.itemdex import itemdex
 from handlers.maintenance import (
@@ -169,7 +169,7 @@ from handlers.style_art import breathing, art, givestyle, giveart
 from handlers.imgupload import setimage, listimages
 from handlers.update import update_command, update_callback, recent_updates
 from handlers.forge import forge_command, forge_callback
-from handlers.pettrade import pettrade, petoffer, petaccept
+from handlers.pettrade import pettrade, petoffer, petaccept, pt_callback
 
 from handlers.meditate import meditate, meditate_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
@@ -434,6 +434,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'cust_slot|', 'cust_buy|', 'cust_equip|', 'cust_unequip|',
         'cust_back', 'cust_close', 'cust_noop', 'cust_preview',
         'mkt_sel_',
+        'pt_accept_', 'pt_decline_', 'pt_pick_', 'pt_repick_',
+        'pt_agree_', 'pt_cancel_', 'pt_ipage_', 'pt_tpage_', 'pt_showpick_',
+        'ownerhelp_',
     )
     is_cross = any(data.startswith(p) or data == p for p in cross_user)
 
@@ -562,6 +565,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('know_'):        await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
+    elif data.startswith('pt_'):                 await pt_callback(update, context)
+    elif data.startswith('ownerhelp_'):          await ownerhelp_callback(update, context)
     else:
         await query.answer("Unknown action.", show_alert=True)
 
