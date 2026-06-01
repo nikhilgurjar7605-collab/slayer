@@ -1152,6 +1152,7 @@ async def ownerfixtierstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ownerrestorestats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/ownerrestorestats @user stat:value [stat:value ...]
+    OR /ownerrestorestats @user stat value [stat value ...]
 
     Restore a player's stats to specific old values — never reduces below current.
     Use this when a previous command accidentally nerfed someone's stats.
@@ -1161,7 +1162,7 @@ async def ownerrestorestats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     Example:
       /ownerrestorestats @darkslayer max_hp:4500 str_stat:320 spd:180
-      /ownerrestorestats @darkslayer max_hp:4500 hp:4500 max_sta:2100 sta:2100 str_stat:320 spd:180 def_stat:150
+      /ownerrestorestats 5033184932 max_hp:6673 str_stat:440 spd 378 max_sta 3625 def_stat 459
 
     The command ONLY raises stats — it will never reduce a stat that is already higher.
     To force-set exact values regardless, use /ownersetstats instead.
@@ -1177,7 +1178,8 @@ async def ownerrestorestats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📋 *RESTORE STATS — Usage*\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "`/ownerrestorestats @user stat:value [stat:value ...]`\n\n"
+            "`/ownerrestorestats @user stat:value [stat:value ...]`\n"
+            "`/ownerrestorestats @user stat value [stat value ...]`\n\n"
             "*Valid stats:*\n"
             "`max_hp` `hp` `max_sta` `sta`\n"
             "`str_stat` `spd` `def_stat` `potential_tier`\n\n"
@@ -1199,26 +1201,67 @@ async def ownerrestorestats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "str_stat", "spd", "def_stat", "potential_tier"
     }
 
+    # Aliases so typos like spd_stat, speed, defense etc. still work
+    STAT_ALIASES = {
+        "spd_stat":       "spd",
+        "speed":          "spd",
+        "str":            "str_stat",
+        "strength":       "str_stat",
+        "def":            "def_stat",
+        "defense":        "def_stat",
+        "defence":        "def_stat",
+        "stamina":        "sta",
+        "max_stamina":    "max_sta",
+        "max_hp":         "max_hp",
+        "hp":             "hp",
+        "sta":            "sta",
+        "max_sta":        "max_sta",
+        "str_stat":       "str_stat",
+        "spd":            "spd",
+        "def_stat":       "def_stat",
+        "potential_tier": "potential_tier",
+    }
+
+    # ── Flexible token parser: handles both "stat:value" and "stat value" ──
+    # First expand all "stat:value" tokens into ["stat", "value"]
+    expanded = []
+    for token in args[1:]:
+        if ":" in token:
+            stat_part, _, val_part = token.partition(":")
+            expanded.append(stat_part.strip())
+            if val_part.strip():
+                expanded.append(val_part.strip())
+        else:
+            expanded.append(token)
+
     parsed   = {}
     bad_args = []
-
-    for token in args[1:]:
-        if ":" not in token:
-            bad_args.append(f"`{token}` (missing colon — use stat:value)")
-            continue
-        stat_key, _, raw_val = token.partition(":")
-        stat_key = stat_key.strip().lower()
-        if stat_key not in VALID_STATS:
-            bad_args.append(f"`{token}` (unknown stat '{stat_key}')")
-            continue
-        try:
-            val = int(raw_val.strip().replace(",", ""))
-            if val < 0:
-                bad_args.append(f"`{token}` (value must be ≥ 0)")
+    i = 0
+    while i < len(expanded):
+        token = expanded[i]
+        # Is this token a stat name?
+        stat_key = token.lower()
+        resolved = STAT_ALIASES.get(stat_key) or (stat_key if stat_key in VALID_STATS else None)
+        if resolved:
+            # Expect the next token to be the value
+            if i + 1 >= len(expanded):
+                bad_args.append(f"`{token}` (no value provided after stat name)")
+                i += 1
                 continue
-            parsed[stat_key] = val
-        except ValueError:
-            bad_args.append(f"`{token}` ('{raw_val}' is not a number)")
+            raw_val = expanded[i + 1]
+            try:
+                val = int(raw_val.strip().replace(",", ""))
+                if val < 0:
+                    bad_args.append(f"`{token}:{raw_val}` (value must be ≥ 0)")
+                else:
+                    parsed[resolved] = val
+            except ValueError:
+                bad_args.append(f"`{token} {raw_val}` ('{raw_val}' is not a number)")
+            i += 2
+        else:
+            # Not a stat name — could be a stray value or typo
+            bad_args.append(f"`{token}` (unknown stat name)")
+            i += 1
 
     if bad_args:
         await update.message.reply_text(
