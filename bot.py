@@ -835,7 +835,6 @@ def main():
         ('setinterest',      setinterest),
         ('interestinfo',     interestinfo),
         ('claiminterest',    claiminterest),
-        ('bmremove',         bm_remove),
     ]
     for cmd, handler in everywhere:
         app.add_handler(CommandHandler(cmd, handler))  # no filter = works everywhere
