@@ -666,6 +666,12 @@ async def _do_agree(query, user_id: int, rest: str, context):
     trade_id = rest[:24]
     side     = rest[25:]
 
+    # Always answer the button press immediately to stop the spinner
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
     trade = _get_trade(trade_id)
     if not trade:
         return await query.answer("❌ Trade not found.", show_alert=True)
@@ -687,9 +693,54 @@ async def _do_agree(query, user_id: int, rest: str, context):
     trade = _get_trade(trade_id)
 
     if trade["initiator_agreed"] and trade["target_agreed"]:
-        await _execute(query, trade, context)
+        await _execute(trade, context)
+        # Edit the trade screen to show success
+        trade_chat = trade.get("trade_chat_id") or trade["target_id"]
+        trade_msg  = trade.get("trade_msg_id")
+        i_pl   = col("players").find_one({"user_id": trade["initiator_id"]}) or {}
+        t_pl   = col("players").find_one({"user_id": trade["target_id"]})   or {}
+        i_name = i_pl.get("name", "Trader 1")
+        t_name = t_pl.get("name", "Trader 2")
+        i_cfg  = PETS.get(trade["initiator_pet"], {})
+        t_cfg  = PETS.get(trade["target_pet"], {})
+        success = (
+            f"🎉 *PET TRADE COMPLETE!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 *{i_name}* gave: {i_cfg.get('emoji','🐾')} *{trade['initiator_pet']}*\n"
+            f"👤 *{t_name}* gave: {t_cfg.get('emoji','🐾')} *{trade['target_pet']}*\n\n"
+            f"✅ _Pets swapped successfully! Use /pets to see your stable._"
+        )
+        try:
+            await context.bot.edit_message_text(
+                chat_id=trade_chat,
+                message_id=trade_msg,
+                text=success,
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            if "not modified" not in str(e).lower():
+                log.error("[pt_agree execute edit] %s", e)
     else:
-        trade, i_name, t_name = await _refresh(query, trade, context)
+        # Redraw the trade screen via bot API directly — don't rely on query.message location
+        i_pl   = col("players").find_one({"user_id": trade["initiator_id"]}) or {}
+        t_pl   = col("players").find_one({"user_id": trade["target_id"]})   or {}
+        i_name = i_pl.get("name", "Trader 1")
+        t_name = t_pl.get("name", "Trader 2")
+        text, markup = _build_screen(trade, i_name, t_name)
+        trade_chat = trade.get("trade_chat_id") or trade["target_id"]
+        trade_msg  = trade.get("trade_msg_id")
+        try:
+            await context.bot.edit_message_text(
+                chat_id=trade_chat,
+                message_id=trade_msg,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=markup,
+            )
+        except Exception as e:
+            if "not modified" not in str(e).lower():
+                log.error("[pt_agree refresh] %s", e)
+
         agreer_name = i_name if side == "i" else t_name
         other_id    = trade["target_id"] if side == "i" else trade["initiator_id"]
         try:
@@ -784,8 +835,8 @@ async def _do_showpick(query, user_id: int, trade_id: str, context):
 # TRADE EXECUTION
 # ══════════════════════════════════════════════════════════════════════════
 
-async def _execute(query, trade: dict, context):
-    """Swap pets between both players."""
+async def _execute(trade: dict, context):
+    """Swap pets between both players. Screen update is handled by caller."""
     i_id     = trade["initiator_id"]
     t_id     = trade["target_id"]
     i_pet    = trade["initiator_pet"]
@@ -797,18 +848,47 @@ async def _execute(query, trade: dict, context):
 
     if not i_doc or not t_doc:
         _set(trade_id, status="cancelled")
-        return await _edit(
-            query,
-            "❌ *Trade failed* — one or both pets could not be found.\n"
-            "_They may have been released or traded elsewhere._",
-            parse_mode="Markdown"
-        )
+        trade_chat = trade.get("trade_chat_id") or t_id
+        trade_msg  = trade.get("trade_msg_id")
+        try:
+            await context.bot.edit_message_text(
+                chat_id=trade_chat,
+                message_id=trade_msg,
+                text=(
+                    "❌ *Trade failed* — one or both pets could not be found.\n"
+                    "_They may have been released or traded elsewhere._"
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return False
 
     # Duplicate-name clash guard
     if col("pets").find_one({"user_id": i_id, "name": t_pet}):
-        return await query.answer(f"❌ You already own a {t_pet}!", show_alert=True)
+        trade_chat = trade.get("trade_chat_id") or t_id
+        trade_msg  = trade.get("trade_msg_id")
+        try:
+            await context.bot.edit_message_text(
+                chat_id=trade_chat, message_id=trade_msg,
+                text=f"❌ Trade failed — you already own a *{t_pet}*!",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return False
     if col("pets").find_one({"user_id": t_id, "name": i_pet}):
-        return await query.answer(f"❌ The other player already owns a {i_pet}!", show_alert=True)
+        trade_chat = trade.get("trade_chat_id") or t_id
+        trade_msg  = trade.get("trade_msg_id")
+        try:
+            await context.bot.edit_message_text(
+                chat_id=trade_chat, message_id=trade_msg,
+                text=f"❌ Trade failed — the other player already owns a *{i_pet}*!",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return False
 
     was_i_active = i_doc.get("active", False)
     was_t_active = t_doc.get("active", False)
@@ -827,21 +907,10 @@ async def _execute(query, trade: dict, context):
 
     i_pl   = col("players").find_one({"user_id": i_id}) or {}
     t_pl   = col("players").find_one({"user_id": t_id}) or {}
-    i_name = i_pl.get("name", "Trader 1")
-    t_name = t_pl.get("name", "Trader 2")
     i_cfg  = PETS.get(i_pet, {})
     t_cfg  = PETS.get(t_pet, {})
 
-    success = (
-        f"🎉 *PET TRADE COMPLETE!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 *{i_name}* gave: {i_cfg.get('emoji','🐾')} *{i_pet}*\n"
-        f"👤 *{t_name}* gave: {t_cfg.get('emoji','🐾')} *{t_pet}*\n\n"
-        f"✅ _Pets swapped successfully! Use /pets to see your stable._"
-    )
-
-    await _edit(query, success, parse_mode="Markdown")
-
+    # Notify initiator via DM
     try:
         await context.bot.send_message(
             chat_id=i_id,
@@ -854,7 +923,25 @@ async def _execute(query, trade: dict, context):
             parse_mode="Markdown"
         )
     except Exception as e:
-        log.error("[pt_execute notify] %s", e)
+        log.error("[pt_execute notify i] %s", e)
+
+    # Notify target via DM (only if trade screen is NOT in their DM, i.e. group trade)
+    if trade.get("group_chat_id"):
+        try:
+            await context.bot.send_message(
+                chat_id=t_id,
+                text=(
+                    f"🎉 *Pet trade complete!*\n\n"
+                    f"You gave: {t_cfg.get('emoji','🐾')} *{t_pet}*\n"
+                    f"You received: {i_cfg.get('emoji','🐾')} *{i_pet}*\n\n"
+                    f"Use /pets to view your stable!"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            log.error("[pt_execute notify t] %s", e)
+
+    return True
 
 
 # ── alias kept for backward compat ──────────────────────────────────────
