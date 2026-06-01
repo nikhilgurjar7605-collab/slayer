@@ -285,19 +285,29 @@ async def _refresh(query, trade: dict, context):
     trade  = _get_trade(trade["trade_id"])   # always re-fetch latest
     text, markup = _build_screen(trade, i_name, t_name)
 
-    # If the shared screen is in a group, edit via bot (query.message may be
-    # in initiator's DM or a different chat).
-    trade_chat = trade.get("trade_chat_id")
+    # Resolve where the shared trade screen lives.
+    # Fallback to target_id for old trades that predate the trade_chat_id field.
+    trade_chat = trade.get("trade_chat_id") or trade["target_id"]
     trade_msg  = trade.get("trade_msg_id")
+
+    # Are we already editing the trade screen message itself?
     in_trade_chat = (
-        query.message and
+        query.message is not None and
         query.message.chat_id == trade_chat and
         query.message.message_id == trade_msg
     )
+
+    try:
+        await query.answer()   # always ack the button press first
+    except Exception:
+        pass
+
     if in_trade_chat:
+        # Button is on the trade screen — edit in place
         await _edit(query, text, parse_mode="Markdown", reply_markup=markup)
     else:
-        # Edit via bot directly (works for group AND DM screens)
+        # Button is on a notification message (e.g. initiator's "Pick my pet" DM)
+        # Edit the real trade screen via bot API
         try:
             await context.bot.edit_message_text(
                 chat_id=trade_chat,
@@ -306,7 +316,6 @@ async def _refresh(query, trade: dict, context):
                 parse_mode="Markdown",
                 reply_markup=markup,
             )
-            await query.answer()
         except Exception as e:
             if "not modified" not in str(e).lower():
                 log.error("[pt_refresh remote edit] %s", e)
