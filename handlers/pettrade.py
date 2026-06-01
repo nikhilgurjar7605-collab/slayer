@@ -48,7 +48,9 @@ PETS_PER_PAGE     = 6      # buttons shown per page in pet picker
 # DB HELPERS
 # ══════════════════════════════════════════════════════════════════════════
 
-def _create_trade(initiator_id: int, target_id: int) -> str:
+def _create_trade(initiator_id: int, target_id: int,
+                  group_chat_id: int | None = None,
+                  group_msg_thread: int | None = None) -> str:
     result = col("pet_trades").insert_one({
         "initiator_id":     initiator_id,
         "target_id":        target_id,
@@ -57,8 +59,11 @@ def _create_trade(initiator_id: int, target_id: int) -> str:
         "target_pet":       None,
         "initiator_agreed": False,
         "target_agreed":    False,
-        "trade_msg_id":     None,        # message id in target's DM (shared screen)
+        "trade_msg_id":     None,        # message id of shared trade screen
+        "trade_chat_id":    group_chat_id or target_id,  # where screen lives
         "notify_msg_id":    None,        # message id in initiator's DM
+        "group_chat_id":    group_chat_id,   # None = DM flow, int = group flow
+        "group_msg_thread": group_msg_thread,
         "i_page":           0,           # initiator pet-picker page
         "t_page":           0,           # target pet-picker page
         "created_at":       datetime.utcnow(),
@@ -279,7 +284,33 @@ async def _refresh(query, trade: dict, context):
     t_name = t_pl.get("name", "Trader 2")
     trade  = _get_trade(trade["trade_id"])   # always re-fetch latest
     text, markup = _build_screen(trade, i_name, t_name)
-    await _edit(query, text, parse_mode="Markdown", reply_markup=markup)
+
+    # If the shared screen is in a group, edit via bot (query.message may be
+    # in initiator's DM or a different chat).
+    trade_chat = trade.get("trade_chat_id")
+    trade_msg  = trade.get("trade_msg_id")
+    in_trade_chat = (
+        query.message and
+        query.message.chat_id == trade_chat and
+        query.message.message_id == trade_msg
+    )
+    if in_trade_chat:
+        await _edit(query, text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        # Edit via bot directly (works for group AND DM screens)
+        try:
+            await context.bot.edit_message_text(
+                chat_id=trade_chat,
+                message_id=trade_msg,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=markup,
+            )
+            await query.answer()
+        except Exception as e:
+            if "not modified" not in str(e).lower():
+                log.error("[pt_refresh remote edit] %s", e)
+
     return trade, i_name, t_name
 
 
@@ -287,17 +318,19 @@ async def _refresh(query, trade: dict, context):
 # COMMANDS
 # ══════════════════════════════════════════════════════════════════════════
 
-@dm_only
 async def petoffer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/petoffer  — reply to someone's message  OR  /petoffer @username"""
+    """/petoffer  — reply to someone's message  OR  /petoffer @username
+    Works in both DMs and group chats.
+    """
     user_id   = update.effective_user.id
     user_name = update.effective_user.full_name
+    chat      = update.effective_chat
+    is_group  = chat.type in ("group", "supergroup")
 
     # ── Resolve target: reply-based or @username arg ──────────────────
     target_player = None
 
     if update.message.reply_to_message:
-        # Reply mode — target is whoever sent the replied-to message
         replied_user = update.message.reply_to_message.from_user
         if replied_user:
             target_player = col("players").find_one({"user_id": replied_user.id})
@@ -349,43 +382,74 @@ async def petoffer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         {"$set": {"status": "cancelled"}}
     )
 
-    trade_id = _create_trade(user_id, target_id)
+    # In group: trade screen lives in the group. In DM: it lives in target's DM.
+    group_chat_id   = chat.id if is_group else None
+    group_msg_thread = update.message.message_thread_id if is_group else None
+
+    trade_id = _create_trade(user_id, target_id, group_chat_id, group_msg_thread)
 
     markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Accept",  callback_data=f"pt_accept_{trade_id}"),
         InlineKeyboardButton("❌ Decline", callback_data=f"pt_decline_{trade_id}"),
     ]])
 
-    try:
-        sent = await context.bot.send_message(
-            chat_id=target_id,
-            text=(
-                f"🔄 *PET TRADE OFFER*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"👤 *{user_name}* wants to trade pets with you!\n\n"
-                f"If you accept, a shared trade screen will open — "
-                f"both of you choose which pet to offer, then both confirm.\n\n"
-                f"_Offer expires in {TRADE_TIMEOUT_MIN} minutes._"
-            ),
-            parse_mode="Markdown",
-            reply_markup=markup,
-        )
-        _set(trade_id, trade_msg_id=sent.message_id)
+    tname = target_player.get("name", "them")
 
-        tname = target_player.get("name", "them")
-        await update.message.reply_text(
-            f"📨 *Trade offer sent to {tname}!*\n_Waiting for them to accept…_",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        log.error("[petoffer send] %s", e)
-        col("pet_trades").delete_one({"_id": ObjectId(trade_id)})
-        await update.message.reply_text(
-            "❌ Couldn't DM that player. They may have blocked the bot."
-        )
+    if is_group:
+        # Post the trade offer directly in the group so both players can see it
+        try:
+            sent = await context.bot.send_message(
+                chat_id=chat.id,
+                message_thread_id=group_msg_thread,
+                text=(
+                    f"🔄 *PET TRADE OFFER*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"👤 *{user_name}* wants to trade pets with "
+                    f"*{tname}*!\n\n"
+                    f"Only *{tname}* can accept or decline.\n\n"
+                    f"_Offer expires in {TRADE_TIMEOUT_MIN} minutes._"
+                ),
+                parse_mode="Markdown",
+                reply_markup=markup,
+            )
+            _set(trade_id, trade_msg_id=sent.message_id,
+                 trade_chat_id=chat.id)
+        except Exception as e:
+            log.error("[petoffer group send] %s", e)
+            col("pet_trades").delete_one({"_id": ObjectId(trade_id)})
+            await update.message.reply_text("❌ Couldn't post trade offer.")
+    else:
+        # DM flow — send to target's DM
+        try:
+            sent = await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    f"🔄 *PET TRADE OFFER*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"👤 *{user_name}* wants to trade pets with you!\n\n"
+                    f"If you accept, a shared trade screen will open — "
+                    f"both of you choose which pet to offer, then both confirm.\n\n"
+                    f"_Offer expires in {TRADE_TIMEOUT_MIN} minutes._"
+                ),
+                parse_mode="Markdown",
+                reply_markup=markup,
+            )
+            _set(trade_id, trade_msg_id=sent.message_id,
+                 trade_chat_id=target_id)
+
+            await update.message.reply_text(
+                f"📨 *Trade offer sent to {tname}!*\n_Waiting for them to accept…_",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            log.error("[petoffer send] %s", e)
+            col("pet_trades").delete_one({"_id": ObjectId(trade_id)})
+            await update.message.reply_text(
+                "❌ Couldn't DM that player. They may have blocked the bot.\n"
+                "Try using `/petoffer` in a group where both of you are members."
+            )
 
 
-@dm_only
 async def pettrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Alias for /petoffer."""
     await petoffer(update, context)
@@ -435,23 +499,40 @@ async def _do_accept(query, user_id: int, trade_id: str, context):
     _set(trade_id, status="selecting")
     trade, i_name, t_name = await _refresh(query, trade, context)
 
-    # ── Notify initiator with a "pick my pet" shortcut ────────────────
-    try:
-        sent = await context.bot.send_message(
-            chat_id=trade["initiator_id"],
-            text=(
-                f"✅ *{t_name}* accepted your trade offer!\n\n"
-                f"The shared trade screen is now open in their DMs.\n"
-                f"Tap below to choose which pet you want to offer."
-            ),
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🐾 Pick my pet", callback_data=f"pt_showpick_{trade_id}")
-            ]])
-        )
-        _set(trade_id, notify_msg_id=sent.message_id)
-    except Exception as e:
-        log.error("[pt_accept notify] %s", e)
+    is_group = bool(trade.get("group_chat_id"))
+
+    if is_group:
+        # In group mode the trade screen is already visible to everyone;
+        # just notify the initiator so they know to look at the group.
+        try:
+            await context.bot.send_message(
+                chat_id=trade["initiator_id"],
+                text=(
+                    f"✅ *{t_name}* accepted your trade offer!\n\n"
+                    f"Go to the group and pick your pet using the buttons on the trade screen."
+                ),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            log.error("[pt_accept group notify] %s", e)
+    else:
+        # ── DM flow: Notify initiator with a "pick my pet" shortcut ──────────
+        try:
+            sent = await context.bot.send_message(
+                chat_id=trade["initiator_id"],
+                text=(
+                    f"✅ *{t_name}* accepted your trade offer!\n\n"
+                    f"The shared trade screen is now open in their DMs.\n"
+                    f"Tap below to choose which pet you want to offer."
+                ),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🐾 Pick my pet", callback_data=f"pt_showpick_{trade_id}")
+                ]])
+            )
+            _set(trade_id, notify_msg_id=sent.message_id)
+        except Exception as e:
+            log.error("[pt_accept notify] %s", e)
 
 
 async def _do_decline(query, user_id: int, trade_id: str, context):
