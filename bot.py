@@ -835,6 +835,7 @@ def main():
         ('setinterest',      setinterest),
         ('interestinfo',     interestinfo),
         ('claiminterest',    claiminterest),
+        ('bmremove',         bm_remove),
     ]
     for cmd, handler in everywhere:
         app.add_handler(CommandHandler(cmd, handler))  # no filter = works everywhere
@@ -869,6 +870,7 @@ def main():
     ]
     for cmd, handler in guarded_cmds:
         app.add_handler(CommandHandler(cmd, handler))
+        
 
     # ── Reply keyboard button handler ────────────────────────────────────
     async def reply_kb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
