@@ -527,8 +527,8 @@ async def _handle_forge_confirm(query):
 
     # ── Determine item category ────────────────────────────────────────
     cat = item.get("category", "")
-    is_sword = "Sword" in cat or "sword" in item.get("id", "")
-    is_armor = "Armor" in cat or "armor" in item.get("id", "") or "Haori" in item["name"] or "Cloak" in item["name"]
+    is_sword = "Swords" in cat or "sword" in item.get("id", "") or "Blade" in item.get("name", "")
+    is_armor = "Armor" in cat or "Haori" in item.get("name", "") or "Cloak" in item.get("name", "")
 
     # ── Add to inventory as equippable item ───────────────────────────
     if is_sword:
@@ -536,8 +536,8 @@ async def _handle_forge_confirm(query):
     elif is_armor:
         add_item(user_id, item["name"], "armor")
     else:
-        # Demon Relics / accessories — add as gear
-        add_item(user_id, item["name"], "gear")
+        # Demon Relics / accessories — add as material so they show in inventory
+        add_item(user_id, item["name"], "material")
 
     # ── Also apply stat boosts directly (permanent passive buff) ──────
     updates = {}
@@ -605,4 +605,4 @@ async def forge_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-__all__ = ["forge_command", "forge_callback", "forge_back_callback"]
+__all__ = ["forge_command", "forge_callback", "forge_back_callback", "_handle_forge_confirm"]
