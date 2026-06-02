@@ -1,9 +1,21 @@
+"""
+Black Market — open 10pm-6am UTC, admin can force open/close.
+Buy with: /blackmarket to browse, /bmbuy [id or name] to buy
+Or: /buy blackmarket [id or name]
+"""
 import re
+import logging
+from utils.guards import dm_only
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
-from utils.guards import dm_only, admin_only
-from utils.database import get_player, update_player, col, add_item
+from utils.database import get_player, update_player, add_item, col
+from telegram.error import BadRequest, TimedOut
+
+log = logging.getLogger(__name__)
+
+BM_OPEN_HOUR  = 22   # 10 PM UTC
+BM_CLOSE_HOUR = 6    #  6 AM UTC
 
 
 def is_black_market_open():
@@ -11,53 +23,135 @@ def is_black_market_open():
     if forced:
         return True
     hour = datetime.utcnow().hour
-    return hour >= 22 or hour < 6
+    return hour >= BM_OPEN_HOUR or hour < BM_CLOSE_HOUR
+
+
+def expire_bm_items():
+    """Remove items whose 24-hour listing window has passed."""
+    now = datetime.utcnow()
+    result = col("black_market").delete_many({
+        "item_name": {"$ne": "__OPEN__"},
+        "expires_at": {"$lt": now}
+    })
+    if result.deleted_count:
+        log.info("[BM] Expired %d item(s) from black market.", result.deleted_count)
+
+
+def bm_auto_open():
+    """Called by scheduler at 22:00 UTC — opens market naturally (no forced flag needed)."""
+    log.info("[BM] Auto-open triggered (22:00 UTC).")
+    # Nothing to insert — is_black_market_open() already handles the hour check.
+    # But we DO expire stale items so tonight's stock is fresh.
+    expire_bm_items()
+
+
+def bm_auto_close():
+    """Called by scheduler at 06:00 UTC — expires remaining items and removes force-open flag."""
+    log.info("[BM] Auto-close triggered (06:00 UTC). Expiring all BM stock.")
+    # Remove force-open flag if still set
+    col("black_market").delete_many({"item_name": "__OPEN__"})
+    # Expire all remaining items (even those added mid-night)
+    col("black_market").update_many(
+        {"item_name": {"$ne": "__OPEN__"}, "status": "active"},
+        {"$set": {"status": "expired"}}
+    )
 
 
 def get_bm_stock():
+    now = datetime.utcnow()
     items = list(col("black_market").find({
-        "status": "active", "item_name": {"$ne": "__OPEN__"}, "stock": {"$gt": 0}
+        "status": "active",
+        "item_name": {"$ne": "__OPEN__"},
+        "stock": {"$gt": 0},
+        "$or": [
+            {"expires_at": {"$exists": False}},
+            {"expires_at": {"$gt": now}},
+        ]
     }))
-    return [{**{k: v for k, v in item.items() if k != "_id"}, "_id": item["_id"], "display_id": i+1}
-            for i, item in enumerate(items)]
+    result = []
+    for i, item in enumerate(items, 1):
+        d = {k: v for k, v in item.items() if k != "_id"}
+        d["_id"]        = item["_id"]
+        d["display_id"] = i
+        result.append(d)
+    return result
 
 
 @dm_only
 async def blackmarket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    player = get_player(user_id)
+    player  = get_player(user_id)
     if not player:
-        return await update.message.reply_text("❌ No character found.")
+        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        return
 
     if not is_black_market_open():
-        return await update.message.reply_text(
-            "🌑 <b>BLACK MARKET CLOSED</b>\n\n"
-            "Open 10pm–6am UTC or by admin.\n", parse_mode='HTML')
+        await update.message.reply_text(
+            "╔═════════════════╗\n"
+            "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+            "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+            "╚═════════════════╝\n\n"
+            "🔒 <b>The market is CLOSED.</b>\n\n"
+            "<i>The hooded figure is nowhere to be seen...</i>\n\n"
+            "🕙 Open between <b>10pm — 6am UTC</b>\n"
+            "🌕 Or when admin opens it manually",
+            parse_mode='HTML'
+        )
+        return
 
     stock = get_bm_stock()
     if not stock:
-        return await update.message.reply_text("📦 No stock tonight.", parse_mode='HTML')
+        await update.message.reply_text(
+            "╔═════════════════╗\n"
+            "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+            "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+            "╚═════════════════╝\n\n"
+            "<i>The hooded figure eyes you carefully...</i>\n\n"
+            "📦 <b>No stock tonight.</b> Check back later.\n"
+            "<i>Rare items appear randomly each night.</i>\n\n"
+            "💡 Admin: <code>/addblackmarket [price] [stock] [item name]</code>",
+            parse_mode='HTML'
+        )
+        return
+
+    bal = f"¥ {player['yen']:,}"
 
     lines = [
         "╔═════════════════╗",
-        " 🌑 <b>BLACK MARKET</b>",
+        "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑",
+        "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>",
         "╚═════════════════╝\n",
-        f"👛 Balance: ¥{player['yen']:,}\n",
-        "🎭 TONIGHT'S STOCK",
+        f"👛 <b>Balance:</b> {bal}\n",
+        f"     🎭 𝙏𝙊𝙉𝙄𝙂𝙃𝙏'𝙎  𝙎𝙏𝙊𝘾𝙆 🎭",
         "━━━━━━━━━━━━━━━━━━━",
     ]
 
     for item in stock:
-        warn = " ⚠️ Last one!" if item.get('stock') == 1 else ""
-        lines.append(f"❖ <b>[{item['display_id']}] {item['item_name']}</b>\n"
-                     f" ├ 💰 ¥{item['price']:,}\n"
-                     f" └ 📦 {item.get('stock',1)}{warn}")
+        stock_warn = "  ⚠️ <i>Last one!</i>" if item.get('stock') == 1 else ""
+        exp = item.get("expires_at")
+        if exp:
+            remaining = exp - datetime.utcnow()
+            hrs  = int(remaining.total_seconds() // 3600)
+            mins = int((remaining.total_seconds() % 3600) // 60)
+            exp_str = f"  ⏰ <i>Expires in {hrs}h {mins}m</i>" if remaining.total_seconds() > 0 else "  ⚠️ <i>Expiring soon</i>"
+        else:
+            exp_str = ""
+        lines.append(
+            f"❖ <b>[{item['display_id']}] {item['item_name']}</b>\n"
+            f"   ├─ 💰 Cost  : ¥ <b>{item['price']:,}</b>\n"
+            f"   └─ 📦 Stock : {item.get('stock', 1)}{stock_warn}{exp_str}\n"
+        )
+
+    if lines[-1].endswith("\n"):
+        lines[-1] = lines[-1].rstrip("\n")
 
     lines += [
         "━━━━━━━━━━━━━━━━━━━",
-        "🛒 <code>/bmbuy [id or name]</code>",
-        "🗑️ <code>/bmremove [id or name]</code> (Admin)",
+        "<blockquote>🛒 <b>Purchase Command</b>\n"
+        "├ Use: <code>/bmbuy [id]</code> — Buy by number\n"
+        "└ Use: <code>/bmbuy [item name]</code> — Buy by name</blockquote>",
         "━━━━━━━━━━━━━━━━━━━",
+        "<i>Stock refreshes at dawn.</i>",
     ]
 
     await update.message.reply_text('\n'.join(lines), parse_mode='HTML')
@@ -66,62 +160,121 @@ async def blackmarket(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @dm_only
 async def bm_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    player = get_player(user_id)
-    if not player or not is_black_market_open():
-        return await update.message.reply_text("❌ Market closed or no player.")
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ No character found.")
+        return
 
-    args = context.args or []
+    if not is_black_market_open():
+        await update.message.reply_text(
+            "🔒 <b>The Black Market is closed!</b>\n\n<i>Come back between 10pm — 6am UTC.</i>",
+            parse_mode='HTML'
+        )
+        return
+
+    # Strip 'blackmarket' prefix if called via /buy blackmarket [item]
+    args = list(context.args or [])
     if args and args[0].lower() == 'blackmarket':
         args = args[1:]
+
     if not args:
-        return await update.message.reply_text("Usage: /bmbuy [id/name]")
+        await update.message.reply_text(
+            "💡 Usage:\n"
+            "  <code>/bmbuy [id]</code> — Buy by number\n"
+            "  <code>/bmbuy [item name]</code> — Buy by name\n\n"
+            "Use /blackmarket to see available items.",
+            parse_mode='HTML'
+        )
+        return
 
     stock = get_bm_stock()
-    query = ' '.join(args).strip().lower()
+    if not stock:
+        await update.message.reply_text("❌ No stock available right now. Use /blackmarket to check.")
+        return
 
-    item = next((i for i in stock if str(i['display_id']) == query), None) or \
-           next((i for i in stock if i['item_name'].lower() == query), None) or \
-           next((i for i in stock if query in i['item_name'].lower()), None)
+    query_str = ' '.join(args).strip()
+
+    # Find by display_id OR name (exact then partial)
+    item = None
+    if query_str.isdigit():
+        item = next((i for i in stock if i['display_id'] == int(query_str)), None)
+    if not item:
+        item = next((i for i in stock if i['item_name'].lower() == query_str.lower()), None)
+    if not item:
+        item = next((i for i in stock if query_str.lower() in i['item_name'].lower()), None)
 
     if not item or item.get('stock', 0) <= 0:
-        return await update.message.reply_text("❌ Item not found or sold out.")
+        await update.message.reply_text(
+            f"❌ <b>Item not found or sold out.</b>\n\n"
+            f"Use /blackmarket to see current stock.\n"
+            f"Buy by number: <code>/bmbuy 1</code> or by name: <code>/bmbuy Boss Shard</code>",
+            parse_mode='HTML'
+        )
+        return
 
     if player['yen'] < item['price']:
-        return await update.message.reply_text(f"❌ Need ¥{item['price']:,} (You have ¥{player['yen']:,})")
+        needed = item['price'] - player['yen']
+        await update.message.reply_text(
+            f"❌ <b>Not enough Yen!</b>\n\n"
+            f"💰 Item price:  <b>{item['price']:,}¥</b>\n"
+            f"👛 Your wallet: <b>{player['yen']:,}¥</b>\n"
+            f"💸 Need:        <b>{needed:,}¥ more</b>",
+            parse_mode='HTML'
+        )
+        return
 
-    # Atomic stock decrease
-    if item['stock'] <= 1:
-        col("black_market").update_one({"_id": item["_id"]}, {"$set": {"stock": 0, "status": "sold"}})
+    # Atomically decrement stock — prevent race conditions
+    new_stock = item['stock'] - 1
+    if new_stock <= 0:
+        result = col("black_market").update_one(
+            {"_id": item["_id"], "stock": {"$gt": 0}},
+            {"$set": {"stock": 0, "status": "sold"}}
+        )
     else:
-        col("black_market").update_one({"_id": item["_id"]}, {"$inc": {"stock": -1}})
+        result = col("black_market").update_one(
+            {"_id": item["_id"], "stock": {"$gt": 0}},
+            {"$inc": {"stock": -1}}
+        )
+
+    if result.modified_count == 0:
+        await update.message.reply_text("❌ That item was just sold out! Use /blackmarket to check stock.")
+        return
 
     update_player(user_id, yen=player['yen'] - item['price'])
+    itype = item.get('item_type', 'material')
 
-    if item.get('item_type') == 'sp':
+    # Special handling for SP items from World Bank
+    if itype == 'sp':
         update_player(user_id, skill_points=player.get('skill_points', 0) + 1)
-        return await update.message.reply_text("✅ +1 Skill Point purchased!")
+        from handlers.worldbank import _wb_log
+        _wb_log(user_id, "bm_purchase", 1,
+                f"bought 1 SP from blackmarket for {item['price']:,}¥")
+        await update.message.reply_text(
+            "╔═════════════════╗\n"
+            "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+            "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+            "╚═════════════════╝\n\n"
+            f"✅ <b>Purchase Successful!</b>\n\n"
+            f"💠 <b>+1 Skill Point</b> added!\n"
+            f"💸 Spent:   <b>{item['price']:,}¥</b>\n"
+            f"💰 Balance: <b>{player['yen'] - item['price']:,}¥</b>\n"
+            f"💠 Your SP: <b>{player.get('skill_points', 0) + 1}</b>\n\n"
+            f"<i>Use /skilltree to spend your SP.</i>",
+            parse_mode='HTML'
+        )
+        return
 
-    add_item(user_id, item['item_name'], item.get('item_type', 'material'))
-    await update.message.reply_text(f"✅ Bought **{item['item_name']}** for ¥{item['price']:,}", parse_mode='HTML')
+    add_item(user_id, item['item_name'], itype)
 
-
-@dm_only
-@admin_only
-async def bm_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args or []
-    if not args:
-        return await update.message.reply_text("Usage: /bmremove [id or name]")
-
-    query = ' '.join(args).strip().lower()
-    stock = get_bm_stock()
-
-    item = next((i for i in stock if str(i['display_id']) == query), None) or \
-           next((i for i in stock if i['item_name'].lower() == query), None) or \
-           next((i for i in stock if query in i['item_name'].lower()), None)
-
-    if not item:
-        return await update.message.reply_text("❌ Item not found.")
-
-    col("black_market").update_one({"_id": item["_id"]}, {"$set": {"status": "removed"}})
-
-    await update.message.reply_text(f"🗑️ Removed **{item['item_name']}** from Black Market.", parse_mode='HTML')
+    await update.message.reply_text(
+        "╔═════════════════╗\n"
+        "     🌑 <b>𝘿𝙀𝙈𝙊𝙉 𝙎𝙇𝘼𝙔𝙀𝙍</b> 🌑\n"
+        "        <b>𝘽𝙇𝘼𝘾𝙆  𝙈𝘼𝙍𝙆𝙀𝙏</b>\n"
+        "╚═════════════════╝\n\n"
+        f"✅ <b>Purchase Successful!</b>\n\n"
+        f"🎭 <b>{item['item_name']}</b>\n"
+        f"💸 Spent:   <b>{item['price']:,}¥</b>\n"
+        f"💰 Balance: <b>{player['yen'] - item['price']:,}¥</b>\n\n"
+        f"<i>Use /inventory to see your items.</i>",
+        parse_mode='HTML'
+    )
