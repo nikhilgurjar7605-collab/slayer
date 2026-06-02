@@ -93,7 +93,7 @@ from handlers.clan_raid import (clanraid, clanrole,
 from handlers.admin import (addsudo, removesudo, listadmins, announce, ban, unban, giveultimate,
                              resetplayer, givexp, giveyen, givesp as admin_givesp, botstats,
                              startraid, stopraid, addauction,
-                             openblackmarket, closeblackmarket, addblackmarket,
+                             openblackmarket, closeblackmarket, addblackmarket, removeblackmarket,
                              adminhelp, myid, admin_unstuck, activeusers, backup, restore,
                              giveslayermark, givedemonmark, master)
 from handlers.admin_runtime import giveitem, addmission, removemission, listmissions
@@ -133,7 +133,7 @@ from handlers.sp_bank import (
 )
 from handlers.broadcast import bcast, handle_broadcast_callback
 from handlers.admin_add import add
-from handlers.blackmarket import blackmarket, bm_buy
+from handlers.blackmarket import blackmarket, bm_buy, bm_auto_open, bm_auto_close, expire_bm_items
 from handlers.referral import referral
 from handlers.style_art import breathing, art, givestyle, giveart
 from handlers.guide import guide, guide_page_callback, guide_home_callback
@@ -807,6 +807,7 @@ def main():
         ('openblackmarket', openblackmarket),
         ('closeblackmarket',closeblackmarket),
         ('addblackmarket',  addblackmarket),
+        ('removeblackmarket', removeblackmarket),
         ('addgifbanner',    addgifbanner),
         ('removegifbanner', removegifbanner),
         ('listgifbanners',  listgifbanners),
@@ -869,7 +870,6 @@ def main():
     ]
     for cmd, handler in guarded_cmds:
         app.add_handler(CommandHandler(cmd, handler))
-        
 
     # ── Reply keyboard button handler ────────────────────────────────────
     async def reply_kb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -921,6 +921,10 @@ def main():
     scheduler = BackgroundScheduler()
     # Schedule job at 00:00 UTC daily
     scheduler.add_job(refresh_missions_job, 'cron', hour=0, minute=0, timezone='UTC')
+    # Black market: auto-open at 22:00, auto-close at 06:00, expire check every hour
+    scheduler.add_job(bm_auto_open,    'cron', hour=22, minute=0, timezone='UTC')
+    scheduler.add_job(bm_auto_close,   'cron', hour=6,  minute=0, timezone='UTC')
+    scheduler.add_job(expire_bm_items, 'interval', hours=1)
     scheduler.start()
     # Ensure forge and updates are added only once
     app.add_handler(CommandHandler('forge', forge_command))
