@@ -955,10 +955,21 @@ def main():
 
     logger.info("🗡️ Demon Slayer RPG Bot starting...")
     app.post_init = on_startup
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-    )
+    try:
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            close_loop=False,  # Don't close the loop - we're in a restart loop
+        )
+    finally:
+        # Ensure proper cleanup even if run_polling exits unexpectedly
+        try:
+            loop = asyncio.get_event_loop()
+            if not loop.is_closed():
+                # Run any pending cleanup
+                loop.run_until_complete(asyncio.sleep(0))
+        except Exception:
+            pass  # Loop might already be closed
 
 
 # ── Telegram Stars payment handlers ───────────────────────────────────
