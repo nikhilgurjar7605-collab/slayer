@@ -389,34 +389,94 @@ async def startraid(update: Update, context):
     if not has_admin_access(update.effective_user.id):
         return
 
-    boss_name = ' '.join(context.args) if context.args else "Muzan Kibutsuji"
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ *Usage:* `/startraid <minutes> <BossName>`\n\n"
+            "Examples:\n"
+            "`/startraid 5 Muzan`\n"
+            "`/startraid 10 Akaza`\n"
+            "`/startraid 15 Doma`",
+            parse_mode='Markdown'
+        )
+        return
+
+    try:
+        duration_min = int(context.args[0])
+        if duration_min not in [5, 10, 15, 20, 30]:
+            await update.message.reply_text(
+                "❌ Duration must be: 5, 10, 15, 20, or 30 minutes",
+                parse_mode='Markdown'
+            )
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Invalid duration. Use a number (5/10/15/20/30).")
+        return
+
+    boss_name = ' '.join(context.args[1:]) if len(context.args) > 1 else "Muzan Kibutsuji"
+    
+    # Close existing raids
     col("raids").update_many({"status": {"$in": ["waiting", "active"]}}, {"$set": {"status": "closed"}})
 
     import time as _t
     rid = int(_t.time())
+    
+    # Calculate boss HP based on average player level (will be set when players join)
     col("raids").insert_one({
-        "id": rid, "boss_name": boss_name,
-        "boss_hp": 500000, "boss_max_hp": 500000,
-        "boss_atk": 80, "min_players": 20, "status": "waiting"
+        "id": rid, 
+        "boss_name": boss_name,
+        "boss_hp": 1000000, 
+        "boss_max_hp": 1000000,
+        "boss_atk": 150, 
+        "min_players": 5,
+        "duration_min": duration_min,
+        "start_time": None,
+        "end_time": _t.time() + (duration_min * 60),
+        "status": "waiting",
+        "owner_id": update.effective_user.id,
+        "participants": [],
+        "defeated_players": []
     })
 
     await update.message.reply_text(
-        f"✅ Raid started: *{boss_name}*\nBroadcasting to all players...",
+        f"✅ Raid started: *{boss_name}*\n"
+        f"⏱️ Duration: *{duration_min} minutes*\n"
+        f"Broadcasting to clan members...",
         parse_mode='Markdown'
     )
 
-    # ── Broadcast to ALL players in DM ───────────────────────────────────
+    # Get clan members if owner is in a clan
+    from utils.database import get_player
+    owner_player = get_player(update.effective_user.id)
+    clan_name = owner_player.get("clan") if owner_player else None
+    
     raid_msg = (
         f"🔴 *RAID ALERT!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"☠️ *{boss_name.upper()}* has appeared!\n\n"
-        f"❤️ HP: *500,000*\n"
-        f"👥 Needs *20 warriors* to activate\n\n"
+        f"⏱️ Duration: *{duration_min} minutes*\n"
+        f"❤️ HP: *Scaling based on participants*\n"
+        f"👥 Min warriors needed: *5*\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚔️ Use `/joinraid` to join the battle!\n"
-        f"_All participants earn XP, Yen & Boss Shards!_"
+        f"💪 Your equipped items & skills will be used!\n"
+        f"🏆 Top damage dealers get bonus rewards!\n"
+        f"💀 If defeated, you cannot rejoin this raid!"
     )
 
+    # Send to clan group if exists
+    if clan_name:
+        clan_doc = col("clans").find_one({"name": clan_name})
+        if clan_doc and clan_doc.get("group_id"):
+            try:
+                await context.bot.send_message(
+                    chat_id=clan_doc["group_id"],
+                    text=raid_msg,
+                    parse_mode='Markdown'
+                )
+            except:
+                pass
+
+    # Broadcast to all players in DM
     players = list(col("players").find({}, {"user_id": 1}))
     sent = 0
     failed = 0
@@ -434,7 +494,8 @@ async def startraid(update: Update, context):
     await update.message.reply_text(
         f"📢 *Raid broadcast complete!*\n"
         f"✅ Sent: *{sent}* players\n"
-        f"❌ Failed: *{failed}* (blocked/inactive)",
+        f"❌ Failed: *{failed}* (blocked/inactive)\n"
+        f"⏱️ Raid ends in *{duration_min} minutes*",
         parse_mode='Markdown'
     )
 
