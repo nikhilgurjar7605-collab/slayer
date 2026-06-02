@@ -85,7 +85,16 @@ async def raidattack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Calculate damage
-    dmg = player['str_stat'] * 3 + random.randint(20, 60)
+    sword_bonus = {
+        'Basic Nichirin Blade': 8, 'Crimson Nichirin Blade': 25,
+        'Jet Black Nichirin Blade': 50, 'Scarlet Crimson Blade': 80,
+        'Transparent Nichirin Blade': 120, 'Sun Nichirin Blade': 200,
+        "Muzan's Crimson Fang": 280, 'Moon-Breathing Cursed Blade': 350,
+        'Demon Heart Blade': 160, 'Fragment of the First Breath': 450,
+        "Akaza's Martial Gauntlet": 100, "Doma's Soul Cracker": 120,
+    }
+    s_bonus = sword_bonus.get(player.get('equipped_sword', ''), 0)
+    dmg = player['str_stat'] * 3 + random.randint(20, 60) + s_bonus
     new_hp = max(0, raid["boss_hp"] - dmg)
 
     col("raids").update_one({"id": raid["id"]}, {"$set": {"boss_hp": new_hp}})
