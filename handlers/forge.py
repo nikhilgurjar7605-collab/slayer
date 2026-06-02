@@ -506,11 +506,11 @@ async def _handle_forge_confirm(query):
         await query.edit_message_text("Invalid forge item.")
         return
 
-    item = FORGE_ITEMS[idx]
+    item   = FORGE_ITEMS[idx]
     player = get_player(user_id)
     inv_map = _get_user_inventory_map(user_id)
 
-    req_check = _check_requirements(inv_map, item["requirements"])
+    req_check      = _check_requirements(inv_map, item["requirements"])
     can_afford_yen = _can_afford(player, item["cost"])
     all_resources_met = all(met for _, _, met in req_check.values())
 
@@ -525,7 +525,21 @@ async def _handle_forge_confirm(query):
     for req, (_, needed, _) in req_check.items():
         remove_item(user_id, req, needed)
 
-    # Grant stats (using correct DB field names)
+    # ── Determine item category ────────────────────────────────────────
+    cat = item.get("category", "")
+    is_sword = "Sword" in cat or "sword" in item.get("id", "")
+    is_armor = "Armor" in cat or "armor" in item.get("id", "") or "Haori" in item["name"] or "Cloak" in item["name"]
+
+    # ── Add to inventory as equippable item ───────────────────────────
+    if is_sword:
+        add_item(user_id, item["name"], "sword")
+    elif is_armor:
+        add_item(user_id, item["name"], "armor")
+    else:
+        # Demon Relics / accessories — add as gear
+        add_item(user_id, item["name"], "gear")
+
+    # ── Also apply stat boosts directly (permanent passive buff) ──────
     updates = {}
     if "str"     in item:
         updates["str_stat"] = player.get("str_stat", 22) + item["str"]
@@ -552,11 +566,22 @@ async def _handle_forge_confirm(query):
     if "hp"      in item: stat_lines.append(f"❤️ +{item['hp']} Max HP")
     if "max_sta" in item: stat_lines.append(f"🌀 +{item['max_sta']} Max STA")
 
+    equip_hint = ""
+    if is_sword:
+        equip_hint = "\n\n🗡️ *Added to inventory!* Use `/equip` to wield it."
+    elif is_armor:
+        equip_hint = "\n\n🛡️ *Added to inventory!* Use `/equip` to wear it."
+    else:
+        equip_hint = "\n\n🎒 *Added to inventory!* Use `/inventory` to see it."
+
+    stats_text = "  |  ".join(stat_lines) if stat_lines else "No stat boosts"
+
     text = (
         f"⚒️ *Forge Successful!*\n\n"
         f"✨ *{item['name']}* has been forged!\n\n"
-        f"{'  |  '.join(stat_lines)}\n\n"
+        f"{stats_text}\n\n"
         f"💰 -{item['cost']:,}¥ spent"
+        f"{equip_hint}"
     )
     await query.edit_message_text(text, parse_mode="Markdown",
                                    reply_markup=InlineKeyboardMarkup([[
