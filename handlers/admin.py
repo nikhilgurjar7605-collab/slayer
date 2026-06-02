@@ -579,7 +579,67 @@ async def addblackmarket(update: Update, context):
 
 
 
-async def admin_unstuck(update: Update, context):
+async def removeblackmarket(update: Update, context):
+    if not has_admin_access(update.effective_user.id):
+        return
+    args = context.args or []
+    if not args:
+        # Show listing with IDs for easy removal
+        stock = list(col("black_market").find({
+            "status": "active",
+            "item_name": {"$ne": "__OPEN__"}
+        }))
+        if not stock:
+            await update.message.reply_text("📦 Black market is empty — nothing to remove.")
+            return
+        lines = ["📋 *CURRENT BLACK MARKET STOCK*\n━━━━━━━━━━━━━━━━━━━━━"]
+        for i, item in enumerate(stock, 1):
+            exp = item.get("expires_at")
+            exp_str = exp.strftime("%d %b %H:%M UTC") if exp else "No expiry"
+            lines.append(
+                f"*[{i}]* {item['item_name']}\n"
+                f"   💰 {item['price']:,}¥  |  📦 Stock: {item.get('stock',1)}\n"
+                f"   ⏰ Expires: {exp_str}"
+            )
+        lines.append("\n💡 Remove with: `/removeblackmarket [number]` or `/removeblackmarket [item name]`")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        return
+
+    query_str = " ".join(args).strip()
+    stock = list(col("black_market").find({
+        "status": "active",
+        "item_name": {"$ne": "__OPEN__"}
+    }))
+
+    target_doc = None
+    if query_str.isdigit():
+        idx = int(query_str) - 1
+        if 0 <= idx < len(stock):
+            target_doc = stock[idx]
+    if not target_doc:
+        target_doc = next(
+            (i for i in stock if i["item_name"].lower() == query_str.lower()), None
+        )
+    if not target_doc:
+        target_doc = next(
+            (i for i in stock if query_str.lower() in i["item_name"].lower()), None
+        )
+
+    if not target_doc:
+        await update.message.reply_text(
+            f"❌ Item not found: `{query_str}`\n\nUse `/removeblackmarket` to list all items.",
+            parse_mode="Markdown"
+        )
+        return
+
+    col("black_market").delete_one({"_id": target_doc["_id"]})
+    await update.message.reply_text(
+        f"🗑️ *Removed from Black Market:*\n\n"
+        f"📦 *{target_doc['item_name']}* (Stock: {target_doc.get('stock', 1)})",
+        parse_mode="Markdown"
+    )
+
+
     if not has_admin_access(update.effective_user.id):
         return
     if not context.args:
