@@ -1,0 +1,998 @@
+"""
+handlers/stockmarket.py — Demon Slayer Stock Market
+=====================================================
+14 stocks: 6 player-driven + 8 independent/event-driven.
+Commands: /market, /stockbuy, /stocksell, /portfolio, /stockhistory
+Admin:    /marketcrash, /marketboom, /marketreset
+
+Price engine runs every 4 hours via APScheduler.
+Image cards generated with Pillow.
+"""
+import io
+import math
+import random
+import logging
+from datetime import datetime, timedelta
+
+from PIL import Image, ImageDraw, ImageFont
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from utils.database import col, get_player, update_player
+
+log = logging.getLogger(__name__)
+
+# ── Font paths ────────────────────────────────────────────────────────────
+_FONT_DIR = "/usr/share/fonts/truetype/liberation/"
+_FONT_REG  = _FONT_DIR + "LiberationSans-Regular.ttf"
+_FONT_BOLD = _FONT_DIR + "LiberationSans-Bold.ttf"
+
+def _font(size: int, bold: bool = False):
+    try:
+        return ImageFont.truetype(_FONT_BOLD if bold else _FONT_REG, size)
+    except Exception:
+        return ImageFont.load_default()
+
+# ── Stock definitions ─────────────────────────────────────────────────────
+STOCKS = {
+    # ── Player-driven ─────────────────────────────────────────────────────
+    "DBS": {
+        "name": "Demon Blood Supply Co.",
+        "emoji": "🩸",
+        "base_price": 1000,
+        "volatility": 0.08,
+        "type": "player",
+        "color": (180, 40, 40),
+        "desc": "Rises when demons are killed; falls when battles slow.",
+        "driver": "demon_kills",
+    },
+    "WST": {
+        "name": "Wisteria Corp",
+        "emoji": "💜",
+        "base_price": 1200,
+        "volatility": 0.07,
+        "type": "player",
+        "color": (120, 60, 180),
+        "desc": "Rises when slayers win battles.",
+        "driver": "slayer_wins",
+    },
+    "MZN": {
+        "name": "Muzan Industries",
+        "emoji": "👁️",
+        "base_price": 2500,
+        "volatility": 0.10,
+        "type": "player",
+        "color": (40, 10, 60),
+        "desc": "Rises when demons win; crashes when boss raids succeed.",
+        "driver": "demon_wins",
+    },
+    "NFG": {
+        "name": "Nichirin Forge Ltd",
+        "emoji": "⚒️",
+        "base_price": 1500,
+        "volatility": 0.09,
+        "type": "player",
+        "color": (180, 120, 20),
+        "desc": "Rises with forge usage and shop purchases.",
+        "driver": "forge_count",
+    },
+    "KZK": {
+        "name": "Kizuki Cartel",
+        "emoji": "☠️",
+        "base_price": 3000,
+        "volatility": 0.12,
+        "type": "player",
+        "color": (60, 0, 80),
+        "desc": "Rises during Upper Moon battles; crashes after boss raids.",
+        "driver": "boss_kills",
+    },
+    "CRC": {
+        "name": "Corps Ration Co.",
+        "emoji": "🍱",
+        "base_price": 800,
+        "volatility": 0.05,
+        "type": "player",
+        "color": (40, 100, 60),
+        "desc": "Tracks item shop and gifting activity.",
+        "driver": "shop_buys",
+    },
+    # ── Independent ───────────────────────────────────────────────────────
+    "STC": {
+        "name": "Sunrise Trading Co.",
+        "emoji": "🌅",
+        "base_price": 500,
+        "volatility": 0.15,
+        "type": "random",
+        "color": (200, 140, 30),
+        "desc": "Pure random walk. Unpredictable penny stock.",
+    },
+    "BEP": {
+        "name": "Butterfly Estate Pharma",
+        "emoji": "🦋",
+        "base_price": 1800,
+        "volatility": 0.11,
+        "type": "event",
+        "color": (160, 80, 160),
+        "desc": "Random events: poison discoveries, antidote shortages.",
+    },
+    "ICH": {
+        "name": "Infinity Castle Holdings",
+        "emoji": "🏯",
+        "base_price": 2000,
+        "volatility": 0.08,
+        "type": "inverse",
+        "color": (30, 30, 80),
+        "desc": "Thrives when nobody plays. Inverse of activity.",
+    },
+    "UFT": {
+        "name": "Ubuyashiki Family Trust",
+        "emoji": "🌸",
+        "base_price": 5000,
+        "volatility": 0.02,
+        "type": "stable",
+        "color": (180, 100, 120),
+        "desc": "Stable blue-chip. Pays 5% daily dividend to holders.",
+        "dividend": 0.05,
+    },
+    "SVA": {
+        "name": "Swordsmith Village Arms",
+        "emoji": "🗡️",
+        "base_price": 900,
+        "volatility": 0.20,
+        "type": "volatile",
+        "color": (100, 60, 20),
+        "desc": "High-risk. Randomly spikes or crashes every few days.",
+    },
+    "TJV": {
+        "name": "Tanjiro Ventures",
+        "emoji": "🔥",
+        "base_price": 300,
+        "volatility": 0.04,
+        "type": "growth",
+        "color": (200, 60, 20),
+        "desc": "Starts low. Slowly climbs over weeks. Long-term hold.",
+    },
+    "RFF": {
+        "name": "Rengoku Flame Fund",
+        "emoji": "🔆",
+        "base_price": 1100,
+        "volatility": 0.09,
+        "type": "night_only",
+        "color": (220, 100, 10),
+        "desc": "Only moves during Black Market hours (10pm–6am UTC).",
+    },
+    "SFI": {
+        "name": "Spider Forest Inc.",
+        "emoji": "🕷️",
+        "base_price": 400,
+        "volatility": 0.30,
+        "type": "gamble",
+        "color": (60, 60, 60),
+        "desc": "10% chance each tick to crash -60% or moon +150%. Pure gamble.",
+    },
+}
+
+TICKER_LIST = list(STOCKS.keys())
+MIN_PRICE_RATIO = 0.20   # price can't fall below 20% of base
+MAX_PRICE_RATIO = 5.00   # price can't rise above 500% of base
+MAX_OWN_PCT     = 0.30   # can't own more than 30% of float
+FLOAT_SHARES    = 10_000 # total shares per ticker in circulation
+HISTORY_DAYS    = 7
+
+
+# ── DB helpers ────────────────────────────────────────────────────────────
+
+def _get_price(ticker: str) -> float:
+    doc = col("stock_prices").find_one({"ticker": ticker})
+    if doc:
+        return float(doc["price"])
+    return float(STOCKS[ticker]["base_price"])
+
+
+def _set_price(ticker: str, price: float):
+    base  = STOCKS[ticker]["base_price"]
+    price = max(base * MIN_PRICE_RATIO, min(base * MAX_PRICE_RATIO, price))
+    price = round(price, 2)
+    col("stock_prices").update_one(
+        {"ticker": ticker},
+        {"$set": {"ticker": ticker, "price": price, "updated_at": datetime.utcnow()}},
+        upsert=True
+    )
+    # Save to history
+    col("stock_history").insert_one({
+        "ticker": ticker,
+        "price": price,
+        "ts": datetime.utcnow()
+    })
+    return price
+
+
+def _get_history(ticker: str, days: int = HISTORY_DAYS) -> list[float]:
+    since = datetime.utcnow() - timedelta(days=days)
+    docs  = list(col("stock_history").find(
+        {"ticker": ticker, "ts": {"$gte": since}},
+        sort=[("ts", 1)]
+    ))
+    prices = [d["price"] for d in docs]
+    if not prices:
+        prices = [float(STOCKS[ticker]["base_price"])]
+    return prices
+
+
+def _get_holding(user_id: int, ticker: str) -> dict:
+    return col("stock_holdings").find_one({"user_id": user_id, "ticker": ticker}) or {}
+
+
+def _get_portfolio(user_id: int) -> list[dict]:
+    return list(col("stock_holdings").find({"user_id": user_id, "shares": {"$gt": 0}}))
+
+
+def _total_shares_owned(ticker: str) -> int:
+    agg = list(col("stock_holdings").aggregate([
+        {"$match": {"ticker": ticker}},
+        {"$group": {"_id": None, "total": {"$sum": "$shares"}}}
+    ]))
+    return agg[0]["total"] if agg else 0
+
+
+def _count_events(event_type: str, since_hours: int = 4) -> int:
+    since = datetime.utcnow() - timedelta(hours=since_hours)
+    return col("stock_events").count_documents({"type": event_type, "ts": {"$gte": since}})
+
+
+def log_stock_event(event_type: str, data: dict = None):
+    """Call this from other handlers to drive player-based stocks."""
+    col("stock_events").insert_one({
+        "type": event_type,
+        "data": data or {},
+        "ts": datetime.utcnow()
+    })
+
+
+# ── Price engine ──────────────────────────────────────────────────────────
+
+def update_stock_prices():
+    """Run every 4 hours via APScheduler."""
+    log.info("[STOCK] Running price update tick.")
+    hour = datetime.utcnow().hour
+    is_night = hour >= 22 or hour < 6
+
+    # Collect player-driven event counts from last 4h
+    demon_kills  = _count_events("demon_kill")
+    slayer_wins  = _count_events("slayer_win")
+    demon_wins   = _count_events("demon_win")
+    forge_count  = _count_events("forge")
+    boss_kills   = _count_events("boss_kill")
+    shop_buys    = _count_events("shop_buy")
+    total_active = demon_kills + slayer_wins + demon_wins + forge_count + shop_buys
+
+    def normalise(n, scale=20):
+        """Convert event count to a ±% price change. scale = count for 10% move."""
+        return (n / scale) * 0.10
+
+    for ticker, cfg in STOCKS.items():
+        current = _get_price(ticker)
+        delta   = 0.0
+        vol     = cfg["volatility"]
+        base    = cfg["base_price"]
+        t       = cfg["type"]
+
+        if t == "player":
+            driver = cfg.get("driver", "")
+            if driver == "demon_kills":
+                delta += normalise(demon_kills)
+                delta -= normalise(max(0, 20 - demon_kills), scale=20) * 0.5
+            elif driver == "slayer_wins":
+                delta += normalise(slayer_wins)
+            elif driver == "demon_wins":
+                delta += normalise(demon_wins)
+                delta -= normalise(boss_kills) * 1.5
+            elif driver == "forge_count":
+                delta += normalise(forge_count) + normalise(shop_buys, scale=30)
+            elif driver == "boss_kills":
+                delta += normalise(demon_kills + demon_wins, scale=30)
+                delta -= normalise(boss_kills) * 2.0
+            elif driver == "shop_buys":
+                delta += normalise(shop_buys, scale=15)
+
+        elif t == "random":
+            delta = random.gauss(0, vol)
+
+        elif t == "event":
+            delta = random.gauss(0, vol * 0.5)
+            if random.random() < 0.15:   # 15% chance of event spike
+                delta += random.choice([-0.25, -0.20, 0.20, 0.30, 0.40])
+
+        elif t == "inverse":
+            activity_pct = min(total_active / 50, 1.0)
+            delta = -activity_pct * 0.10 + (1 - activity_pct) * 0.08
+            delta += random.gauss(0, vol * 0.3)
+
+        elif t == "stable":
+            delta = random.gauss(0.002, vol)  # slight upward drift
+
+        elif t == "volatile":
+            if random.random() < 0.20:   # 20% chance of big move
+                delta = random.choice([-0.35, -0.30, 0.30, 0.40, 0.50])
+            else:
+                delta = random.gauss(0, vol)
+
+        elif t == "growth":
+            # Hard floor rises 1% per day; slight daily drift upward
+            floor = base * (1 + 0.01 * (datetime.utcnow() - datetime(2024, 1, 1)).days / 24)
+            floor = min(floor, base * MAX_PRICE_RATIO)
+            delta = random.gauss(0.005, vol)
+            new_p = max(current * (1 + delta), floor)
+            _set_price(ticker, new_p)
+            continue
+
+        elif t == "night_only":
+            if is_night:
+                delta = random.gauss(0, vol)
+            else:
+                delta = 0   # frozen during daytime
+
+        elif t == "gamble":
+            r = random.random()
+            if r < 0.05:
+                delta = -0.60
+            elif r < 0.10:
+                delta = 1.50
+            else:
+                delta = random.gauss(0, vol)
+
+        # Apply delta with random noise
+        noise = random.gauss(0, vol * 0.3)
+        new_price = current * (1 + delta + noise)
+        _set_price(ticker, new_price)
+
+    # Pay UFT dividends to all holders
+    _pay_dividends()
+    log.info("[STOCK] Price update complete.")
+
+
+def _pay_dividends():
+    """Pay UFT 5% daily dividend to holders who have held for 24h+."""
+    cfg      = STOCKS["UFT"]
+    price    = _get_price("UFT")
+    cutoff   = datetime.utcnow() - timedelta(hours=24)
+    holders  = list(col("stock_holdings").find({
+        "ticker": "UFT",
+        "shares": {"$gt": 0},
+        "bought_at": {"$lte": cutoff}
+    }))
+    for h in holders:
+        dividend = round(h["shares"] * price * cfg["dividend"] / 6, 2)  # 4h tick = 1/6 of daily
+        if dividend > 0:
+            player = get_player(h["user_id"])
+            if player:
+                update_player(h["user_id"], yen=player["yen"] + int(dividend))
+                col("stock_holdings").update_one(
+                    {"_id": h["_id"]},
+                    {"$inc": {"total_dividends": dividend}}
+                )
+
+
+def nudge_price(ticker: str, pct: float):
+    """Instant small nudge when player does an action. pct = e.g. 0.005 for 0.5%."""
+    if ticker not in STOCKS:
+        return
+    current = _get_price(ticker)
+    _set_price(ticker, current * (1 + pct))
+
+
+# ── Image generation ──────────────────────────────────────────────────────
+
+# Theme colors
+BG_DARK   = (12, 12, 20)
+BG_CARD   = (20, 22, 35)
+BG_PANEL  = (28, 30, 48)
+WHITE     = (255, 255, 255)
+GRAY      = (160, 160, 180)
+DIMGRAY   = (80, 85, 110)
+GREEN     = (40, 200, 100)
+RED       = (220, 60, 60)
+GOLD      = (220, 180, 50)
+ACCENT    = (100, 120, 255)
+
+
+def _sparkline_points(prices: list[float], x0: int, y0: int, w: int, h: int) -> list[tuple]:
+    if len(prices) < 2:
+        return [(x0, y0 + h // 2), (x0 + w, y0 + h // 2)]
+    mn, mx = min(prices), max(prices)
+    rng = mx - mn or 1
+    pts = []
+    for i, p in enumerate(prices):
+        x = x0 + int(i / (len(prices) - 1) * w)
+        y = y0 + h - int((p - mn) / rng * h)
+        pts.append((x, y))
+    return pts
+
+
+def _rounded_rect(draw: ImageDraw.ImageDraw, xy, radius: int, fill, outline=None):
+    x1, y1, x2, y2 = xy
+    draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=fill, outline=outline)
+
+
+def generate_market_image(tickers: list[str] = None) -> io.BytesIO:
+    """Generate full market overview image."""
+    tickers = tickers or TICKER_LIST
+    cols_n  = 2
+    rows_n  = math.ceil(len(tickers) / cols_n)
+
+    CARD_W, CARD_H = 320, 120
+    PAD = 12
+    HEADER_H = 70
+    W = cols_n * CARD_W + (cols_n + 1) * PAD
+    H = HEADER_H + rows_n * (CARD_H + PAD) + PAD
+
+    img  = Image.new("RGB", (W, H), BG_DARK)
+    draw = ImageDraw.Draw(img)
+
+    # Header
+    _rounded_rect(draw, (PAD, PAD, W - PAD, HEADER_H - PAD // 2), 10, BG_CARD)
+    draw.text((PAD + 16, PAD + 8),  "📈  DEMON SLAYER STOCK EXCHANGE", font=_font(18, bold=True), fill=GOLD)
+    now_str = datetime.utcnow().strftime("Updated %d %b %Y  %H:%M UTC")
+    draw.text((PAD + 16, PAD + 34), now_str, font=_font(12), fill=DIMGRAY)
+
+    for i, ticker in enumerate(tickers):
+        cfg     = STOCKS[ticker]
+        history = _get_history(ticker)
+        price   = history[-1] if history else cfg["base_price"]
+        prev    = history[-2] if len(history) >= 2 else price
+        chg     = price - prev
+        chg_pct = (chg / prev * 100) if prev else 0
+        is_up   = chg >= 0
+        clr_chg = GREEN if is_up else RED
+        arrow   = "▲" if is_up else "▼"
+
+        row = i // cols_n
+        col_idx = i % cols_n
+        cx = PAD + col_idx * (CARD_W + PAD)
+        cy = HEADER_H + row * (CARD_H + PAD) + PAD // 2
+
+        # Card background
+        _rounded_rect(draw, (cx, cy, cx + CARD_W, cy + CARD_H), 10, BG_CARD)
+        # Left accent bar in stock's color
+        _rounded_rect(draw, (cx, cy, cx + 4, cy + CARD_H), 2, cfg["color"])
+
+        # Ticker + name
+        draw.text((cx + 14, cy + 10), ticker, font=_font(20, bold=True), fill=WHITE)
+        name_short = cfg["name"][:26] + ("…" if len(cfg["name"]) > 26 else "")
+        draw.text((cx + 14, cy + 36), name_short, font=_font(11), fill=GRAY)
+        draw.text((cx + 14, cy + 52), cfg["emoji"] + "  " + cfg["type"].upper(),
+                  font=_font(10), fill=DIMGRAY)
+
+        # Price + change
+        price_str = f"¥{price:,.0f}"
+        chg_str   = f"{arrow} {abs(chg_pct):.1f}%"
+        draw.text((cx + CARD_W - 110, cy + 10), price_str, font=_font(18, bold=True), fill=WHITE)
+        draw.text((cx + CARD_W - 90,  cy + 36), chg_str,   font=_font(14, bold=True), fill=clr_chg)
+
+        # Sparkline
+        sp_x, sp_y, sp_w, sp_h = cx + 14, cy + 70, CARD_W - 28, 38
+        pts = _sparkline_points(history[-24:], sp_x, sp_y, sp_w, sp_h)
+        if len(pts) >= 2:
+            # Filled area under sparkline
+            poly = [(sp_x, sp_y + sp_h)] + pts + [(pts[-1][0], sp_y + sp_h)]
+            fill_color = (int(clr_chg[0] * 0.3), int(clr_chg[1] * 0.3), int(clr_chg[2] * 0.3))
+            draw.polygon(poly, fill=fill_color)
+            draw.line(pts, fill=clr_chg, width=2)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
+
+def generate_stock_detail_image(ticker: str) -> io.BytesIO:
+    """Generate a detailed card for a single stock."""
+    cfg     = STOCKS[ticker]
+    history = _get_history(ticker, days=7)
+    price   = history[-1] if history else cfg["base_price"]
+    open_p  = history[0]  if history else price
+    high_p  = max(history) if history else price
+    low_p   = min(history) if history else price
+    chg     = price - open_p
+    chg_pct = (chg / open_p * 100) if open_p else 0
+    is_up   = chg >= 0
+    clr_chg = GREEN if is_up else RED
+    arrow   = "▲" if is_up else "▼"
+
+    W, H = 540, 340
+    img  = Image.new("RGB", (W, H), BG_DARK)
+    draw = ImageDraw.Draw(img)
+
+    # Background card
+    _rounded_rect(draw, (8, 8, W - 8, H - 8), 14, BG_CARD)
+    # Top accent bar in stock color
+    _rounded_rect(draw, (8, 8, W - 8, 6 + 8), 4, cfg["color"])
+
+    # Ticker badge
+    badge_w = 80
+    _rounded_rect(draw, (20, 20, 20 + badge_w, 52), 6, cfg["color"])
+    draw.text((20 + badge_w // 2, 36), ticker, font=_font(18, bold=True),
+              fill=WHITE, anchor="mm")
+
+    # Name + emoji
+    draw.text((116, 20), cfg["emoji"] + " " + cfg["name"], font=_font(16, bold=True), fill=WHITE)
+    draw.text((116, 44), cfg["desc"][:55] + ("…" if len(cfg["desc"]) > 55 else ""),
+              font=_font(11), fill=GRAY)
+
+    # Price
+    draw.text((20, 68), f"¥{price:,.2f}", font=_font(30, bold=True), fill=WHITE)
+    draw.text((20, 104), f"{arrow}  {abs(chg):,.2f}  ({abs(chg_pct):.2f}%)",
+              font=_font(14, bold=True), fill=clr_chg)
+
+    # Stats row
+    stats = [
+        ("Open",  f"¥{open_p:,.0f}"),
+        ("High",  f"¥{high_p:,.0f}"),
+        ("Low",   f"¥{low_p:,.0f}"),
+        ("Type",  cfg["type"].title()),
+    ]
+    for j, (label, val) in enumerate(stats):
+        sx = 20 + j * 130
+        _rounded_rect(draw, (sx, 126, sx + 120, 170), 6, BG_PANEL)
+        draw.text((sx + 10, 132), label, font=_font(10), fill=DIMGRAY)
+        draw.text((sx + 10, 148), val,   font=_font(13, bold=True), fill=WHITE)
+
+    # Sparkline — 7-day
+    sp_x, sp_y, sp_w, sp_h = 20, 180, W - 40, 100
+    pts = _sparkline_points(history, sp_x, sp_y, sp_w, sp_h)
+    if len(pts) >= 2:
+        poly = [(sp_x, sp_y + sp_h)] + pts + [(pts[-1][0], sp_y + sp_h)]
+        fc = (int(clr_chg[0]*0.15), int(clr_chg[1]*0.15), int(clr_chg[2]*0.15))
+        draw.polygon(poly, fill=fc)
+        draw.line(pts, fill=clr_chg, width=2)
+        # Dot on last price
+        lx, ly = pts[-1]
+        draw.ellipse([lx - 4, ly - 4, lx + 4, ly + 4], fill=clr_chg)
+
+    # X-axis day labels
+    if len(history) >= 2:
+        for k in range(min(7, len(history))):
+            day = (datetime.utcnow() - timedelta(days=6 - k)).strftime("%a")
+            lx  = sp_x + int(k / 6 * sp_w)
+            draw.text((lx, sp_y + sp_h + 6), day, font=_font(10), fill=DIMGRAY, anchor="mt")
+
+    # Footer
+    draw.text((20, H - 24), "Use /stockbuy or /stocksell to trade",
+              font=_font(11), fill=DIMGRAY)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
+
+def generate_portfolio_image(user_id: int) -> io.BytesIO:
+    """Generate portfolio summary image for a player."""
+    holdings = _get_portfolio(user_id)
+    player   = get_player(user_id) or {}
+
+    total_val  = 0.0
+    total_cost = 0.0
+    rows = []
+    for h in holdings:
+        tk    = h["ticker"]
+        if tk not in STOCKS:
+            continue
+        price = _get_price(tk)
+        val   = h["shares"] * price
+        cost  = h.get("avg_cost", price) * h["shares"]
+        pnl   = val - cost
+        pnl_p = (pnl / cost * 100) if cost else 0
+        total_val  += val
+        total_cost += cost
+        rows.append((tk, h["shares"], price, val, pnl, pnl_p))
+
+    total_pnl   = total_val - total_cost
+    total_pnl_p = (total_pnl / total_cost * 100) if total_cost else 0
+
+    ROW_H  = 46
+    HEAD_H = 130
+    FOOT_H = 50
+    W      = 520
+    H      = HEAD_H + max(len(rows), 1) * ROW_H + FOOT_H + 20
+
+    img  = Image.new("RGB", (W, H), BG_DARK)
+    draw = ImageDraw.Draw(img)
+    _rounded_rect(draw, (8, 8, W - 8, H - 8), 14, BG_CARD)
+
+    # Header
+    draw.text((20, 18), "📊  MY PORTFOLIO", font=_font(18, bold=True), fill=GOLD)
+    name = player.get("name", "Player")
+    draw.text((20, 46), name, font=_font(13), fill=GRAY)
+
+    # Summary metrics
+    metrics = [
+        ("Total Value", f"¥{total_val:,.0f}"),
+        ("Total P&L",   f"{'▲' if total_pnl >= 0 else '▼'} ¥{abs(total_pnl):,.0f}"),
+        ("Return",      f"{'+' if total_pnl_p >= 0 else ''}{total_pnl_p:.1f}%"),
+    ]
+    for j, (lbl, val) in enumerate(metrics):
+        sx = 20 + j * 165
+        _rounded_rect(draw, (sx, 68, sx + 155, 110), 6, BG_PANEL)
+        draw.text((sx + 10, 74), lbl, font=_font(10), fill=DIMGRAY)
+        clr = GREEN if ("▲" in val or "+" in val) else (RED if ("▼" in val or val.startswith("-")) else WHITE)
+        draw.text((sx + 10, 90), val, font=_font(13, bold=True), fill=clr)
+
+    # Column headers
+    draw.line([(12, HEAD_H), (W - 12, HEAD_H)], fill=DIMGRAY, width=1)
+    for lbl, x in [("TICKER", 20), ("SHARES", 120), ("PRICE", 210), ("VALUE", 310), ("P&L", 410)]:
+        draw.text((x, HEAD_H + 6), lbl, font=_font(10, bold=True), fill=DIMGRAY)
+
+    if not rows:
+        draw.text((W // 2, HEAD_H + ROW_H), "No holdings yet — use /stockbuy",
+                  font=_font(13), fill=DIMGRAY, anchor="mt")
+    else:
+        for idx, (tk, shares, price, val, pnl, pnl_p) in enumerate(rows):
+            ry = HEAD_H + 30 + idx * ROW_H
+            if idx % 2 == 0:
+                _rounded_rect(draw, (12, ry - 4, W - 12, ry + ROW_H - 8), 4, BG_PANEL)
+            clr = GREEN if pnl >= 0 else RED
+            cfg = STOCKS.get(tk, {})
+            draw.text((20,  ry + 6), tk,                  font=_font(14, bold=True), fill=WHITE)
+            draw.text((20,  ry + 24), cfg.get("emoji",""),  font=_font(10), fill=GRAY)
+            draw.text((120, ry + 6), str(shares),           font=_font(13), fill=WHITE)
+            draw.text((210, ry + 6), f"¥{price:,.0f}",      font=_font(13), fill=WHITE)
+            draw.text((310, ry + 6), f"¥{val:,.0f}",        font=_font(13), fill=WHITE)
+            draw.text((410, ry + 6), f"{'+' if pnl>=0 else ''}{pnl_p:.1f}%",
+                      font=_font(13, bold=True), fill=clr)
+
+    # Footer
+    draw.line([(12, H - FOOT_H - 4), (W - 12, H - FOOT_H - 4)], fill=DIMGRAY, width=1)
+    draw.text((20, H - FOOT_H + 8),
+              datetime.utcnow().strftime("Snapshot: %d %b %Y %H:%M UTC"),
+              font=_font(11), fill=DIMGRAY)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
+
+# ── Command handlers ──────────────────────────────────────────────────────
+
+async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/market — Show full market overview as image."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ Use /start first.")
+        return
+
+    msg = await update.message.reply_text("📈 Generating market overview…")
+    try:
+        buf = generate_market_image()
+        await update.message.reply_photo(
+            photo=buf,
+            caption=(
+                "📈 *DEMON SLAYER STOCK EXCHANGE*\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "🟢 Player-driven: `DBS WST MZN NFG KZK CRC`\n"
+                "🎲 Independent:   `STC BEP ICH UFT SVA TJV RFF SFI`\n\n"
+                "Use `/stockbuy TICKER shares` to invest\n"
+                "Use `/stockhistory TICKER` for detail chart\n"
+                "Use `/portfolio` to see your holdings"
+            ),
+            parse_mode="Markdown"
+        )
+        await msg.delete()
+    except Exception as e:
+        log.error("[STOCK market] %s", e)
+        await msg.edit_text("❌ Failed to generate market image.")
+
+
+async def stockhistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/stockhistory TICKER — Detailed 7-day chart for one stock."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ Use /start first.")
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "📖 Usage: `/stockhistory TICKER`\nExample: `/stockhistory DBS`",
+            parse_mode="Markdown"
+        )
+        return
+
+    ticker = args[0].upper()
+    if ticker not in STOCKS:
+        valid = "  ".join(TICKER_LIST)
+        await update.message.reply_text(
+            f"❌ Unknown ticker `{ticker}`\n\nValid tickers:\n`{valid}`",
+            parse_mode="Markdown"
+        )
+        return
+
+    msg = await update.message.reply_text(f"📊 Loading {ticker} chart…")
+    try:
+        buf = generate_stock_detail_image(ticker)
+        cfg = STOCKS[ticker]
+        price   = _get_price(ticker)
+        history = _get_history(ticker)
+        chg_pct = ((history[-1] - history[0]) / history[0] * 100) if len(history) >= 2 else 0
+        arrow   = "▲" if chg_pct >= 0 else "▼"
+
+        await update.message.reply_photo(
+            photo=buf,
+            caption=(
+                f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💰 Price:  *¥{price:,.2f}*\n"
+                f"📊 7d:     *{arrow} {abs(chg_pct):.1f}%*\n"
+                f"🏷️  Type:   `{cfg['type']}`\n\n"
+                f"_{cfg['desc']}_"
+            ),
+            parse_mode="Markdown"
+        )
+        await msg.delete()
+    except Exception as e:
+        log.error("[STOCK history] %s", e)
+        await msg.edit_text("❌ Failed to generate chart.")
+
+
+async def stockbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/stockbuy TICKER shares — Buy shares in a stock."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ Use /start first.")
+        return
+
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "📖 *Usage:* `/stockbuy TICKER shares`\n"
+            "Example: `/stockbuy DBS 10`\n\n"
+            "Use `/market` to see all tickers and prices.",
+            parse_mode="Markdown"
+        )
+        return
+
+    ticker = args[0].upper()
+    if ticker not in STOCKS:
+        await update.message.reply_text(f"❌ Unknown ticker `{ticker}`", parse_mode="Markdown")
+        return
+
+    try:
+        shares = int(args[1])
+        if shares <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Shares must be a positive number.")
+        return
+
+    cfg   = STOCKS[ticker]
+    price = _get_price(ticker)
+
+    # Night-only restriction for RFF
+    if cfg["type"] == "night_only":
+        hour = datetime.utcnow().hour
+        if not (hour >= 22 or hour < 6):
+            await update.message.reply_text(
+                f"🔒 *{cfg['name']}* only trades during Black Market hours (10pm–6am UTC).",
+                parse_mode="Markdown"
+            )
+            return
+
+    # Ownership cap
+    total_owned = _total_shares_owned(ticker)
+    holding     = _get_holding(user_id, ticker)
+    my_shares   = holding.get("shares", 0)
+    if (my_shares + shares) > FLOAT_SHARES * MAX_OWN_PCT:
+        max_can_buy = int(FLOAT_SHARES * MAX_OWN_PCT) - my_shares
+        await update.message.reply_text(
+            f"❌ Can't own more than *{int(MAX_OWN_PCT*100)}%* of float.\n"
+            f"You can buy at most *{max(0, max_can_buy)}* more shares of `{ticker}`.",
+            parse_mode="Markdown"
+        )
+        return
+
+    cost = round(price * shares)
+    if player["yen"] < cost:
+        await update.message.reply_text(
+            f"❌ *Not enough yen!*\n\n"
+            f"💰 Cost:   *¥{cost:,}*\n"
+            f"👛 Wallet: *¥{player['yen']:,}*\n"
+            f"💸 Short:  *¥{cost - player['yen']:,}*",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Execute buy
+    update_player(user_id, yen=player["yen"] - cost)
+
+    existing   = _get_holding(user_id, ticker)
+    old_shares = existing.get("shares", 0)
+    old_avg    = existing.get("avg_cost", price)
+    new_shares = old_shares + shares
+    new_avg    = ((old_avg * old_shares) + (price * shares)) / new_shares
+
+    col("stock_holdings").update_one(
+        {"user_id": user_id, "ticker": ticker},
+        {"$set": {
+            "user_id":   user_id,
+            "ticker":    ticker,
+            "shares":    new_shares,
+            "avg_cost":  round(new_avg, 2),
+            "bought_at": existing.get("bought_at") or datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }},
+        upsert=True
+    )
+
+    # Tiny upward nudge on buy
+    nudge_price(ticker, 0.001 * shares / 100)
+
+    await update.message.reply_text(
+        f"✅ *SHARES PURCHASED!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)\n\n"
+        f"📦 Shares bought: *{shares}*\n"
+        f"💰 Price/share:   *¥{price:,.2f}*\n"
+        f"💸 Total spent:   *¥{cost:,}*\n"
+        f"👛 Balance left:  *¥{player['yen'] - cost:,}*\n"
+        f"📊 You now own:   *{new_shares} shares*",
+        parse_mode="Markdown"
+    )
+
+
+async def stocksell(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/stocksell TICKER shares — Sell shares."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ Use /start first.")
+        return
+
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "📖 *Usage:* `/stocksell TICKER shares`\n"
+            "Example: `/stocksell DBS 5`\n"
+            "Use `/portfolio` to see your holdings.",
+            parse_mode="Markdown"
+        )
+        return
+
+    ticker = args[0].upper()
+    if ticker not in STOCKS:
+        await update.message.reply_text(f"❌ Unknown ticker `{ticker}`", parse_mode="Markdown")
+        return
+
+    try:
+        shares = int(args[1])
+        if shares <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Shares must be a positive number.")
+        return
+
+    holding = _get_holding(user_id, ticker)
+    owned   = holding.get("shares", 0)
+    if owned < shares:
+        await update.message.reply_text(
+            f"❌ You only own *{owned}* shares of `{ticker}`.",
+            parse_mode="Markdown"
+        )
+        return
+
+    cfg      = STOCKS[ticker]
+    price    = _get_price(ticker)
+    avg_cost = holding.get("avg_cost", price)
+    proceeds = round(price * shares)
+    cost_b   = round(avg_cost * shares)
+    pnl      = proceeds - cost_b
+    pnl_pct  = (pnl / cost_b * 100) if cost_b else 0
+
+    update_player(user_id, yen=player["yen"] + proceeds)
+
+    new_shares = owned - shares
+    if new_shares == 0:
+        col("stock_holdings").delete_one({"user_id": user_id, "ticker": ticker})
+    else:
+        col("stock_holdings").update_one(
+            {"user_id": user_id, "ticker": ticker},
+            {"$set": {"shares": new_shares, "updated_at": datetime.utcnow()}}
+        )
+
+    # Tiny downward nudge on sell
+    nudge_price(ticker, -0.001 * shares / 100)
+
+    pnl_str = f"{'▲ +' if pnl >= 0 else '▼ '}¥{abs(pnl):,} ({'+' if pnl >= 0 else ''}{pnl_pct:.1f}%)"
+    pnl_clr_hint = "📈" if pnl >= 0 else "📉"
+
+    await update.message.reply_text(
+        f"✅ *SHARES SOLD!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)\n\n"
+        f"📦 Shares sold:  *{shares}*\n"
+        f"💰 Price/share:  *¥{price:,.2f}*\n"
+        f"💸 Proceeds:     *¥{proceeds:,}*\n"
+        f"{pnl_clr_hint} P&L:         *{pnl_str}*\n"
+        f"📊 Remaining:    *{new_shares} shares*",
+        parse_mode="Markdown"
+    )
+
+
+async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/portfolio — View your holdings as an image."""
+    user_id = update.effective_user.id
+    player  = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ Use /start first.")
+        return
+
+    msg = await update.message.reply_text("📊 Generating portfolio…")
+    try:
+        buf = generate_portfolio_image(user_id)
+        holdings = _get_portfolio(user_id)
+        total_val = sum(_get_price(h["ticker"]) * h["shares"] for h in holdings if h["ticker"] in STOCKS)
+
+        await update.message.reply_photo(
+            photo=buf,
+            caption=(
+                f"📊 *YOUR PORTFOLIO*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💼 Positions: *{len(holdings)}*\n"
+                f"💰 Total value: *¥{total_val:,.0f}*\n\n"
+                f"Use `/stockbuy` or `/stocksell` to trade."
+            ),
+            parse_mode="Markdown"
+        )
+        await msg.delete()
+    except Exception as e:
+        log.error("[STOCK portfolio] %s", e)
+        await msg.edit_text("❌ Failed to generate portfolio image.")
+
+
+# ── Admin commands ────────────────────────────────────────────────────────
+
+async def marketcrash(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/marketcrash [ticker] — Crash a stock or all stocks."""
+    from utils.guards import is_owner
+    if not is_owner(update.effective_user.id):
+        return
+    args    = context.args or []
+    targets = [args[0].upper()] if args and args[0].upper() in STOCKS else TICKER_LIST
+    for t in targets:
+        p = _get_price(t)
+        _set_price(t, p * random.uniform(0.45, 0.65))
+    names = ", ".join(f"`{t}`" for t in targets)
+    await update.message.reply_text(
+        f"📉 *MARKET CRASH triggered!*\n{names} dropped 35–55%.",
+        parse_mode="Markdown"
+    )
+
+
+async def marketboom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/marketboom [ticker] — Boom a stock or all stocks."""
+    from utils.guards import is_owner
+    if not is_owner(update.effective_user.id):
+        return
+    args    = context.args or []
+    targets = [args[0].upper()] if args and args[0].upper() in STOCKS else TICKER_LIST
+    for t in targets:
+        p = _get_price(t)
+        _set_price(t, p * random.uniform(1.35, 1.75))
+    names = ", ".join(f"`{t}`" for t in targets)
+    await update.message.reply_text(
+        f"📈 *MARKET BOOM triggered!*\n{names} surged 35–75%.",
+        parse_mode="Markdown"
+    )
+
+
+async def marketreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/marketreset — Reset all prices to base."""
+    from utils.guards import is_owner
+    if not is_owner(update.effective_user.id):
+        return
+    for ticker, cfg in STOCKS.items():
+        _set_price(ticker, cfg["base_price"])
+    await update.message.reply_text("✅ All stock prices reset to base values.")
