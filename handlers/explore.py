@@ -308,6 +308,13 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         'Scarlet Crimson Blade':        80,
         'Transparent Nichirin Blade':  120,
         'Sun Nichirin Blade':          200,
+        # Forged swords
+        "Muzan's Crimson Fang":        280,
+        'Moon-Breathing Cursed Blade': 350,
+        'Demon Heart Blade':           160,
+        'Fragment of the First Breath': 450,
+        "Akaza's Martial Gauntlet":    100,
+        "Doma's Soul Cracker":         120,
     }
     s_bonus = sword_bonus.get(player.get('equipped_sword', ''), 0)
     str_mult = 2.8 if not is_technique else 1.6
@@ -355,6 +362,13 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
         'Demon Slayer Uniform EX': 55,
         'Flame Haori':            85,
         'Yoriichi Haori':        150,
+        # Forged armor
+        'Ice Lotus Haori':         60,
+        "Void Tyrant's Cloak":     90,
+        "Rui's Spider-Thread Haori": 70,
+        'Upper Moon Shell':        80,
+        "Nakime's Resonance Talisman": 50,
+        "Upper Moon III Power Crest": 45,
     }
     a_bonus = armor_bonus.get(player.get('equipped_armor', ''), 0)
     dmg = max(1, random.randint(int(state['enemy_atk'] * 0.8), state['enemy_atk']) - a_bonus)

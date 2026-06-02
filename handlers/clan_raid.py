@@ -24,6 +24,7 @@ from utils.database import (get_player, update_player, add_item, col,
                              get_inventory, remove_item)
 from utils.guards import dm_only
 from utils.helpers import hp_bar
+from handlers.explore import get_level
 
 RAID_COOLDOWN_DAYS = 7
 RAID_JOIN_FEE      = 500
@@ -380,19 +381,51 @@ async def _finalize_raid(context, raid: dict, clan: dict, boss_dead: bool):
     sorted_parts = sorted(parts.items(), key=lambda x: x[1].get("damage", 0), reverse=True)
     n_players   = max(len(parts), 1)
 
+    # Enhanced reward pool - include forgeable items and better rewards
+    enhanced_item_pool = list(tcfg["item_pool"])
+    # Add forgeable items to reward pool based on tier
+    if tier == "low":
+        enhanced_item_pool.extend(["Demon Bone", "Iron Fragment", "Whetstone", "Boss Shard"])
+    elif tier == "medium":
+        enhanced_item_pool.extend(["Demon Crystal", "Nichirin Fragment", "Moon Shard", "Spirit Core", "Cursed Blood"])
+    elif tier == "high":
+        enhanced_item_pool.extend(["Upper Moon Core", "Demon King Fragment", "Crimson Nichirin", "Yoriichi Scroll", 
+                                   "Muzan's Blood", "Origin Demon Essence"])
+
     results = []
     for rank, (pid, pdata) in enumerate(sorted_parts):
         share      = pdata["damage"] / total_dmg if total_dmg else 0
+        
+        # Generous reward calculation - base * share * player_count * kill_bonus
         yen_reward = int(tcfg["base_yen"] * share * n_players)
         if boss_dead:
             yen_reward = int(yen_reward * tcfg["kill_bonus"])
+        
         # MVP bonus for #1 damage dealer (only if boss killed)
         if rank == 0 and boss_dead:
             yen_reward += tcfg["mvp_bonus"]
+        
+        # Top 3 get extra bonuses
+        if rank == 0 and boss_dead:
+            yen_reward = int(yen_reward * 1.2)  # +20% for 1st
+        elif rank == 1 and boss_dead:
+            yen_reward = int(yen_reward * 1.1)  # +10% for 2nd
+        elif rank == 2 and boss_dead:
+            yen_reward = int(yen_reward * 1.05)  # +5% for 3rd
 
         # Item drop based on tier chance; everyone gets one on high tier
-        give_item = boss_dead and (random.random() < tcfg["item_chance"])
-        item_name = random.choice(tcfg["item_pool"]) if give_item else None
+        # Higher rank = higher chance
+        item_chance = tcfg["item_chance"]
+        if boss_dead:
+            if rank == 0:
+                item_chance = min(1.0, item_chance + 0.3)  # +30% for MVP
+            elif rank == 1:
+                item_chance = min(1.0, item_chance + 0.2)  # +20% for 2nd
+            elif rank == 2:
+                item_chance = min(1.0, item_chance + 0.1)  # +10% for 3rd
+        
+        give_item = boss_dead and (random.random() < item_chance)
+        item_name = random.choice(enhanced_item_pool) if give_item else None
 
         try:
             tgt = get_player(int(pid))
@@ -491,38 +524,71 @@ async def clanraid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ A raid is already active! Use `/clanraid status`.")
             return
 
-        boss_name = " ".join(context.args[1:]).strip().title() if len(context.args) > 1 else "Muzan"
+        # Parse duration argument (default 10 minutes)
+        duration_min = 10
+        boss_name = "Muzan"
+        
+        if len(context.args) > 1:
+            # Check if first arg is duration
+            arg1 = context.args[1].lower()
+            if arg1.endswith("min"):
+                try:
+                    duration_min = int(arg1.replace("min", ""))
+                    if duration_min not in (5, 10, 15, 20, 30):
+                        duration_min = 10
+                except ValueError:
+                    pass
+                boss_name = " ".join(context.args[2:]).strip().title() if len(context.args) > 2 else "Muzan"
+            else:
+                boss_name = " ".join(context.args[1:]).strip().title()
+        
         boss      = RAID_BOSSES.get(boss_name)
         if not boss:
             # Build boss list grouped by tier for the error message
             tier_lines = []
             for t in TIER_ORDER:
                 tcfg  = TIER_CONFIG[t]
-                names = [n for n, b in RAID_BOSSES.items() if b["tier"] == t]
+                names = [n for b in RAID_BOSSES.items() if b["tier"] == t]
                 tier_lines.append(f"{tcfg['label']}: {', '.join(names)}")
             await update.message.reply_text(
                 f"❌ Unknown boss: *{boss_name}*\n\n"
                 f"📋 *Available bosses:*\n" + "\n".join(tier_lines) + "\n\n"
-                f"Usage: `/clanraid start Muzan`",
+                f"Usage: `/clanraid start 10min Muzan` or `/clanraid start Muzan`",
                 parse_mode="Markdown"
             )
             return
 
         tier  = boss["tier"]
         tcfg  = TIER_CONFIG[tier]
+        
+        # Calculate boss HP based on average participant level
+        # Get clan members to estimate player count and levels
+        clan_members = list(col("players").find({"clan_id": clan_id}))
+        player_count = max(len(clan_members), 1)
+        avg_level = sum(get_level(m.get("xp", 0)) for m in clan_members) / player_count if clan_members else 50
+        
+        # Scale HP: base * level_factor * player_multiplier
+        level_factor = avg_level / 50.0  # Normalize around level 50
+        player_multiplier = 1.0 + (player_count * 0.15)  # +15% per player
+        scaled_hp = int(boss["hp"] * level_factor * player_multiplier)
+
+        now = datetime.utcnow()
+        end_time = now + timedelta(minutes=duration_min)
 
         col("clan_raids").insert_one({
             "clan_id":     clan_id,
             "clan_name":   clan.get("name", "?"),
             "boss_name":   boss_name,
             "boss_emoji":  boss["emoji"],
-            "boss_hp":     boss["hp"],
-            "boss_max_hp": boss["hp"],
+            "boss_hp":     scaled_hp,
+            "boss_max_hp": scaled_hp,
             "boss_atk":    boss["atk"],
             "tier":        tier,
             "status":      "active",
             "started_by":  user_id,
-            "started_at":  datetime.utcnow(),
+            "started_at":  now,
+            "end_time":    end_time,
+            "duration_min": duration_min,
             "ended_at":    None,
             "participants": {},
         })
@@ -532,15 +598,18 @@ async def clanraid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"{tcfg['label']}\n"
             f"{boss['emoji']} *Boss: {boss_name}*\n"
-            f"❤️ HP: *{boss['hp']:,}*\n"
-            f"⚔️ ATK: *{boss['atk']}*\n\n"
+            f"❤️ HP: *{scaled_hp:,}* (Scaled for {player_count} players, Avg Lvl {avg_level:.0f})\n"
+            f"⚔️ ATK: *{boss['atk']}*\n"
+            f"⏱️ *Duration: {duration_min} minutes*\n"
+            f"⏰ Ends at: {end_time.strftime('%H:%M:%S')} UTC\n\n"
             f"🎁 *Rewards (on kill):*\n"
             f"  💰 Base pool: *{tcfg['base_yen']:,}¥* per fighter\n"
             f"  🏅 MVP bonus: *+{tcfg['mvp_bonus']:,}¥*\n"
             f"  🎁 Item chance: *{int(tcfg['item_chance']*100)}%*\n"
             f"  ⭐ Clan XP: *+{tcfg['clan_xp']:,}*\n\n"
             f"📢 Members: `/clanraid join` (fee: {RAID_JOIN_FEE:,}¥)\n"
-            f"⚔️ Then: `/clanraid attack` to fight!",
+            f"⚔️ Then: `/clanraid attack` to fight!\n"
+            f"💡 Raid will auto-end when boss dies or timer expires!",
             parse_mode="Markdown"
         )
         return
@@ -823,6 +892,9 @@ async def raid_attack_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     armor_map = {
         "Corps Uniform": 5, "Reinforced Haori": 15, "Hashira Haori": 30,
         "Demon Slayer Uniform EX": 55, "Flame Haori": 85, "Yoriichi Haori": 150,
+        # Forged armor
+        'Ice Lotus Haori': 60, "Void Tyrant's Cloak": 90, "Rui's Spider-Thread Haori": 70,
+        'Upper Moon Shell': 80, "Nakime's Resonance Talisman": 50, "Upper Moon III Power Crest": 45,
     }
     boss_dmg = max(1, boss_raw - armor_map.get(player.get("equipped_armor", ""), 0))
 
