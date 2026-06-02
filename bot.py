@@ -134,6 +134,10 @@ from handlers.sp_bank import (
 from handlers.broadcast import bcast, handle_broadcast_callback
 from handlers.admin_add import add
 from handlers.blackmarket import blackmarket, bm_buy, bm_auto_open, bm_auto_close, expire_bm_items
+from handlers.stockmarket import (
+    market, stockbuy, stocksell, portfolio, stockhistory,
+    marketcrash, marketboom, marketreset, update_stock_prices
+)
 from handlers.referral import referral
 from handlers.style_art import breathing, art, givestyle, giveart
 from handlers.guide import guide, guide_page_callback, guide_home_callback
@@ -808,6 +812,15 @@ def main():
         ('closeblackmarket',closeblackmarket),
         ('addblackmarket',  addblackmarket),
         ('removeblackmarket', removeblackmarket),
+        # ── Stock market ──────────────────────────────────────────────────
+        ('market',        market),
+        ('stockbuy',      stockbuy),
+        ('stocksell',     stocksell),
+        ('portfolio',     portfolio),
+        ('stockhistory',  stockhistory),
+        ('marketcrash',   marketcrash),
+        ('marketboom',    marketboom),
+        ('marketreset',   marketreset),
         ('addgifbanner',    addgifbanner),
         ('removegifbanner', removegifbanner),
         ('listgifbanners',  listgifbanners),
@@ -925,6 +938,8 @@ def main():
     scheduler.add_job(bm_auto_open,    'cron', hour=22, minute=0, timezone='UTC')
     scheduler.add_job(bm_auto_close,   'cron', hour=6,  minute=0, timezone='UTC')
     scheduler.add_job(expire_bm_items, 'interval', hours=1)
+    # Stock market: price update every 4 hours
+    scheduler.add_job(update_stock_prices, 'interval', hours=4)
     scheduler.start()
     # Ensure forge and updates are added only once
     app.add_handler(CommandHandler('forge', forge_command))
