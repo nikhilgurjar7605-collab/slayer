@@ -30,6 +30,37 @@ ITEM_NAME_ALIASES = {
     "skill point": "Skill Points",
     "skill pts": "Skill Points",
     "skill pt": "Skill Points",
+    # ── Forge swords ──────────────────────────────────────────────────────
+    "crimson nichirin blade": "Crimson Nichirin Blade",
+    "jet black nichirin blade": "Jet Black Nichirin Blade",
+    "scarlet crimson blade": "Scarlet Crimson Blade",
+    "transparent nichirin blade": "Transparent Nichirin Blade",
+    "sun nichirin blade": "Sun Nichirin Blade",
+    "muzan's crimson fang": "Muzan's Crimson Fang",
+    "muzans crimson fang": "Muzan's Crimson Fang",
+    # ── Forge armor ───────────────────────────────────────────────────────
+    "reinforced haori": "Reinforced Haori",
+    "hashira haori": "Hashira Haori",
+    "ice lotus haori": "Ice Lotus Haori",
+    "void tyrant's cloak": "Void Tyrant's Cloak",
+    "void tyrants cloak": "Void Tyrant's Cloak",
+    # ── Forge demon relics / gear ─────────────────────────────────────────
+    "akaza's martial gauntlet": "Akaza's Martial Gauntlet",
+    "akazas martial gauntlet": "Akaza's Martial Gauntlet",
+    "moon-breathing cursed blade": "Moon-Breathing Cursed Blade",
+    "moon breathing cursed blade": "Moon-Breathing Cursed Blade",
+    "rui's spider-thread haori": "Rui's Spider-Thread Haori",
+    "ruis spider-thread haori": "Rui's Spider-Thread Haori",
+    "ruis spider thread haori": "Rui's Spider-Thread Haori",
+    "nakime's resonance talisman": "Nakime's Resonance Talisman",
+    "nakimes resonance talisman": "Nakime's Resonance Talisman",
+    "upper moon shell": "Upper Moon Shell",
+    "demon heart blade": "Demon Heart Blade",
+    "fragment of the first breath": "Fragment of the First Breath",
+    "upper moon iii power crest": "Upper Moon III Power Crest",
+    "upper moon 3 power crest": "Upper Moon III Power Crest",
+    "doma's soul cracker": "Doma's Soul Cracker",
+    "domas soul cracker": "Doma's Soul Cracker",
 }
 
 
@@ -37,7 +68,14 @@ def canonical_item_name(item_name: str) -> str:
     raw = " ".join(str(item_name or "").strip().split())
     if not raw:
         return raw
-    return ITEM_NAME_ALIASES.get(raw.lower(), raw.title())
+    lower = raw.lower()
+    if lower in ITEM_NAME_ALIASES:
+        return ITEM_NAME_ALIASES[lower]
+    # Safe title-case that doesn't capitalise the letter after apostrophes
+    # e.g. "muzan's blade" → "Muzan's Blade" not "Muzan'S Blade"
+    import re as _re
+    titled = _re.sub(r"(?<!['\u2019])\b\w", lambda m: m.group().upper(), raw.lower())
+    return titled
 
 def get_db():
     global _client, _db
