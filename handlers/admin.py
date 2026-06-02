@@ -640,6 +640,7 @@ async def removeblackmarket(update: Update, context):
     )
 
 
+async def admin_unstuck(update: Update, context):
     if not has_admin_access(update.effective_user.id):
         return
     if not context.args:
