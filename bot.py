@@ -1,8 +1,15 @@
 import logging
+import asyncio
+from telegram import Bot
 
 # ── Configure logging FIRST — before any handler/util imports ──────────────
 # basicConfig must run before any module-level getLogger() calls, otherwise
 # those loggers receive a NullHandler and produce zero output.
+
+LOG_GROUP_ID = -5110334969  # Your log group ID
+
+# Initialize bot for logging (will be set properly in main())
+log_bot = None
 
 _fmt_default = logging.Formatter('%(asctime)s [%(name)s] [%(levelname)s] "%(message)s"')
 _fmt_explore = logging.Formatter('%(asctime)s [EXPLORE] [%(levelname)s] "%(message)s"')
@@ -29,6 +36,40 @@ _explore_handler.setFormatter(_fmt_explore)
 _explore_handler.setLevel(logging.DEBUG)
 _explore_handler.addFilter(_ExploreFilter())
 logging.root.addHandler(_explore_handler)
+
+# ── Telegram Log Handler: Sends logs to Telegram group ─────────────────────
+class TelegramLogHandler(logging.Handler):
+    def __init__(self, bot, chat_id):
+        super().__init__(level=logging.INFO)
+        self.bot = bot
+        self.chat_id = chat_id
+    
+    def emit(self, record):
+        try:
+            if self.bot is None:
+                return
+            msg = self.format(record)
+            # Truncate long messages to fit Telegram limits
+            if len(msg) > 4000:
+                msg = msg[:4000] + "... (truncated)"
+            asyncio.run_coroutine_threadsafe(
+                self.bot.send_message(chat_id=self.chat_id, text=f"📝 **LOG**:\n{msg}", parse_mode="Markdown"),
+                asyncio.get_event_loop()
+            )
+        except Exception as e:
+            # Prevent logging errors from causing infinite loops
+            pass
+
+def setup_telegram_logging(application):
+    """Setup Telegram logging after bot is initialized"""
+    global log_bot
+    log_bot = application.bot
+    tg_handler = TelegramLogHandler(log_bot, LOG_GROUP_ID)
+    tg_handler.setFormatter(_fmt_default)
+    tg_handler.setLevel(logging.INFO)
+    logging.root.addHandler(tg_handler)
+    # Log startup
+    logging.info("Bot started! Logging to group %s", LOG_GROUP_ID)
 
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -955,6 +996,10 @@ def main():
 
     logger.info("🗡️ Demon Slayer RPG Bot starting...")
     app.post_init = on_startup
+    
+    # Setup Telegram logging AFTER application is built but BEFORE running
+    setup_telegram_logging(app)
+    
     try:
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
