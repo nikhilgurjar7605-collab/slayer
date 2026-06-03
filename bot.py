@@ -186,7 +186,7 @@ from handlers.suggest import suggest, suggestions, suggestion_action_callback
 from handlers.sqlview import sqlview
 from handlers.info_cmd import info, infoall, view_suggestion, mytechnique, myart, setstyleimage
 from handlers.know import know, know_callback
-from handlers.give import give
+from handlers.give import give, sword, armour
 from handlers.event import event_cmd, events, eventend, eventlist, event_callback
 try:
     from handlers.event import eventresults, vote_cmd, vote_callback
@@ -711,6 +711,8 @@ def main():
         ('auction',         auction),
         ('gift',            gift),
         ('give',            give),
+        ('sword',           sword),
+        ('armour',          armour),
         ('blackmarket',      blackmarket),
         ('worldbank',       worldbank),
         ('worlddeposit',    worlddeposit),

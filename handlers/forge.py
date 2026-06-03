@@ -535,8 +535,16 @@ async def _handle_forge_confirm(query):
 
     # ── Determine item category ────────────────────────────────────────
     cat = item.get("category", "")
-    is_sword = "Swords" in cat or "sword" in item.get("id", "").lower() or "blade" in item.get("name", "").lower() or "fang" in item.get("name", "").lower()
-    is_armor = "Armor" in cat or "Haori" in item.get("name", "") or "Cloak" in item.get("name", "") or "Shell" in item.get("name", "")
+    item_name_lower = item.get("name", "").lower()
+    item_id_lower = item.get("id", "").lower()
+    
+    is_sword = ("Swords" in cat or "sword" in item_id_lower or 
+                "blade" in item_name_lower or "fang" in item_name_lower)
+    is_armor = ("Armor" in cat or "Haori" in item_name_lower or 
+                "Cloak" in item_name_lower or "Shell" in item_name_lower or
+                "Gauntlet" in item_name_lower or "Crown" in item_name_lower or
+                "Ring" in item_name_lower or "Talisman" in item_name_lower or
+                "Crest" in item_name_lower)
 
     # ── Add to inventory as equippable item ───────────────────────────
     if is_sword:
