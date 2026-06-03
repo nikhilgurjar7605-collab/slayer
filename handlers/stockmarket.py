@@ -252,21 +252,21 @@ def log_stock_event(event_type: str, data: dict = None):
 # ── Price engine ──────────────────────────────────────────────────────────
 
 def update_stock_prices():
-    """Run every 4 hours via APScheduler."""
+    """Run every 5 minutes via APScheduler."""
     log.info("[STOCK] Running price update tick.")
     hour = datetime.utcnow().hour
     is_night = hour >= 22 or hour < 6
 
-    # Collect player-driven event counts from last 4h
-    demon_kills  = _count_events("demon_kill")
-    slayer_wins  = _count_events("slayer_win")
-    demon_wins   = _count_events("demon_win")
-    forge_count  = _count_events("forge")
-    boss_kills   = _count_events("boss_kill")
-    shop_buys    = _count_events("shop_buy")
+    # Collect player-driven event counts from last 5 min
+    demon_kills  = _count_events("demon_kill", since_hours=0.083)
+    slayer_wins  = _count_events("slayer_win", since_hours=0.083)
+    demon_wins   = _count_events("demon_win", since_hours=0.083)
+    forge_count  = _count_events("forge", since_hours=0.083)
+    boss_kills   = _count_events("boss_kill", since_hours=0.083)
+    shop_buys    = _count_events("shop_buy", since_hours=0.083)
     total_active = demon_kills + slayer_wins + demon_wins + forge_count + shop_buys
 
-    def normalise(n, scale=20):
+    def normalise(n, scale=4):
         """Convert event count to a ±% price change. scale = count for 10% move."""
         return (n / scale) * 0.10
 
