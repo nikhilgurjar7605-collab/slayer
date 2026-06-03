@@ -542,7 +542,7 @@ async def pet_hatch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ══════════════════════════════════════════════════════════════════════════
 
 async def pets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/pets — View your full pet stable."""
+    """/pets — View your full pet stable with improved UI."""
     user_id = update.effective_user.id
     player = get_player(user_id)
     if not player:
@@ -561,31 +561,57 @@ async def pets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    lines = [f"🐾 *{player['name']}'s Pet Stable* ({len(stable)}/10)\n━━━━━━━━━━━━━━━━━━━━━"]
-    for p in stable:
-        name = p["name"]
-        # Get pet data (check evolutions first)
-        if name in PET_EVOLUTIONS:
-            d = {"rarity": PETS[PET_EVOLUTIONS[name]["base"]]["rarity"],
-                 "emoji": PET_EVOLUTIONS[name]["emoji"]}
-        else:
-            d = PETS.get(name, {"rarity": "common", "emoji": "🐾"})
+    lines = [f"🐾 *{player['name']}'s Pet Stable* ({len(stable)} pets)\n━━━━━━━━━━━━━━━━━━━━━"]
+    
+    # Group by active/inactive for better UI
+    active_pets = [p for p in stable if p.get("active")]
+    inactive_pets = [p for p in stable if not p.get("active")]
+    
+    # Show active pets first
+    if active_pets:
+        lines.append("\n✅ *ACTIVE PETS:*")
+        for p in active_pets:
+            name = p["name"]
+            if name in PET_EVOLUTIONS:
+                d = {"rarity": PETS[PET_EVOLUTIONS[name]["base"]]["rarity"],
+                     "emoji": PET_EVOLUTIONS[name]["emoji"]}
+            else:
+                d = PETS.get(name, {"rarity": "common", "emoji": "🐾"})
 
-        rarity_e = PET_RARITY_EMOJI[d["rarity"]]
-        bond_name = PET_BOND_NAMES[p["bond_level"]]
-        active_tag = " ✅ *ACTIVE*" if p.get("active") else ""
-        lines.append(
-            f"{d['emoji']} *{name}* {rarity_e}{active_tag}\n"
-            f"   ❤️ Bond: *{bond_name}* (Lv{p['bond_level']+1}) | XP: {p['bond_xp']}"
-        )
+            rarity_e = PET_RARITY_EMOJI[d["rarity"]]
+            bond_name = PET_BOND_NAMES[p["bond_level"]]
+            lines.append(
+                f"\n{d['emoji']} *{name}* {rarity_e}\n"
+                f"   ❤️ Bond: *{bond_name}* (Lv{p['bond_level']+1}) | XP: {p['bond_xp']}"
+            )
+    
+    # Show inactive pets
+    if inactive_pets:
+        lines.append("\n💤 *INACTIVE PETS:*")
+        for p in inactive_pets[:8]:  # Limit display to avoid huge messages
+            name = p["name"]
+            if name in PET_EVOLUTIONS:
+                d = {"rarity": PETS[PET_EVOLUTIONS[name]["base"]]["rarity"],
+                     "emoji": PET_EVOLUTIONS[name]["emoji"]}
+            else:
+                d = PETS.get(name, {"rarity": "common", "emoji": "🐾"})
+
+            rarity_e = PET_RARITY_EMOJI[d["rarity"]]
+            bond_name = PET_BOND_NAMES[p["bond_level"]]
+            lines.append(
+                f"  {d['emoji']} *{name}* {rarity_e} - {bond_name}"
+            )
+        if len(inactive_pets) > 8:
+            lines.append(f"  _...and {len(inactive_pets)-8} more_")
 
     lines.append(
         f"\n━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Commands:\n"
-        f"`/pet <name>` — Activate & view stats\n"
-        f"`/feedpet` — Feed active pet\n"
-        f"`/hatchegg` — Hatch an egg\n"
-        f"`/petbattle @user` — Pet duel"
+        f"⚡ *Commands:*\n"
+        f"• `/pet <name>` — Activate & view stats\n"
+        f"• `/feedpet` — Feed active pet\n"
+        f"• `/hatchegg` — Hatch an egg\n"
+        f"• `/petbattle @user` — Pet duel\n"
+        f"• `/petoffer @user` — Trade pets"
     )
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
