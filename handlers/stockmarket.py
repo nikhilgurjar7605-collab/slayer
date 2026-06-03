@@ -1,11 +1,12 @@
 """
 handlers/stockmarket.py — Demon Slayer Stock Market
 =====================================================
-14 stocks: 6 player-driven + 8 independent/event-driven.
+14 stocks: All independent & market-driven (Wall Street style).
+No player-driven mechanics — prices move on market forces, sentiment, and events.
 Commands: /market, /stockbuy, /stocksell, /portfolio, /stockhistory
 Admin:    /marketcrash, /marketboom, /marketreset
 
-Price engine runs every 4 hours via APScheduler.
+Price engine runs every 5 minutes via APScheduler.
 Image cards generated with Pillow.
 """
 import io
@@ -34,104 +35,110 @@ def _font(size: int, bold: bool = False):
         return ImageFont.load_default()
 
 # ── Stock definitions ─────────────────────────────────────────────────────
+# All stocks are now INDEPENDENT — no player-driven mechanics
+# Types: sector, growth, value, volatile, stable, momentum, cyclical, gamble
 STOCKS = {
-    # ── Player-driven ─────────────────────────────────────────────────────
+    # ── Sector Stocks (Industrial, Tech, Healthcare, etc.) ────────────────
     "DBS": {
         "name": "Demon Blood Supply Co.",
         "emoji": "🩸",
         "base_price": 1000,
-        "volatility": 0.08,
-        "type": "player",
+        "volatility": 0.12,
+        "type": "cyclical",
+        "sector": "Healthcare",
         "color": (180, 40, 40),
-        "desc": "Rises when demons are killed; falls when battles slow.",
-        "driver": "demon_kills",
+        "desc": "Biotech firm. Prices cycle with market sentiment and R&D news.",
     },
     "WST": {
         "name": "Wisteria Corp",
         "emoji": "💜",
         "base_price": 1200,
-        "volatility": 0.07,
-        "type": "player",
+        "volatility": 0.10,
+        "type": "growth",
+        "sector": "Technology",
         "color": (120, 60, 180),
-        "desc": "Rises when slayers win battles.",
-        "driver": "slayer_wins",
+        "desc": "Tech growth stock. Steady climb with occasional volatility.",
     },
     "MZN": {
         "name": "Muzan Industries",
         "emoji": "👁️",
         "base_price": 2500,
-        "volatility": 0.10,
-        "type": "player",
+        "volatility": 0.15,
+        "type": "volatile",
+        "sector": "Conglomerate",
         "color": (40, 10, 60),
-        "desc": "Rises when demons win; crashes when boss raids succeed.",
-        "driver": "demon_wins",
+        "desc": "High-volatility conglomerate. Prone to sharp swings on earnings.",
     },
     "NFG": {
         "name": "Nichirin Forge Ltd",
         "emoji": "⚒️",
         "base_price": 1500,
-        "volatility": 0.09,
-        "type": "player",
+        "volatility": 0.11,
+        "type": "value",
+        "sector": "Industrial",
         "color": (180, 120, 20),
-        "desc": "Rises with forge usage and shop purchases.",
-        "driver": "forge_count",
+        "desc": "Industrial value stock. Moves with manufacturing data and demand.",
     },
     "KZK": {
         "name": "Kizuki Cartel",
         "emoji": "☠️",
         "base_price": 3000,
-        "volatility": 0.12,
-        "type": "player",
+        "volatility": 0.18,
+        "type": "momentum",
+        "sector": "Energy",
         "color": (60, 0, 80),
-        "desc": "Rises during Upper Moon battles; crashes after boss raids.",
-        "driver": "boss_kills",
+        "desc": "Momentum play. Trends strongly but reverses sharply.",
     },
     "CRC": {
         "name": "Corps Ration Co.",
         "emoji": "🍱",
         "base_price": 800,
-        "volatility": 0.05,
-        "type": "player",
+        "volatility": 0.08,
+        "type": "stable",
+        "sector": "Consumer Staples",
         "color": (40, 100, 60),
-        "desc": "Tracks item shop and gifting activity.",
-        "driver": "shop_buys",
+        "desc": "Defensive staple. Low volatility, steady dividends.",
     },
-    # ── Independent ───────────────────────────────────────────────────────
+    # ── Specialty & Thematic Stocks ───────────────────────────────────────
     "STC": {
         "name": "Sunrise Trading Co.",
         "emoji": "🌅",
         "base_price": 500,
         "volatility": 0.15,
-        "type": "random",
+        "type": "penny",
+        "sector": "Trading",
         "color": (200, 140, 30),
-        "desc": "Pure random walk. Unpredictable penny stock.",
+        "desc": "Penny stock. High volatility, low price. Speculative play.",
     },
     "BEP": {
         "name": "Butterfly Estate Pharma",
         "emoji": "🦋",
         "base_price": 1800,
         "volatility": 0.11,
-        "type": "event",
+        "type": "healthcare",
+        "sector": "Pharmaceuticals",
         "color": (160, 80, 160),
-        "desc": "Random events: poison discoveries, antidote shortages.",
+        "desc": "Pharma company. Moves on drug trial news and FDA approvals.",
     },
     "ICH": {
         "name": "Infinity Castle Holdings",
         "emoji": "🏯",
         "base_price": 2000,
         "volatility": 0.08,
-        "type": "inverse",
+        "type": "REIT",
+        "sector": "Real Estate",
         "color": (30, 30, 80),
-        "desc": "Thrives when nobody plays. Inverse of activity.",
+        "desc": "Real estate investment trust. Pays steady income to holders.",
     },
     "UFT": {
         "name": "Ubuyashiki Family Trust",
         "emoji": "🌸",
         "base_price": 5000,
         "volatility": 0.02,
-        "type": "stable",
+        "type": "blue_chip",
+        "sector": "Diversified",
         "color": (180, 100, 120),
-        "desc": "Stable blue-chip. Pays 5% daily dividend to holders.",
+        "desc": "Blue-chip dividend aristocrat. Pays 5% annual dividend.",
         "dividend": 0.05,
     },
     "SVA": {
@@ -139,36 +146,40 @@ STOCKS = {
         "emoji": "🗡️",
         "base_price": 900,
         "volatility": 0.20,
-        "type": "volatile",
+        "type": "defense",
+        "sector": "Aerospace & Defense",
         "color": (100, 60, 20),
-        "desc": "High-risk. Randomly spikes or crashes every few days.",
+        "desc": "Defense contractor. Spikes on geopolitical tension.",
     },
     "TJV": {
         "name": "Tanjiro Ventures",
         "emoji": "🔥",
         "base_price": 300,
         "volatility": 0.04,
-        "type": "growth",
+        "type": "startup",
+        "sector": "Venture Capital",
         "color": (200, 60, 20),
-        "desc": "Starts low. Slowly climbs over weeks. Long-term hold.",
+        "desc": "Early-stage VC fund. Slow growth but long-term potential.",
     },
     "RFF": {
         "name": "Rengoku Flame Fund",
         "emoji": "🔆",
         "base_price": 1100,
         "volatility": 0.09,
-        "type": "night_only",
+        "type": "energy",
+        "sector": "Oil & Gas",
         "color": (220, 100, 10),
-        "desc": "Only moves during Black Market hours (10pm–6am UTC).",
+        "desc": "Energy sector ETF. Tracks oil and gas market performance.",
     },
     "SFI": {
         "name": "Spider Forest Inc.",
         "emoji": "🕷️",
         "base_price": 400,
         "volatility": 0.30,
-        "type": "gamble",
+        "type": "biotech",
+        "sector": "Biotechnology",
         "color": (60, 60, 60),
-        "desc": "10% chance each tick to crash -60% or moon +150%. Pure gamble.",
+        "desc": "Clinical-stage biotech. Binary outcomes on trial results.",
     },
 }
 
@@ -252,23 +263,35 @@ def log_stock_event(event_type: str, data: dict = None):
 # ── Price engine ──────────────────────────────────────────────────────────
 
 def update_stock_prices():
-    """Run every 5 minutes via APScheduler."""
+    """Run every 5 minutes via APScheduler.
+    
+    Wall Street-style price engine:
+    - All stocks move independently based on market mechanics
+    - No player-driven events affect prices
+    - Each stock type has unique behavior (sector rotation, momentum, etc.)
+    """
     log.info("[STOCK] Running price update tick.")
-    hour = datetime.utcnow().hour
-    is_night = hour >= 22 or hour < 6
-
-    # Collect player-driven event counts from last 5 min
-    demon_kills  = _count_events("demon_kill", since_hours=0.083)
-    slayer_wins  = _count_events("slayer_win", since_hours=0.083)
-    demon_wins   = _count_events("demon_win", since_hours=0.083)
-    forge_count  = _count_events("forge", since_hours=0.083)
-    boss_kills   = _count_events("boss_kill", since_hours=0.083)
-    shop_buys    = _count_events("shop_buy", since_hours=0.083)
-    total_active = demon_kills + slayer_wins + demon_wins + forge_count + shop_buys
-
-    def normalise(n, scale=4):
-        """Convert event count to a ±% price change. scale = count for 10% move."""
-        return (n / scale) * 0.10
+    
+    # Market sentiment factor (random walk with mean reversion)
+    market_sentiment = random.gauss(0, 0.02)
+    
+    # Sector rotation factors (each sector moves differently)
+    sector_factors = {
+        "Healthcare": random.gauss(0, 0.03),
+        "Technology": random.gauss(0.01, 0.04),
+        "Conglomerate": random.gauss(0, 0.035),
+        "Industrial": random.gauss(-0.005, 0.025),
+        "Energy": random.gauss(0.005, 0.04),
+        "Consumer Staples": random.gauss(0.002, 0.015),
+        "Trading": random.gauss(0, 0.05),
+        "Pharmaceuticals": random.gauss(0.003, 0.03),
+        "Real Estate": random.gauss(0.001, 0.02),
+        "Diversified": random.gauss(0.002, 0.01),
+        "Aerospace & Defense": random.gauss(0, 0.035),
+        "Venture Capital": random.gauss(0.005, 0.02),
+        "Oil & Gas": random.gauss(0, 0.03),
+        "Biotechnology": random.gauss(0, 0.06),
+    }
 
     for ticker, cfg in STOCKS.items():
         current = _get_price(ticker)
@@ -276,73 +299,110 @@ def update_stock_prices():
         vol     = cfg["volatility"]
         base    = cfg["base_price"]
         t       = cfg["type"]
-
-        if t == "player":
-            driver = cfg.get("driver", "")
-            if driver == "demon_kills":
-                delta += normalise(demon_kills)
-                delta -= normalise(max(0, 20 - demon_kills), scale=20) * 0.5
-            elif driver == "slayer_wins":
-                delta += normalise(slayer_wins)
-            elif driver == "demon_wins":
-                delta += normalise(demon_wins)
-                delta -= normalise(boss_kills) * 1.5
-            elif driver == "forge_count":
-                delta += normalise(forge_count) + normalise(shop_buys, scale=30)
-            elif driver == "boss_kills":
-                delta += normalise(demon_kills + demon_wins, scale=30)
-                delta -= normalise(boss_kills) * 2.0
-            elif driver == "shop_buys":
-                delta += normalise(shop_buys, scale=15)
-
-        elif t == "random":
-            delta = random.gauss(0, vol)
-
-        elif t == "event":
-            delta = random.gauss(0, vol * 0.5)
-            if random.random() < 0.15:   # 15% chance of event spike
-                delta += random.choice([-0.25, -0.20, 0.20, 0.30, 0.40])
-
-        elif t == "inverse":
-            activity_pct = min(total_active / 50, 1.0)
-            delta = -activity_pct * 0.10 + (1 - activity_pct) * 0.08
-            delta += random.gauss(0, vol * 0.3)
-
-        elif t == "stable":
-            delta = random.gauss(0.002, vol)  # slight upward drift
-
-        elif t == "volatile":
-            if random.random() < 0.20:   # 20% chance of big move
-                delta = random.choice([-0.35, -0.30, 0.30, 0.40, 0.50])
-            else:
-                delta = random.gauss(0, vol)
-
+        sector  = cfg.get("sector", "General")
+        
+        # Base market movement
+        market_component = market_sentiment * random.uniform(0.5, 1.5)
+        
+        # Sector-specific movement
+        sector_component = sector_factors.get(sector, 0)
+        
+        if t == "cyclical":
+            # Cycles with economic sentiment
+            cycle_phase = (datetime.utcnow().hour % 6) / 6.0
+            cycle_delta = math.sin(cycle_phase * 2 * math.pi) * 0.03
+            delta = market_component + sector_component + cycle_delta + random.gauss(0, vol)
+            
         elif t == "growth":
-            # Hard floor rises 1% per day; slight daily drift upward
-            floor = base * (1 + 0.01 * (datetime.utcnow() - datetime(2024, 1, 1)).days / 24)
-            floor = min(floor, base * MAX_PRICE_RATIO)
-            delta = random.gauss(0.005, vol)
-            new_p = max(current * (1 + delta), floor)
-            _set_price(ticker, new_p)
-            continue
-
-        elif t == "night_only":
-            if is_night:
-                delta = random.gauss(0, vol)
+            # Steady upward drift with volatility
+            drift = 0.003  # 0.3% per tick upward bias
+            delta = drift + sector_component + random.gauss(0, vol)
+            
+        elif t == "volatile":
+            # High volatility, occasional big moves
+            if random.random() < 0.15:
+                delta = random.choice([-0.25, -0.20, 0.20, 0.30, 0.40])
             else:
-                delta = 0   # frozen during daytime
-
-        elif t == "gamble":
-            r = random.random()
-            if r < 0.05:
-                delta = -0.60
-            elif r < 0.10:
-                delta = 1.50
+                delta = market_component + sector_component + random.gauss(0, vol)
+                
+        elif t == "value":
+            # Mean-reverting around fair value
+            fair_value = base * (1 + market_sentiment * 2)
+            deviation = (current - fair_value) / fair_value
+            mean_reversion = -deviation * 0.1  # 10% reversion per tick
+            delta = mean_reversion + sector_component + random.gauss(0, vol * 0.7)
+            
+        elif t == "momentum":
+            # Trends strongly, reverses sharply
+            momentum_factor = random.gauss(0.01, 0.05)
+            if random.random() < 0.08:
+                # Sharp reversal
+                delta = -momentum_factor * 3
+            else:
+                delta = momentum_factor + market_component * 1.5
+                
+        elif t == "stable":
+            # Low volatility, slight dividend yield baked in
+            dividend_yield = 0.001  # Small constant return
+            delta = dividend_yield + random.gauss(0, vol)
+            
+        elif t == "penny":
+            # High volatility, no fundamental anchor
+            delta = random.gauss(0, vol * 1.5)
+            if random.random() < 0.1:
+                delta *= random.uniform(2, 4)  # Occasional spikes
+                
+        elif t == "healthcare":
+            # Moves on "news" events
+            delta = sector_component + random.gauss(0.002, vol)
+            if random.random() < 0.08:
+                # FDA approval/rejection news
+                delta += random.choice([-0.20, 0.35])
+                
+        elif t == "REIT":
+            # Income-focused, interest rate sensitive
+            rate_sensitivity = -random.gauss(0, 0.01)
+            dividend_component = 0.0015
+            delta = rate_sensitivity + dividend_component + random.gauss(0, vol)
+            
+        elif t == "blue_chip":
+            # Stable growth with dividends
+            steady_growth = 0.0015
+            delta = steady_growth + market_component * 0.5 + random.gauss(0, vol)
+            
+        elif t == "defense":
+            # Geopolitical risk premium
+            risk_premium = random.gauss(0.002, 0.02)
+            delta = risk_premium + sector_component + random.gauss(0, vol)
+            
+        elif t == "startup":
+            # Early stage: slow growth, occasional funding pops
+            base_growth = 0.001
+            if random.random() < 0.05:
+                # Funding round announcement
+                delta = 0.15 + random.gauss(0, 0.05)
+            else:
+                delta = base_growth + random.gauss(0, vol)
+                
+        elif t == "energy":
+            # Commodity-linked
+            commodity_cycle = math.sin(datetime.utcnow().hour / 24 * 2 * math.pi) * 0.02
+            delta = commodity_cycle + sector_component + random.gauss(0, vol)
+            
+        elif t == "biotech":
+            # Binary outcomes on trials
+            if random.random() < 0.04:
+                # Trial results
+                delta = random.choice([-0.40, -0.30, 0.50, 0.80])
             else:
                 delta = random.gauss(0, vol)
-
-        # Apply delta with random noise
-        noise = random.gauss(0, vol * 0.3)
+        
+        else:
+            # Default: market-following with sector tilt
+            delta = market_component + sector_component + random.gauss(0, vol)
+        
+        # Apply delta with additional noise
+        noise = random.gauss(0, vol * 0.2)
         new_price = current * (1 + delta + noise)
         _set_price(ticker, new_price)
 
@@ -671,8 +731,11 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption=(
                 "📈 *DEMON SLAYER STOCK EXCHANGE*\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
-                "🟢 Player-driven: `DBS WST MZN NFG KZK CRC`\n"
-                "🎲 Independent:   `STC BEP ICH UFT SVA TJV RFF SFI`\n\n"
+                "*Wall Street-Style Market*\n"
+                "All stocks trade independently based on market forces.\n\n"
+                "*Sectors:* Healthcare • Technology • Industrial • Energy\n"
+                "*Styles:* Growth • Value • Momentum • Stable\n"
+                "*Specialty:* Biotech • Defense • REIT • Penny\n\n"
                 "Use `/stockbuy TICKER shares` to invest\n"
                 "Use `/stockhistory TICKER` for detail chart\n"
                 "Use `/portfolio` to see your holdings"
