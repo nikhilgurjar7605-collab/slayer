@@ -339,12 +339,14 @@ def _build_forge_keyboard(category_filter: str = None):
         visible = [i for i in FORGE_ITEMS if i.get("category") == category_filter]
 
     item_buttons = []
-    for idx, item in enumerate(FORGE_ITEMS):
-        if item not in visible:
+    for item in visible:
+        try:
+            idx = FORGE_ITEMS.index(item)
+            item_buttons.append([InlineKeyboardButton(
+                item["name"], callback_data=f"forge_{idx}"
+            )])
+        except ValueError:
             continue
-        item_buttons.append([InlineKeyboardButton(
-            item["name"], callback_data=f"forge_{FORGE_ITEMS.index(item)}"
-        )])
 
     rows = []
     # Show category tabs in rows of 3
