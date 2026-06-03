@@ -542,16 +542,19 @@ def _build_my_skills_page(user_id: int, cat_filter: str = "all") -> tuple:
     if not show_cats:
         lines.append("\n_No skills in this category._")
 
-    # Bonuses summary (only if showing all or specific category)
+    # Bonuses summary - show more buffs with "More" button if needed
     active_names = [s for s in owned if s not in deacted]
     bonuses = get_active_skill_bonuses(active_names)
-    if bonuses and cat_filter == "all":
+    if bonuses:
         lines.append("\n━━━━━━━━━━━━━━━━━━━━━")
         lines.append("📊 *Active Bonuses:*")
-        for k, v in list(bonuses.items())[:12]:  # show max 12 to avoid overflow
+        bonus_limit = 15  # show up to 15 bonuses
+        bonus_items = list(bonuses.items())
+        for k, v in bonus_items[:bonus_limit]:
             lines.append(f"  ╰➤ {_bonus_label(k, v)}")
-        if len(bonuses) > 12:
-            lines.append(f"  ╰➤ _...+{len(bonuses)-12} more_")
+        if len(bonuses) > bonus_limit:
+            lines.append(f"  ╰➤ _...+{len(bonuses)-bonus_limit} more_")
+            # Add a button to view all bonuses
 
     # Build keyboard — category tabs
     all_cats = list(by_cat.keys())
@@ -573,6 +576,12 @@ def _build_my_skills_page(user_id: int, cat_filter: str = "all") -> tuple:
         InlineKeyboardButton("⚙️ Manage", callback_data="myskills_manage"),
         InlineKeyboardButton("🌳 Browse Tree", callback_data="skillpage_0_all"),
     ])
+    
+    # Add "View All Bonuses" button if there are many bonuses
+    if bonuses and len(bonuses) > bonus_limit:
+        cat_buttons.append([
+            InlineKeyboardButton("📜 View All Buffs", callback_data="myskills_allbonuses")
+        ])
 
     kb = InlineKeyboardMarkup(cat_buttons)
     return "\n".join(lines), kb
@@ -610,7 +619,7 @@ async def myskills_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    data    = query.data  # myskills_{cat} or myskills_manage
+    data    = query.data  # myskills_{cat} or myskills_manage or myskills_allbonuses
 
     if data == "myskills_manage":
         # Redirect to deactivate command view
@@ -635,6 +644,37 @@ async def myskills_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Back", callback_data="myskills_all")
+        ]])
+        try:
+            await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+        except Exception:
+            pass
+        return
+    
+    if data == "myskills_allbonuses":
+        # Show all active bonuses in a detailed view
+        owned   = get_player_skills(user_id)
+        deacted = _get_deactivated(user_id)
+        active_names = [s for s in owned if s not in deacted]
+        bonuses = get_active_skill_bonuses(active_names)
+        
+        lines = [
+            "📊 *ALL ACTIVE BONUSES*",
+            "━━━━━━━━━━━━━━━━━━━━━",
+            f"_Total: {len(bonuses)} active buffs_\n",
+        ]
+        
+        if bonuses:
+            for k, v in sorted(bonuses.items()):
+                lines.append(f"  ╰➤ {_bonus_label(k, v)}")
+        else:
+            lines.append("_No active bonuses._")
+        
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("_From your equipped items and learned skills_")
+        
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Back to Skills", callback_data="myskills_all")
         ]])
         try:
             await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
