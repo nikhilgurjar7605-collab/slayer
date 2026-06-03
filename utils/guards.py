@@ -12,6 +12,11 @@ from telegram.ext import ContextTypes
 import config
 
 
+def is_owner(user_id: int) -> bool:
+    """Check if a user is the bot owner."""
+    return user_id == getattr(config, "OWNER_ID", None)
+
+
 STRICT_DM_HANDLERS = {"menu", "close_menu", "explore"}
 
 
