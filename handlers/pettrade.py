@@ -36,7 +36,7 @@ from telegram.error import BadRequest, TimedOut
 
 from utils.database import col
 from utils.guards import dm_only
-from config import PETS, PET_RARITY_EMOJI
+from config import PETS, PET_RARITY_EMOJI, PET_IMAGES
 
 log = logging.getLogger(__name__)
 
@@ -105,9 +105,79 @@ def _pet_line(pet_name: str, bond_level: int = 0) -> str:
     return f"{emoji} *{pet_name}* {re} `[{stars}]`"
 
 
+def _pet_card(pet_name: str, bond_level: int = 0, is_initiator: bool = True) -> str:
+    """
+    Returns a detailed pet stat card for the Visual Link Cable interface.
+    Shows image URL, name, level/bond, and key stats.
+    """
+    cfg = PETS.get(pet_name, {})
+    if not cfg:
+        return "_Unknown Pet_"
+    
+    emoji   = cfg.get("emoji", "🐾")
+    rarity  = cfg.get("rarity", "common")
+    re      = PET_RARITY_EMOJI.get(rarity, "⚪")
+    desc    = cfg.get("desc", "")
+    passive = cfg.get("passive", {})
+    skill   = cfg.get("skill", "None")
+    img_url = PET_IMAGES.get(pet_name, "")
+    
+    # Build stat lines from passives
+    stat_lines = []
+    for k, v in passive.items():
+        label = {
+            "xp_pct": "⭐ XP", "yen_pct": "💰 Yen",
+            "drop_pct": "🎁 Drop", "atk_pct": "💪 ATK",
+            "def_pct": "🛡️ DEF", "hp_pct": "❤️ HP",
+            "dodge_pct": "🎯 Dodge",
+        }.get(k, k)
+        stat_lines.append(f"  {label}: +{int(v*100)}%")
+    
+    # Bond level as "Level"
+    level_display = f"Lv.{bond_level + 1}"
+    
+    card = [
+        f"{'🔵' if is_initiator else '🔴'} *{pet_name}* {re} `{level_display}`",
+        f"_{desc}_",
+        f"Bond: {'★' * bond_level}{'☆' * (4 - bond_level)}",
+    ]
+    if stat_lines:
+        card.append("*Stats:*")
+        card.extend(stat_lines)
+    if skill and skill != "None":
+        card.append(f"⚔️ Skill: _{skill}_")
+    
+    return "\n".join(card), img_url
+
+
 def _bond(user_id: int, pet_name: str) -> int:
     doc = col("pets").find_one({"user_id": user_id, "name": pet_name}, {"bond_level": 1})
     return doc.get("bond_level", 0) if doc else 0
+
+
+def _is_pet_locked(user_id: int, pet_name: str) -> tuple[bool, str]:
+    """
+    Check if a pet is locked and cannot be traded.
+    Returns (is_locked, reason).
+    """
+    pet_doc = col("pets").find_one({"user_id": user_id, "name": pet_name})
+    if not pet_doc:
+        return True, "Pet not found"
+    
+    # Check if pet is active (being used)
+    if pet_doc.get("active", False):
+        return True, "Pet is currently active"
+    
+    # Check if user is in battle
+    battle_state = col("battle_state").find_one({"user_id": user_id, "active": 1})
+    if battle_state and battle_state.get("in_combat", False):
+        return True, "User is in battle"
+    
+    # Check if pet is being used in a raid
+    if battle_state and battle_state.get("raid_active", False):
+        return True, "User is in a raid"
+    
+    return False, ""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -118,6 +188,8 @@ def _build_screen(trade: dict, i_name: str, t_name: str) -> tuple[str, InlineKey
     """
     Returns (text, markup) for the shared trade screen.
     The message lives in the target's DM and is edited in-place as state changes.
+    
+    Features Visual Link Cable Interface with side-by-side pet display.
     """
     tid   = trade["trade_id"]
     i_pet = trade["initiator_pet"]
@@ -129,7 +201,7 @@ def _build_screen(trade: dict, i_name: str, t_name: str) -> tuple[str, InlineKey
 
     # ── Text ────────────────────────────────────────────────────────────
     lines = [
-        "🔄 *PET TRADE*",
+        "🔗 *VISUAL LINK CABLE - PET TRADE*",
         "━━━━━━━━━━━━━━━━━━━━━",
         "",
         f"👤 *{i_name}* offers:",
@@ -137,17 +209,19 @@ def _build_screen(trade: dict, i_name: str, t_name: str) -> tuple[str, InlineKey
 
     if i_pet:
         bl = _bond(trade["initiator_id"], i_pet)
-        lines.append(f"  {_pet_line(i_pet, bl)}")
-        lines.append("  ✅ _Agreed_" if i_agr else "  ⏳ _Waiting to confirm…_")
+        card_text, _ = _pet_card(i_pet, bl, is_initiator=True)
+        lines.append(card_text)
+        lines.append("✅ _Agreed_" if i_agr else "⏳ _Waiting to confirm…_")
     else:
         lines.append("  _⌛ Selecting pet…_")
 
-    lines += ["", f"👤 *{t_name}* offers:"]
+    lines += ["", "━━━━━━━━━━━━━━━━━━━━━", "", f"👤 *{t_name}* offers:"]
 
     if t_pet:
         bl = _bond(trade["target_id"], t_pet)
-        lines.append(f"  {_pet_line(t_pet, bl)}")
-        lines.append("  ✅ _Agreed_" if t_agr else "  ⏳ _Waiting to confirm…_")
+        card_text, _ = _pet_card(t_pet, bl, is_initiator=False)
+        lines.append(card_text)
+        lines.append("✅ _Agreed_" if t_agr else "⏳ _Waiting to confirm…_")
     else:
         lines.append("  _⌛ Selecting pet…_")
 
@@ -589,6 +663,11 @@ async def _do_pick(query, user_id: int, rest: str, context):
     if side == "t" and trade["target_agreed"]:
         return await query.answer("⚠️ Already agreed — cancel to restart.", show_alert=True)
 
+    # Anti-scam: Check if pet is locked (in battle, active, etc.)
+    is_locked, lock_reason = _is_pet_locked(user_id, pet_name)
+    if is_locked:
+        return await query.answer(f"❌ Cannot trade: {lock_reason}", show_alert=True)
+
     if not col("pets").find_one({"user_id": user_id, "name": pet_name}):
         return await query.answer(f"❌ You don't own {pet_name}.", show_alert=True)
 
@@ -684,6 +763,21 @@ async def _do_agree(query, user_id: int, rest: str, context):
 
     if not trade["initiator_pet"] or not trade["target_pet"]:
         return await query.answer("⚠️ Both players must pick a pet first.", show_alert=True)
+
+    # Anti-scam: Re-verify pets are still tradable before agreeing
+    i_pet = trade["initiator_pet"]
+    t_pet = trade["target_pet"]
+    
+    if side == "i":
+        is_locked, lock_reason = _is_pet_locked(user_id, i_pet)
+        if is_locked:
+            _set(trade_id, initiator_pet=None, initiator_agreed=False)
+            return await query.answer(f"❌ Pet locked: {lock_reason}", show_alert=True)
+    else:
+        is_locked, lock_reason = _is_pet_locked(user_id, t_pet)
+        if is_locked:
+            _set(trade_id, target_pet=None, target_agreed=False)
+            return await query.answer(f"❌ Pet locked: {lock_reason}", show_alert=True)
 
     if side == "i":
         _set(trade_id, initiator_agreed=True)
