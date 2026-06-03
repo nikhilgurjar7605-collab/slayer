@@ -215,6 +215,8 @@ from handlers.imgupload import setimage, listimages
 from handlers.update import update_command, update_callback, recent_updates
 from handlers.forge import forge_command, forge_callback
 from handlers.pettrade import pettrade, petoffer, petaccept, pt_callback
+from handlers.direct_fetch import sword_command, armour_command
+from handlers.enemydex import slayerdex, demondex
 
 from handlers.meditate import meditate, meditate_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
@@ -987,6 +989,10 @@ def main():
     # Ensure forge and updates are added only once
     app.add_handler(CommandHandler('forge', forge_command))
     app.add_handler(CallbackQueryHandler(forge_callback, pattern=r'^forge_'))
+    app.add_handler(CommandHandler('sword', sword_command))
+    app.add_handler(CommandHandler('armour', armour_command))
+    app.add_handler(CommandHandler('slayerdex', slayerdex))
+    app.add_handler(CommandHandler('demondex', demondex))
     app.add_handler(CommandHandler('updates', recent_updates))
     app.add_handler(CallbackQueryHandler(update_callback, pattern=r'^update_'))
 
