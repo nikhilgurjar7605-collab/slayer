@@ -333,7 +333,7 @@ def _build_forge_keyboard(category_filter: str = None):
         label = cat if cat != category_filter else f"[{cat}]"
         cat_buttons.append(InlineKeyboardButton(label, callback_data=f"forge_cat_{safe}"))
 
-    # Item buttons (filtered or all)
+    # Item buttons (filtered or all) - show ALL items clearly
     visible = FORGE_ITEMS
     if category_filter:
         visible = [i for i in FORGE_ITEMS if i.get("category") == category_filter]
@@ -342,8 +342,14 @@ def _build_forge_keyboard(category_filter: str = None):
     for item in visible:
         try:
             idx = FORGE_ITEMS.index(item)
+            # Show item name with stats preview
+            stat_preview = ""
+            if "str" in item:
+                stat_preview = f" ⚔️+{item['str']}"
+            elif "def" in item:
+                stat_preview = f" 🛡️+{item['def']}"
             item_buttons.append([InlineKeyboardButton(
-                item["name"], callback_data=f"forge_{idx}"
+                f"{item['name']}{stat_preview}", callback_data=f"forge_{idx}"
             )])
         except ValueError:
             continue
