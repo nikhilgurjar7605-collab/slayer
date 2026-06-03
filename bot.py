@@ -177,7 +177,8 @@ from handlers.admin_add import add
 from handlers.blackmarket import blackmarket, bm_buy, bm_auto_open, bm_auto_close, expire_bm_items
 from handlers.stockmarket import (
     market, stockbuy, stocksell, portfolio, stockhistory,
-    marketcrash, marketboom, marketreset, update_stock_prices
+    marketcrash, marketboom, marketreset, update_stock_prices,
+    log_stock_event, nudge_price, STOCKS
 )
 from handlers.referral import referral
 from handlers.style_art import breathing, art, givestyle, giveart
@@ -983,8 +984,8 @@ def main():
     scheduler.add_job(bm_auto_open,    'cron', hour=22, minute=0, timezone='UTC')
     scheduler.add_job(bm_auto_close,   'cron', hour=6,  minute=0, timezone='UTC')
     scheduler.add_job(expire_bm_items, 'interval', hours=1)
-    # Stock market: price update every 4 hours
-    scheduler.add_job(update_stock_prices, 'interval', hours=4)
+    # Stock market: Wall Street style - prices update every 5 minutes
+    scheduler.add_job(update_stock_prices, 'interval', minutes=5)  # Wall Street style: prices update every 5 min
     scheduler.start()
     # Ensure forge and updates are added only once
     app.add_handler(CommandHandler('forge', forge_command))
