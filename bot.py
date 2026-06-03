@@ -186,7 +186,7 @@ from handlers.suggest import suggest, suggestions, suggestion_action_callback
 from handlers.sqlview import sqlview
 from handlers.info_cmd import info, infoall, view_suggestion, mytechnique, myart, setstyleimage
 from handlers.know import know, know_callback
-from handlers.give import give
+from handlers.give import give, sword, armour
 from handlers.event import event_cmd, events, eventend, eventlist, event_callback
 try:
     from handlers.event import eventresults, vote_cmd, vote_callback
@@ -215,6 +215,8 @@ from handlers.imgupload import setimage, listimages
 from handlers.update import update_command, update_callback, recent_updates
 from handlers.forge import forge_command, forge_callback
 from handlers.pettrade import pettrade, petoffer, petaccept, pt_callback
+from handlers.direct_fetch import sword_command, armour_command
+from handlers.enemydex import slayerdex, demondex
 
 from handlers.meditate import meditate, meditate_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
@@ -711,6 +713,8 @@ def main():
         ('auction',         auction),
         ('gift',            gift),
         ('give',            give),
+        ('sword',           sword),
+        ('armour',          armour),
         ('blackmarket',      blackmarket),
         ('worldbank',       worldbank),
         ('worlddeposit',    worlddeposit),
@@ -985,6 +989,10 @@ def main():
     # Ensure forge and updates are added only once
     app.add_handler(CommandHandler('forge', forge_command))
     app.add_handler(CallbackQueryHandler(forge_callback, pattern=r'^forge_'))
+    app.add_handler(CommandHandler('sword', sword_command))
+    app.add_handler(CommandHandler('armour', armour_command))
+    app.add_handler(CommandHandler('slayerdex', slayerdex))
+    app.add_handler(CommandHandler('demondex', demondex))
     app.add_handler(CommandHandler('updates', recent_updates))
     app.add_handler(CallbackQueryHandler(update_callback, pattern=r'^update_'))
 

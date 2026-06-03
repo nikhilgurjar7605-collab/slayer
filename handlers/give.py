@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from handlers.logs import log_action
-from utils.database import col, get_player
+from utils.database import col, get_player, add_item
 log = logging.getLogger(__name__)
 
 MAX_GIVE_PER_DAY = 20
@@ -25,6 +25,112 @@ async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _give_inner(update, context)
     finally:
         _give_locks.discard(user_id)
+
+
+async def sword(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/sword <item_name> — Directly fetch a sword from forge to inventory."""
+    user_id = update.effective_user.id
+    player = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "⚔️ *SWORD FORGE FETCH*\n\n"
+            "Usage: `/sword <item_name>`\n\n"
+            "Examples:\n"
+            "`/sword Crimson Nichirin Blade`\n"
+            "`/sword Sun Nichirin Blade`\n\n"
+            "This directly adds the forged sword to your inventory.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    item_name = " ".join(context.args)
+    # Check if it's a valid forge sword
+    from handlers.forge import FORGE_ITEMS
+    found = None
+    for item in FORGE_ITEMS:
+        if item["name"].lower() == item_name.lower():
+            cat = item.get("category", "")
+            if "Swords" in cat or "blade" in item["name"].lower():
+                found = item
+                break
+    
+    if not found:
+        await update.message.reply_text(
+            f"❌ Sword *{item_name}* not found in forge recipes.\n"
+            f"Use `/forge` to see available swords.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Add directly to inventory
+    add_item(user_id, found["name"], "sword")
+    
+    log_action(user_id, "sword_fetch", details=f"Fetched {found['name']}")
+    
+    await update.message.reply_text(
+        f"⚔️ *SWORD ADDED!*\n\n"
+        f"*{found['name']}* has been added to your inventory!\n"
+        f"Use `/equip` to wield it.",
+        parse_mode="Markdown"
+    )
+
+
+async def armour(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/armour <item_name> — Directly fetch armor from forge to inventory."""
+    user_id = update.effective_user.id
+    player = get_player(user_id)
+    if not player:
+        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🛡️ *ARMOR FORGE FETCH*\n\n"
+            "Usage: `/armour <item_name>`\n\n"
+            "Examples:\n"
+            "`/armour Reinforced Haori`\n"
+            "`/armour Hashira Haori`\n\n"
+            "This directly adds the forged armor to your inventory.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    item_name = " ".join(context.args)
+    # Check if it's a valid forge armor
+    from handlers.forge import FORGE_ITEMS
+    found = None
+    for item in FORGE_ITEMS:
+        if item["name"].lower() == item_name.lower():
+            cat = item.get("category", "")
+            name_lower = item["name"].lower()
+            if ("Armor" in cat or "Haori" in name_lower or 
+                "Cloak" in name_lower or "Shell" in name_lower):
+                found = item
+                break
+    
+    if not found:
+        await update.message.reply_text(
+            f"❌ Armor *{item_name}* not found in forge recipes.\n"
+            f"Use `/forge` to see available armor.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Add directly to inventory
+    add_item(user_id, found["name"], "armor")
+    
+    log_action(user_id, "armour_fetch", details=f"Fetched {found['name']}")
+    
+    await update.message.reply_text(
+        f"🛡️ *ARMOR ADDED!*\n\n"
+        f"*{found['name']}* has been added to your inventory!\n"
+        f"Use `/equip` to wear it.",
+        parse_mode="Markdown"
+    )
 
 
 async def _give_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
