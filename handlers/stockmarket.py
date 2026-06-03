@@ -1018,35 +1018,89 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Admin commands ────────────────────────────────────────────────────────
 
 async def marketcrash(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/marketcrash [ticker] — Crash a stock or all stocks."""
+    """📉 /marketcrash [ticker] — Crash a stock or all stocks. Notifies holders via DM."""
     from utils.guards import is_owner
     if not is_owner(update.effective_user.id):
         return
     args    = context.args or []
     targets = [args[0].upper()] if args and args[0].upper() in STOCKS else TICKER_LIST
+    
+    notified_users = set()
+    
     for t in targets:
         p = _get_price(t)
-        _set_price(t, p * random.uniform(0.45, 0.65))
+        new_price = p * random.uniform(0.45, 0.65)
+        _set_price(t, new_price)
+        
+        # Find all holders of this stock and notify them
+        holders = list(col("stock_holdings").find({"ticker": t, "shares": {"$gt": 0}}))
+        for h in holders:
+            user_id = h["user_id"]
+            if user_id not in notified_users:
+                notified_users.add(user_id)
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"📉 *MARKET CRASH ALERT!*\n\n"
+                            f"The market has experienced a significant downturn!\n\n"
+                            f"Your portfolio may be affected.\n"
+                            f"Check your holdings with /portfolio\n\n"
+                            f"_Trade wisely!_"
+                        ),
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    log.warning(f"Could not notify user {user_id}: {e}")
+    
     names = ", ".join(f"`{t}`" for t in targets)
     await update.message.reply_text(
-        f"📉 *MARKET CRASH triggered!*\n{names} dropped 35–55%.",
+        f"📉 *MARKET CRASH triggered!*\n{names} dropped 35–55%.\n"
+        f"📩 Notified {len(notified_users)} affected investors.",
         parse_mode="Markdown"
     )
 
 
 async def marketboom(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/marketboom [ticker] — Boom a stock or all stocks."""
+    """📈 /marketboom [ticker] — Boom a stock or all stocks. Notifies holders via DM."""
     from utils.guards import is_owner
     if not is_owner(update.effective_user.id):
         return
     args    = context.args or []
     targets = [args[0].upper()] if args and args[0].upper() in STOCKS else TICKER_LIST
+    
+    notified_users = set()
+    
     for t in targets:
         p = _get_price(t)
-        _set_price(t, p * random.uniform(1.35, 1.75))
+        new_price = p * random.uniform(1.35, 1.75)
+        _set_price(t, new_price)
+        
+        # Find all holders of this stock and notify them
+        holders = list(col("stock_holdings").find({"ticker": t, "shares": {"$gt": 0}}))
+        for h in holders:
+            user_id = h["user_id"]
+            if user_id not in notified_users:
+                notified_users.add(user_id)
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"📈 *MARKET BOOM ALERT!*\n\n"
+                            f"The market is surging! Great news for your portfolio!\n\n"
+                            f"Your stocks have increased significantly in value.\n"
+                            f"Check your holdings with /portfolio\n\n"
+                            f"_Consider taking profits or holding for more gains!_"
+                        ),
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    log.warning(f"Could not notify user {user_id}: {e}")
+    
     names = ", ".join(f"`{t}`" for t in targets)
     await update.message.reply_text(
-        f"📈 *MARKET BOOM triggered!*\n{names} surged 35–75%.",
+        f"📈 *MARKET BOOM triggered!*\n{names} surged 35–75%.\n"
+        f"📩 Notified {len(notified_users)} affected investors.",
         parse_mode="Markdown"
     )
 
