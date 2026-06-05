@@ -181,6 +181,16 @@ STOCKS = {
         "color": (60, 60, 60),
         "desc": "Clinical-stage biotech. Binary outcomes on trial results.",
     },
+    "OL": {
+        "name": "Ordinal Legacy",
+        "emoji": "🔮",
+        "base_price": 750,
+        "volatility": 0.22,
+        "type": "growth",
+        "sector": "Technology",
+        "color": (100, 50, 150),
+        "desc": "Emerging tech company focused on digital legacy systems.",
+    },
 }
 
 TICKER_LIST = list(STOCKS.keys())
@@ -715,41 +725,62 @@ def generate_portfolio_image(user_id: int) -> io.BytesIO:
 
 # ── Command handlers ──────────────────────────────────────────────────────
 
-async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/market — Show full market overview as text with inline buttons."""
+async def market(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """/market — Show market overview as text with pagination (10 stocks per page)."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player:
         await update.message.reply_text("❌ Use /start first.")
         return
 
+    # Pagination: 10 stocks per page
+    STOCKS_PER_PAGE = 10
+    total_pages = max(1, (len(TICKER_LIST) + STOCKS_PER_PAGE - 1) // STOCKS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    page_stocks = TICKER_LIST[page * STOCKS_PER_PAGE:(page + 1) * STOCKS_PER_PAGE]
+    
     # Build market lines with profit/loss info
     lines = ["Select an index to inspect financial parameters:", ""]
     
-    for i, ticker in enumerate(TICKER_LIST, 1):
+    start_idx = page * STOCKS_PER_PAGE
+    for i, ticker in enumerate(page_stocks, start_idx + 1):
         cfg = STOCKS[ticker]
+        price = _get_price(ticker)
         history = _get_history(ticker)
-        price = history[-1] if history else cfg["base_price"]
-        prev = history[-2] if len(history) >= 2 else price
-        chg_pct = ((price - prev) / prev * 100) if prev else 0
+        chg_pct = ((history[-1] - history[0]) / history[0] * 100) if len(history) >= 2 else 0
         arrow = "📈" if chg_pct >= 0 else "📉"
         sign = "+" if chg_pct >= 0 else ""
         
         lines.append(f"{i}) {arrow} {cfg['name']} ({ticker}) - {int(price)} 💠 ({sign}{chg_pct:.0f}%)")
     
-    # Create inline keyboard with stock buttons
+    # Create inline keyboard for visible stocks only
     keyboard = []
-    for i, ticker in enumerate(TICKER_LIST, 1):
-        keyboard.append([InlineKeyboardButton(f"{i}) {ticker}", callback_data=f"stock_select_{ticker}")])
+    row = []
+    for ticker in page_stocks:
+        cfg = STOCKS[ticker]
+        row.append(InlineKeyboardButton(cfg['emoji'], callback_data=f"stock_view_{ticker}"))
+        if len(row) >= 5:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    # Add pagination buttons
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"market_page_{page - 1}"))
+    nav_row.append(InlineKeyboardButton(f"📄 {page + 1}/{total_pages}", callback_data="market_noop"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"market_page_{page + 1}"))
+    keyboard.append(nav_row)
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text("\n".join(lines), reply_markup=reply_markup)
-
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=reply_markup)
 
 
 async def stockhistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/stockhistory TICKER — Detailed 7-day stats for one stock (text format)."""
+    """/stockhistory TICKER — Detailed 7-day chart for one stock."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player:
@@ -773,45 +804,31 @@ async def stockhistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    cfg = STOCKS[ticker]
-    history = _get_history(ticker, days=7)
-    price   = history[-1] if history else cfg["base_price"]
-    open_p  = history[0]  if history else price
-    chg_pct = ((price - open_p) / open_p * 100) if len(history) >= 2 else 0
-    arrow   = "📈" if chg_pct >= 0 else "📉"
-    sign    = "+" if chg_pct >= 0 else ""
-    
-    # Get min/max for the period
-    min_price = min(history) if history else price
-    max_price = max(history) if history else price
-    
-    # Build history lines
-    history_lines = []
-    for i, p in enumerate(history):
-        day_label = f"Day {i+1}" if i < len(history) - 1 else "Today"
-        prev = history[i-1] if i > 0 else p
-        daily_chg = ((p - prev) / prev * 100) if prev else 0
-        daily_arrow = "📈" if daily_chg >= 0 else "📉"
-        daily_sign = "+" if daily_chg >= 0 else ""
-        history_lines.append(f"  {day_label}: {int(p)} 💠 ({daily_arrow}{daily_sign}{daily_chg:.1f}%)")
-    
-    history_text = "\n".join(history_lines)
-    
-    detail_text = (
-        f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Current Price:  *¥{price:,.2f}*\n"
-        f"📊 7-Day Change:   *{arrow} {sign}{abs(chg_pct):.1f}%*\n"
-        f"📈 Period High:    *¥{max_price:,.2f}*\n"
-        f"📉 Period Low:     *¥{min_price:,.2f}*\n"
-        f"🏷️  Type:          `{cfg['type']}`\n"
-        f"📦 Sector:         `{cfg.get('sector', 'N/A')}`\n\n"
-        f"_7-Day History:_\n"
-        f"{history_text}\n\n"
-        f"_{cfg['desc']}_"
-    )
-    
-    await update.message.reply_text(detail_text, parse_mode="Markdown")
+    msg = await update.message.reply_text(f"📊 Loading {ticker} chart…")
+    try:
+        buf = generate_stock_detail_image(ticker)
+        cfg = STOCKS[ticker]
+        price   = _get_price(ticker)
+        history = _get_history(ticker)
+        chg_pct = ((history[-1] - history[0]) / history[0] * 100) if len(history) >= 2 else 0
+        arrow   = "▲" if chg_pct >= 0 else "▼"
+
+        await update.message.reply_photo(
+            photo=buf,
+            caption=(
+                f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💰 Price:  *¥{price:,.2f}*\n"
+                f"📊 7d:     *{arrow} {abs(chg_pct):.1f}%*\n"
+                f"🏷️  Type:   `{cfg['type']}`\n\n"
+                f"_{cfg['desc']}_"
+            ),
+            parse_mode="Markdown"
+        )
+        await msg.delete()
+    except Exception as e:
+        log.error("[STOCK history] %s", e)
+        await msg.edit_text("❌ Failed to generate chart.")
 
 
 async def stockbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -999,58 +1016,34 @@ async def stocksell(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/portfolio — View your holdings as text."""
+    """/portfolio — View your holdings as an image."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player:
         await update.message.reply_text("❌ Use /start first.")
         return
 
-    holdings = _get_portfolio(user_id)
-    
-    if not holdings:
-        await update.message.reply_text(
-            "📊 *YOUR PORTFOLIO*\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "_No holdings yet._\n\n"
-            "Use `/market` to browse stocks and `/stockbuy` to purchase shares.",
+    msg = await update.message.reply_text("📊 Generating portfolio…")
+    try:
+        buf = generate_portfolio_image(user_id)
+        holdings = _get_portfolio(user_id)
+        total_val = sum(_get_price(h["ticker"]) * h["shares"] for h in holdings if h["ticker"] in STOCKS)
+
+        await update.message.reply_photo(
+            photo=buf,
+            caption=(
+                f"📊 *YOUR PORTFOLIO*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💼 Positions: *{len(holdings)}*\n"
+                f"💰 Total value: *¥{total_val:,.0f}*\n\n"
+                f"Use `/stockbuy` or `/stocksell` to trade."
+            ),
             parse_mode="Markdown"
         )
-        return
-    
-    total_val = sum(_get_price(h["ticker"]) * h["shares"] for h in holdings if h["ticker"] in STOCKS)
-    
-    # Build holdings lines with profit/loss
-    lines = ["📊 *YOUR PORTFOLIO*", "━━━━━━━━━━━━━━━━━━━━━", ""]
-    
-    for h in holdings:
-        ticker = h["ticker"]
-        if ticker not in STOCKS:
-            continue
-        cfg = STOCKS[ticker]
-        shares = h["shares"]
-        avg_cost = h.get("avg_cost", 0)
-        current_price = _get_price(ticker)
-        current_val = current_price * shares
-        cost_basis = avg_cost * shares
-        profit_loss = current_val - cost_basis
-        profit_pct = ((current_val - cost_basis) / cost_basis * 100) if cost_basis > 0 else 0
-        
-        arrow = "📈" if profit_loss >= 0 else "📉"
-        sign = "+" if profit_loss >= 0 else ""
-        
-        lines.append(f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)")
-        lines.append(f"  📦 Shares: {shares} | Avg: ¥{avg_cost:,.2f} | Current: ¥{current_price:,.2f}")
-        lines.append(f"  💰 Value: ¥{current_val:,.0f} | P/L: {arrow} ¥{abs(profit_loss):,.0f} ({sign}{profit_pct:.1f}%)")
-        lines.append("")
-    
-    lines.append("━━━━━━━━━━━━━━━━━━━━━")
-    lines.append(f"💼 Positions: *{len(holdings)}*")
-    lines.append(f"💰 Total value: *¥{total_val:,.0f}*")
-    lines.append("")
-    lines.append("_Use `/stockbuy` or `/stocksell` to trade._")
-    
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        await msg.delete()
+    except Exception as e:
+        log.error("[STOCK portfolio] %s", e)
+        await msg.edit_text("❌ Failed to generate portfolio image.")
 
 
 # ── Admin commands ────────────────────────────────────────────────────────
@@ -1143,154 +1136,142 @@ async def marketboom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def marketreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/marketreset — Reset all prices to base."""
-    from utils.guards import is_owner
-    if not is_owner(update.effective_user.id):
-        return
-    for ticker, cfg in STOCKS.items():
-        _set_price(ticker, cfg["base_price"])
-    await update.message.reply_text("✅ All stock prices reset to base values.")
 
 
-async def stock_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle inline button callbacks for stock selection and purchase."""
+async def stock_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stock view button clicks."""
     query = update.callback_query
     await query.answer()
+    
+    if not query.data.startswith("stock_view_"):
+        return
+    
+    ticker = query.data.replace("stock_view_", "")
+    if ticker not in STOCKS:
+        await query.edit_message_text("❌ Invalid stock.")
+        return
     
     user_id = update.effective_user.id
     player = get_player(user_id)
     if not player:
         await query.edit_message_text("❌ Use /start first.")
-        return
-    
-    data = query.data
-    if not data.startswith("stock_select_"):
-        return
-    
-    ticker = data.replace("stock_select_", "")
-    if ticker not in STOCKS:
-        await query.edit_message_text("❌ Invalid ticker.")
         return
     
     cfg = STOCKS[ticker]
+    price = _get_price(ticker)
     history = _get_history(ticker)
-    price = history[-1] if history else cfg["base_price"]
-    prev = history[-2] if len(history) >= 2 else price
-    chg_pct = ((price - prev) / prev * 100) if prev else 0
-    arrow = "📈" if chg_pct >= 0 else "📉"
-    sign = "+" if chg_pct >= 0 else ""
+    chg_pct = ((history[-1] - history[0]) / history[0] * 100) if len(history) >= 2 else 0
+    trend = "📈 BULLISH" if chg_pct >= 0 else "📉 BEARISH"
     
-    # Get user's holding
+    # Calculate risk tier based on volatility
+    vol = cfg.get("volatility", 0.1)
+    if vol < 0.08:
+        risk = "🟢 Low Risk (Stable)"
+    elif vol < 0.15:
+        risk = "🟡 Medium Risk"
+    else:
+        risk = "🔴 High Risk (Volatile)"
+    
+    # Get user's holdings
     holding = _get_holding(user_id, ticker)
     owned = holding.get("shares", 0)
     
-    # Calculate trend
-    trend = "BULLISH" if chg_pct >= 0 else "BEARISH"
-    
-    # Risk tier based on volatility
-    vol = cfg.get("volatility", 0.1)
-    if vol < 0.08:
-        risk_emoji = "🟢"
-        risk_text = "Low Risk (Stable)"
-    elif vol < 0.15:
-        risk_emoji = "🟡"
-        risk_text = "Medium Risk"
-    else:
-        risk_emoji = "🔴"
-        risk_text = "High Risk (Volatile)"
-    
-    # Daily buy limit (50 shares max per day)
+    # Daily buy limit (50 shares per day)
     daily_limit = 50
+    today_key = datetime.utcnow().strftime("%Y-%m-%d")
+    buy_log = col("stock_buy_log").find_one({"user_id": user_id, "ticker": ticker, "date": today_key})
+    bought_today = buy_log.get("shares", 0) if buy_log else 0
+    remaining_today = max(0, daily_limit - bought_today)
     
-    # Build the detail message
-    detail_text = (
-        f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💵 Current Valuation: {int(price)} 💠\n"
-        f"📊 24h Direct Trend: {arrow} {trend}\n"
-        f"⚠️ Risk Tier: {risk_emoji} {risk_text}\n"
-        f"📅 Daily Buy Limit: 0/{daily_limit} shares\n"
-        f"📥 Remaining Today: {daily_limit} shares\n"
-        f"\n"
-        f"💰 Price Change: {sign}{chg_pct:.1f}%\n"
-        f"📦 You own: {owned} shares\n"
-        f"\n"
-        f"_Select quantity to buy:_"
-    )
+    # Max purchase is 10 shares at a time
+    max_buy = min(10, remaining_today)
     
-    # Create buttons for buying 1, 5, 10 shares
+    text = f"""💵 Current Valuation: {int(price)} 💠
+📊 24h Direct Trend: {trend}
+⚠️ Risk Tier: {risk}
+📅 Daily Buy Limit: {bought_today}/{daily_limit} shares
+📥 Remaining Today: {remaining_today} shares
+
+🛒 Purchase Volume: 1 shares
+💰 Estimated Cost: {int(price * 1.015):,} 💠 (incl. 1.5% fee)
+
+You own: {owned} shares of {ticker}"""
+    
+    # Create buttons for 1, 5, 10 shares
     keyboard = [
         [
-            InlineKeyboardButton("1️⃣ 1 Share", callback_data=f"stock_buy_{ticker}_1"),
-            InlineKeyboardButton("5️⃣ 5 Shares", callback_data=f"stock_buy_{ticker}_5"),
-            InlineKeyboardButton("🔟 10 Shares", callback_data=f"stock_buy_{ticker}_10"),
+            InlineKeyboardButton("1️⃣", callback_data=f"stock_buy_{ticker}_1"),
+            InlineKeyboardButton("5️⃣", callback_data=f"stock_buy_{ticker}_5"),
+            InlineKeyboardButton("🔟", callback_data=f"stock_buy_{ticker}_10"),
         ],
-        [InlineKeyboardButton("« Back to Market", callback_data="stock_back_to_market")]
+        [InlineKeyboardButton("◀️ Back to Market", callback_data="stock_back")]
     ]
-    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(detail_text, parse_mode="Markdown", reply_markup=reply_markup)
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
-async def stock_buy_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle stock purchase from inline buttons."""
+async def stock_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stock buy button clicks."""
     query = update.callback_query
     await query.answer()
     
-    user_id = update.effective_user.id
-    player = get_player(user_id)
-    if not player:
-        await query.edit_message_text("❌ Use /start first.")
+    if not query.data.startswith("stock_buy_"):
         return
     
-    data = query.data
-    if not data.startswith("stock_buy_"):
-        return
-    
-    parts = data.replace("stock_buy_", "").split("_")
+    parts = query.data.replace("stock_buy_", "").split("_")
     if len(parts) != 2:
-        await query.edit_message_text("❌ Invalid purchase request.")
+        await query.edit_message_text("❌ Invalid purchase.")
         return
     
     ticker = parts[0]
     try:
         shares = int(parts[1])
     except ValueError:
-        await query.edit_message_text("❌ Invalid share amount.")
-        return
-    
-    # Max 10 shares per transaction
-    if shares > 10 or shares < 1:
-        await query.edit_message_text("❌ Can only buy 1-10 shares at a time.")
+        await query.edit_message_text("❌ Invalid shares.")
         return
     
     if ticker not in STOCKS:
-        await query.edit_message_text("❌ Invalid ticker.")
+        await query.edit_message_text("❌ Invalid stock.")
+        return
+    
+    user_id = update.effective_user.id
+    player = get_player(user_id)
+    if not player:
+        await query.edit_message_text("❌ Use /start first.")
+        return
+    
+    # Enforce max 10 shares per transaction
+    if shares > 10:
+        shares = 10
+    
+    # Check daily limit
+    daily_limit = 50
+    today_key = datetime.utcnow().strftime("%Y-%m-%d")
+    buy_log = col("stock_buy_log").find_one({"user_id": user_id, "ticker": ticker, "date": today_key})
+    bought_today = buy_log.get("shares", 0) if buy_log else 0
+    
+    if bought_today + shares > daily_limit:
+        remaining = daily_limit - bought_today
+        await query.edit_message_text(f"❌ Daily limit reached! You can only buy {remaining} more shares today.")
         return
     
     cfg = STOCKS[ticker]
     price = _get_price(ticker)
-    
-    # Calculate cost with 1.5% fee
     fee_rate = 0.015
-    base_cost = price * shares
-    fee = base_cost * fee_rate
-    total_cost = int(base_cost + fee)
+    cost = round(price * shares * (1 + fee_rate))
     
-    # Check if player has enough yen
-    if player["yen"] < total_cost:
+    if player["yen"] < cost:
         await query.edit_message_text(
-            f"❌ *Not enough yen!*\n\n"
-            f"💰 Cost: *¥{total_cost:,}* (incl. 1.5% fee)\n"
-            f"👛 Wallet: *¥{player['yen']:,}*",
+            f"❌ Not enough yen!\n\n"
+            f"💰 Cost: {cost:,} 💠\n"
+            f"👛 Your balance: {player['yen']:,} 💠",
             parse_mode="Markdown"
         )
         return
     
-    # Execute buy
-    update_player(user_id, yen=player["yen"] - total_cost)
+    # Execute purchase
+    update_player(user_id, yen=player["yen"] - cost)
     
     existing = _get_holding(user_id, ticker)
     old_shares = existing.get("shares", 0)
@@ -1305,62 +1286,119 @@ async def stock_buy_callback_handler(update: Update, context: ContextTypes.DEFAU
             "ticker": ticker,
             "shares": new_shares,
             "avg_cost": round(new_avg, 2),
-            "bought_at": existing.get("bought_at") or datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }},
         upsert=True
     )
     
-    # Tiny upward nudge on buy
-    nudge_price(ticker, 0.001 * shares / 100)
-    
-    # Confirmation message with back button
-    confirm_text = (
-        f"✅ *SHARES PURCHASED!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{cfg['emoji']} *{cfg['name']}* (`{ticker}`)\n\n"
-        f"📦 Shares bought: *{shares}*\n"
-        f"💰 Price/share: *¥{price:,.2f}*\n"
-        f"💸 Total spent: *¥{total_cost:,}* (incl. 1.5% fee)\n"
-        f"👛 Balance left: *¥{player['yen'] - total_cost:,}*\n"
-        f"📊 You now own: *{new_shares} shares*"
+    # Update daily buy log
+    col("stock_buy_log").update_one(
+        {"user_id": user_id, "ticker": ticker, "date": today_key},
+        {"$inc": {"shares": shares}, "$set": {"date": today_key}},
+        upsert=True
     )
     
-    keyboard = [[InlineKeyboardButton("« Back to Market", callback_data="stock_back_to_market")]]
+    # Price nudge
+    nudge_price(ticker, 0.001 * shares / 100)
+    
+    remaining_today = daily_limit - bought_today - shares
+    
+    text = f"""✅ PURCHASE COMPLETE!
+
+{cfg['emoji']} {cfg['name']} ({ticker})
+
+📦 Shares bought: {shares}
+💰 Price/share: {int(price):,} 💠
+💸 Total spent: {cost:,} 💠 (incl. 1.5% fee)
+👛 Balance left: {player['yen'] - cost:,} 💠
+📊 You now own: {new_shares} shares
+📅 Remaining today: {remaining_today} shares"""
+    
+    keyboard = [[InlineKeyboardButton("◀️ Back to Market", callback_data="stock_back")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text(confirm_text, parse_mode="Markdown", reply_markup=reply_markup)
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
 
-async def stock_back_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stock_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle back to market button."""
     query = update.callback_query
     await query.answer()
     
-    # Just re-show the market
+    # Just call market function again
+    await market(update, context)
+
+
+async def market_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle market pagination buttons."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not query.data.startswith("market_page_"):
+        return
+    
+    try:
+        page = int(query.data.replace("market_page_", ""))
+    except ValueError:
+        await query.edit_message_text("❌ Invalid page.")
+        return
+    
     user_id = update.effective_user.id
     player = get_player(user_id)
     if not player:
         await query.edit_message_text("❌ Use /start first.")
         return
     
+    # Call market with the new page
+    STOCKS_PER_PAGE = 10
+    total_pages = max(1, (len(TICKER_LIST) + STOCKS_PER_PAGE - 1) // STOCKS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    page_stocks = TICKER_LIST[page * STOCKS_PER_PAGE:(page + 1) * STOCKS_PER_PAGE]
+    
+    # Build market lines with profit/loss info
     lines = ["Select an index to inspect financial parameters:", ""]
     
-    for i, ticker in enumerate(TICKER_LIST, 1):
+    start_idx = page * STOCKS_PER_PAGE
+    for i, ticker in enumerate(page_stocks, start_idx + 1):
         cfg = STOCKS[ticker]
+        price = _get_price(ticker)
         history = _get_history(ticker)
-        price = history[-1] if history else cfg["base_price"]
-        prev = history[-2] if len(history) >= 2 else price
-        chg_pct = ((price - prev) / prev * 100) if prev else 0
+        chg_pct = ((history[-1] - history[0]) / history[0] * 100) if len(history) >= 2 else 0
         arrow = "📈" if chg_pct >= 0 else "📉"
         sign = "+" if chg_pct >= 0 else ""
         
         lines.append(f"{i}) {arrow} {cfg['name']} ({ticker}) - {int(price)} 💠 ({sign}{chg_pct:.0f}%)")
     
+    # Create inline keyboard for visible stocks only
     keyboard = []
-    for i, ticker in enumerate(TICKER_LIST, 1):
-        keyboard.append([InlineKeyboardButton(f"{i}) {ticker}", callback_data=f"stock_select_{ticker}")])
+    row = []
+    for ticker in page_stocks:
+        cfg = STOCKS[ticker]
+        row.append(InlineKeyboardButton(cfg['emoji'], callback_data=f"stock_view_{ticker}"))
+        if len(row) >= 5:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    # Add pagination buttons
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"market_page_{page - 1}"))
+    nav_row.append(InlineKeyboardButton(f"📄 {page + 1}/{total_pages}", callback_data="market_noop"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"market_page_{page + 1}"))
+    keyboard.append(nav_row)
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await query.edit_message_text("\n".join(lines), reply_markup=reply_markup)
+    await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=reply_markup)
+
+async def marketreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/marketreset — Reset all prices to base."""
+    from utils.guards import is_owner
+    if not is_owner(update.effective_user.id):
+        return
+    for ticker, cfg in STOCKS.items():
+        _set_price(ticker, cfg["base_price"])
+    await update.message.reply_text("✅ All stock prices reset to base values.")
