@@ -36,7 +36,7 @@ from telegram.error import BadRequest, TimedOut
 
 from utils.database import col
 from utils.guards import dm_only
-from config import PETS, PET_RARITY_EMOJI, PET_IMAGES
+from config import PETS, PET_RARITY_EMOJI, PET_IMAGES, PET_EVOLUTIONS
 
 log = logging.getLogger(__name__)
 
