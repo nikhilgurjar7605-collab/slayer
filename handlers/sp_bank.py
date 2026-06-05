@@ -15,7 +15,7 @@ SP_BANK_DEPOSIT_TAX_RATE = 0
 SP_BANK_WITHDRAW_PRICE_PER_SP = 100000
 SP_BANK_DAILY_WITHDRAW_LIMIT = 3
 SP_BANK_MIN_LEVEL = 10
-SP_BANK_MIN_ACCOUNT_AGE_DAYS = 7
+SP_BANK_MIN_ACCOUNT_AGE_DAYS = 0
 _DURATION_RE = re.compile(r"^\s*(\d+)\s*(hr|h|m|s)\s*$", re.IGNORECASE)
 
 
@@ -99,9 +99,10 @@ def _is_eligible_for_sp_bank(player: dict) -> tuple[bool, str | None]:
         return False, f"You need to be at least level {SP_BANK_MIN_LEVEL}."
     if not isinstance(created_at, datetime):
         return False, "Your account age could not be verified yet."
-    age_days = (_now() - created_at).days
-    if age_days < SP_BANK_MIN_ACCOUNT_AGE_DAYS:
-        return False, f"Your account must be at least {SP_BANK_MIN_ACCOUNT_AGE_DAYS} days old."
+    if SP_BANK_MIN_ACCOUNT_AGE_DAYS > 0:
+        age_days = (_now() - created_at).days
+        if age_days < SP_BANK_MIN_ACCOUNT_AGE_DAYS:
+            return False, f"Your account must be at least {SP_BANK_MIN_ACCOUNT_AGE_DAYS} days old."
     return True, None
 
 
@@ -362,7 +363,7 @@ async def spbank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "",
         "Deposits now go fully into the bank stock.",
         f"Withdrawal price: *{SP_BANK_WITHDRAW_PRICE_PER_SP:,} Yen* per SP.",
-        f"Eligibility: *Level {SP_BANK_MIN_LEVEL}+* and account age *{SP_BANK_MIN_ACCOUNT_AGE_DAYS}+ days*.",
+        f"Eligibility: *Level {SP_BANK_MIN_LEVEL}+*.",
         "",
         "Commands:",
         "`/spdeposit [amount]`",
