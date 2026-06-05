@@ -91,8 +91,15 @@ def _get_pets(user_id: int) -> list[dict]:
     docs = list(col("pets").find({"user_id": user_id}, {"_id": 0}))
     order = ["legendary", "epic", "rare", "uncommon", "common"]
     def _key(p):
-        r = PETS.get(p["name"], {}).get("rarity", "common")
-        return (order.index(r) if r in order else 99, p["name"])
+        name = p["name"]
+        # Check evolved pets first, then base pets
+        if name in PET_EVOLUTIONS:
+            r = PETS.get(PET_EVOLUTIONS[name]["base"], {}).get("rarity", "common")
+        elif name in PETS:
+            r = PETS[name].get("rarity", "common")
+        else:
+            r = "common"
+        return (order.index(r) if r in order else 99, name)
     return sorted(docs, key=_key)
 
 
