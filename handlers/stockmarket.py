@@ -1016,34 +1016,63 @@ async def stocksell(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/portfolio — View your holdings as an image."""
+    """/portfolio — View your holdings as text with net gain/loss."""
     user_id = update.effective_user.id
     player  = get_player(user_id)
     if not player:
         await update.message.reply_text("❌ Use /start first.")
         return
 
-    msg = await update.message.reply_text("📊 Generating portfolio…")
-    try:
-        buf = generate_portfolio_image(user_id)
-        holdings = _get_portfolio(user_id)
-        total_val = sum(_get_price(h["ticker"]) * h["shares"] for h in holdings if h["ticker"] in STOCKS)
-
-        await update.message.reply_photo(
-            photo=buf,
-            caption=(
-                f"📊 *YOUR PORTFOLIO*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"💼 Positions: *{len(holdings)}*\n"
-                f"💰 Total value: *¥{total_val:,.0f}*\n\n"
-                f"Use `/stockbuy` or `/stocksell` to trade."
-            ),
-            parse_mode="Markdown"
+    holdings = _get_portfolio(user_id)
+    
+    if not holdings:
+        await update.message.reply_text(
+            "📊 *YOUR PORTFOLIO*\n━━━━━━━━━━━━━━━━━━━━━\n💼 No holdings yet.\n\nUse /market to browse stocks and /stockbuy to purchase!"
         )
-        await msg.delete()
-    except Exception as e:
-        log.error("[STOCK portfolio] %s", e)
-        await msg.edit_text("❌ Failed to generate portfolio image.")
+        return
+    
+    total_val = 0.0
+    total_cost = 0.0
+    lines = [
+        "📊 *YOUR PORTFOLIO*",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        ""
+    ]
+    
+    for h in holdings:
+        tk = h["ticker"]
+        if tk not in STOCKS:
+            continue
+        price = _get_price(tk)
+        val = h["shares"] * price
+        cost = h.get("avg_cost", price) * h["shares"]
+        pnl = val - cost
+        pnl_p = (pnl / cost * 100) if cost else 0
+        total_val += val
+        total_cost += cost
+        
+        cfg = STOCKS[tk]
+        arrow = "📈" if pnl >= 0 else "📉"
+        sign = "+" if pnl >= 0 else ""
+        
+        lines.append(f"{cfg['emoji']} {tk} — {h['shares']} shares")
+        lines.append(f"   💵 Value: ¥{val:,.0f} | 📊 Net: {arrow} ¥{abs(pnl):,.0f} ({sign}{pnl_p:.1f}%)")
+        lines.append("")
+    
+    total_pnl = total_val - total_cost
+    total_pnl_p = (total_pnl / total_cost * 100) if total_cost else 0
+    total_arrow = "📈" if total_pnl >= 0 else "📉"
+    total_sign = "+" if total_pnl >= 0 else ""
+    
+    lines.extend([
+        "━━━━━━━━━━━━━━━━━━━━━",
+        f"💼 Total Value: *¥{total_val:,.0f}*",
+        f"📊 Total Net Gain/Loss: *{total_arrow} ¥{abs(total_pnl):,.0f}* ({total_sign}{total_pnl_p:.1f}%)",
+        "",
+        "Use /market to browse stocks and /stockbuy to trade."
+    ])
+    
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 # ── Admin commands ────────────────────────────────────────────────────────

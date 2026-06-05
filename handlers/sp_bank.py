@@ -13,7 +13,7 @@ from utils.helpers import get_level
 SP_BANK_DOC_ID = "world_sp_bank"
 SP_BANK_DEPOSIT_TAX_RATE = 0
 SP_BANK_WITHDRAW_PRICE_PER_SP = 50000
-SP_BANK_DAILY_WITHDRAW_LIMIT = 3
+SP_BANK_DAILY_WITHDRAW_LIMIT = 50
 SP_BANK_MIN_LEVEL = 10
 SP_BANK_MIN_ACCOUNT_AGE_DAYS = 0
 _DURATION_RE = re.compile(r"^\s*(\d+)\s*(hr|h|m|s)\s*$", re.IGNORECASE)
