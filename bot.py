@@ -178,7 +178,9 @@ from handlers.blackmarket import blackmarket, bm_buy, bm_auto_open, bm_auto_clos
 from handlers.stockmarket import (
     market, stockbuy, stocksell, portfolio, stockhistory,
     marketcrash, marketboom, marketreset, update_stock_prices,
-    log_stock_event, nudge_price, STOCKS
+    log_stock_event, nudge_price, STOCKS,
+    stock_view_callback, stock_buy_callback, stock_sell_callback,
+    stock_back_callback, market_page_callback
 )
 from handlers.referral import referral
 from handlers.style_art import breathing, art, givestyle, giveart
@@ -594,6 +596,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('skillbuy_'):        await skilltree_buy_callback(update, context)
     elif data.startswith('skillpage_'):       await skilltree_page_callback(update, context)
     elif data.startswith('shop_'):             await shop_page_callback(update, context)
+    elif data.startswith('stock_view_'):       await stock_view_callback(update, context)
+    elif data.startswith('stock_buy_'):        await stock_buy_callback(update, context)
+    elif data.startswith('stock_sell_'):       await stock_sell_callback(update, context)
+    elif data == 'stock_back':                 await stock_back_callback(update, context)
+    elif data.startswith('market_page_'):      await market_page_callback(update, context)
     elif data.startswith('myskills_'):          await myskills_callback(update, context)
     elif data == 'goto_start':                await start(update, context)
     elif data.startswith('skin_page|'):   await skin_page_callback(update, context)

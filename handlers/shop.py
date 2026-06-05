@@ -19,6 +19,7 @@ TABS = [
     {"id": "armor",    "label": "🛡️ Armor",    "cats": ["armor"],            "icon": "🛡️"},
     {"id": "items",    "label": "🧪 Items",    "cats": ["items", "potions"], "icon": "🧪"},
     {"id": "upgrades", "label": "⬆️ Upgrades", "cats": ["upgrades"],         "icon": "⬆️"},
+    {"id": "pets",     "label": "🐾 Pet Items","cats": ["pet_items"],        "icon": "🐾"},
 ]
 
 CAT_FONTS = {
@@ -27,6 +28,7 @@ CAT_FONTS = {
     "items":    "🧪 𝙄𝙏𝙀𝙈𝙎  &amp;  𝙈𝘼𝙏𝙀𝙍𝙄𝘼𝙇𝙎 🧪",
     "potions":  "🔮 𝘼𝙇𝘾𝙃𝙀𝙈𝙔  𝙋𝙊𝙏𝙄𝙊𝙉𝙎 🔮",
     "upgrades": "⬆️ 𝙋𝙇𝘼𝙔𝙀𝙍  𝙐𝙋𝙂𝙍𝘼𝘿𝙀𝙎 ⬆️",
+    "pet_items":"🐾 𝙋𝙀𝙏  𝙄𝙏𝙀𝙈𝙎  &amp;  𝙎𝙐𝙋𝙋𝙇𝙄𝙀𝙎 🐾",
 }
 
 
