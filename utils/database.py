@@ -151,6 +151,10 @@ def init_db():
     db.stock_history.create_index([("user_id", 1), ("at", -1)])
     db.stock_cooldowns.create_index([("user_id", 1), ("ticker", 1)])
     db.players.create_index("user_id")  # Ensure player lookups are fast
+    
+    # ── AMM / Liquidity Pool indexes ──────────────────────────────────────
+    db.liquidity_pools.create_index("ticker", unique=True)
+    db.stock_portfolio.create_index([("user_id", 1), ("type", 1)])  # Filter LP tokens
 
     # Seed Black Market
     bm_items = [
