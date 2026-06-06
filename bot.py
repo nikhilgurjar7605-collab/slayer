@@ -640,6 +640,7 @@ async def _end_conv_passthrough(update: Update, context: ContextTypes.DEFAULT_TY
 def main():
     # Validate required environment variables before starting
     import sys
+    import os
     missing = []
     if not BOT_TOKEN or BOT_TOKEN == 'YOUR_BOT_TOKEN_HERE' or ':' not in BOT_TOKEN:
         missing.append("BOT_TOKEN (set in Render Dashboard -> Environment)")
@@ -656,7 +657,21 @@ def main():
         sys.exit(1)
 
     init_db()
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    
+    # Build application with proper settings for webhook/polling
+    app_builder = Application.builder().token(BOT_TOKEN).post_init(post_init)
+    
+    # Check if running on Render with webhook
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+    if RENDER_URL:
+        # For webhook mode, we don't specify connection pool settings here
+        # They will be handled by run_webhook
+        logger.info("🌐 Detected Render environment - will use webhook mode")
+        app = app_builder.build()
+    else:
+        # For polling mode (local development)
+        logger.info("📡 Running in local/polling mode")
+        app = app_builder.build()
 
     # ── Character creation — DM only ──────────────────────────────────────
     conv = ConversationHandler(
@@ -1017,21 +1032,82 @@ def main():
     # Setup Telegram logging AFTER application is built but BEFORE running
     setup_telegram_logging(app)
     
-    try:
-        app.run_polling(
+    # Check if running on Render (has PORT env var and RENDER_EXTERNAL_URL)
+    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+    # PORT is defined in the outer scope (line ~1140), use it here
+    if WEBHOOK_URL and 'PORT' in globals():
+        # Running on Render - use webhook mode
+        webhook_path = f"/{BOT_TOKEN}"
+        full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
+        
+        logger.info(f"🌐 Running on Render with webhook: {full_webhook_url}")
+        
+        async def setup_webhook():
+            await app.bot.set_webhook(full_webhook_url)
+            info = await app.bot.get_webhook_info()
+            logger.info(f"✅ Webhook set: {info.url}")
+            logger.info(f"📊 Pending updates: {info.pending_update_count}")
+        
+        # Start the health server thread first
+        import time as _time
+        import urllib.request as _urllib_req
+        import urllib.error as _urllib_err
+        
+        _PING_TARGET = (WEBHOOK_URL + "/healthz") if WEBHOOK_URL else f"http://127.0.0.1:{PORT}/healthz"
+        _PING_INTERVAL = 8 * 60
+        _PING_TIMEOUT = 15
+        
+        def _keep_alive():
+            """Pings the public URL on a fixed cadence with back-off on failure."""
+            print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
+            _time.sleep(20)
+            failures = 0
+            while True:
+                try:
+                    with _urllib_req.urlopen(_PING_TARGET, timeout=_PING_TIMEOUT) as r:
+                        print(f"[KEEP-ALIVE] ✅ {r.status} OK", flush=True)
+                        failures = 0
+                except _urllib_err.URLError as exc:
+                    failures += 1
+                    print(f"[KEEP-ALIVE] ⚠️  attempt {failures} failed: {exc.reason}", flush=True)
+                except Exception as exc:
+                    failures += 1
+                    log.error("[KEEP-ALIVE] %s", exc)
+
+                wait = min(_PING_INTERVAL, _PING_INTERVAL * (2 ** max(0, failures - 1)))
+                wait = min(wait, 13 * 60)
+                _time.sleep(wait)
+
+        _ka_thread = threading.Thread(target=_keep_alive, daemon=True, name="keep-alive")
+        _ka_thread.start()
+        
+        # Run the app with webhook
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=webhook_path,
+            webhook_url=full_webhook_url,
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
-            close_loop=False,  # Don't close the loop - we're in a restart loop
         )
-    finally:
-        # Ensure proper cleanup even if run_polling exits unexpectedly
+    else:
+        # Running locally or without webhook - use polling mode
+        logger.info("📡 Running in polling mode (local development)")
         try:
-            loop = asyncio.get_event_loop()
-            if not loop.is_closed():
-                # Run any pending cleanup
-                loop.run_until_complete(asyncio.sleep(0))
-        except Exception:
-            pass  # Loop might already be closed
+            app.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                close_loop=False,  # Don't close the loop - we're in a restart loop
+            )
+        finally:
+            # Ensure proper cleanup even if run_polling exits unexpectedly
+            try:
+                loop = asyncio.get_event_loop()
+                if not loop.is_closed():
+                    # Run any pending cleanup
+                    loop.run_until_complete(asyncio.sleep(0))
+            except Exception:
+                pass  # Loop might already be closed
 
 
 # ── Telegram Stars payment handlers ───────────────────────────────────

@@ -19,5 +19,5 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: PORT
-        value: 10000
+        value: 8080
         
