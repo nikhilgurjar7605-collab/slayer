@@ -976,9 +976,9 @@ async def _execute(trade: dict, context):
     t_pet    = trade["target_pet"]
     trade_id = trade["trade_id"]
 
-    # Fetch by _id so we have stable document references that won't shift under us
-    i_doc = col("pets").find_one({"user_id": i_id, "name": i_pet})
-    t_doc = col("pets").find_one({"user_id": t_id, "name": t_pet})
+    # Fetch full docs (no projection) so _id is available for stable atomic updates
+    i_doc = col("pets").find_one({"user_id": i_id, "name": i_pet}, {"_id": 1, "user_id": 1, "name": 1, "active": 1})
+    t_doc = col("pets").find_one({"user_id": t_id, "name": t_pet}, {"_id": 1, "user_id": 1, "name": 1, "active": 1})
 
     trade_chat = trade.get("trade_chat_id") or t_id
     trade_msg  = trade.get("trade_msg_id")
@@ -1023,24 +1023,27 @@ async def _execute(trade: dict, context):
         {"$set": {"user_id": i_id, "active": was_i_active}}
     )
 
-    # ── If initiator traded away their active pet, they now have t_pet active (handled above).
-    #    But if t_pet is also not active, pick any remaining pet for initiator. ──
-    if was_i_active and not was_t_active:
-        # t_pet arrived as active=False; initiator needs an active pet
-        # The newly received t_pet IS now initiator's — set it active
-        col("pets").update_one(
-            {"_id": t_doc["_id"]},
-            {"$set": {"active": True}}
-        )
+    # ── After swap, fix active pet state for both players ──
+    # At this point:
+    #   i_doc["_id"] = initiator's old pet, now owned by target (active=False)
+    #   t_doc["_id"] = target's old pet, now owned by initiator (active=was_i_active)
 
-    # ── If target traded away their active pet, activate another pet for them ──
+    # Fix initiator: if they traded away their active pet, activate the received one
+    if was_i_active and not was_t_active:
+        col("pets").update_one({"_id": t_doc["_id"]}, {"$set": {"active": True}})
+
+    # Fix target: if they traded away their active pet, find another pet to activate
     if was_t_active:
-        # i_pet arrived as active=False for target; find any other pet for target
-        nxt = col("pets").find_one({"user_id": t_id, "active": False, "_id": {"$ne": i_doc["_id"]}})
+        # Look for any of target's remaining pets (excluding the one just received)
+        nxt = col("pets").find_one({
+            "user_id": t_id,
+            "active": False,
+            "_id": {"$ne": i_doc["_id"]}   # exclude the pet we just gave them
+        })
         if nxt:
             col("pets").update_one({"_id": nxt["_id"]}, {"$set": {"active": True}})
         else:
-            # Only pet they have is the received one — activate it
+            # The only pet target now has is the received one — activate it
             col("pets").update_one({"_id": i_doc["_id"]}, {"$set": {"active": True}})
 
     _set(trade_id, status="done")
