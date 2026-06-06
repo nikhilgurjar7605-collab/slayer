@@ -117,6 +117,24 @@ def _get_liquidity_pool(ticker: str) -> Optional[dict]:
     return col(LIQUIDITY_COL).find_one({"ticker": ticker})
 
 
+def _get_liquidity_status(pool: Optional[dict]) -> str:
+    """Get human-readable liquidity status indicator."""
+    if not pool:
+        return "⚪ No Pool"
+    
+    total_value = pool.get("stock_reserve", 0) * pool.get("yen_reserve", 0) / max(pool.get("stock_reserve", 1), 1)
+    total_value = pool.get("yen_reserve", 0)  # Simplified: use yen reserve as liquidity indicator
+    
+    if total_value >= 50000:
+        return "🟢 High (Stable)"
+    elif total_value >= 20000:
+        return "🟡 Medium"
+    elif total_value >= 5000:
+        return "🟠 Low (Volatile)"
+    else:
+        return "🔴 Very Low (Risky)"
+
+
 def _create_liquidity_pool(ticker: str, stock_reserve: float, yen_reserve: float):
     """Create a new liquidity pool for a stock."""
     col(LIQUIDITY_COL).update_one(
@@ -605,6 +623,8 @@ def _stock_detail_text(ticker: str, user_id: int) -> tuple[str, InlineKeyboardMa
         f"{arrow} Change: *{chg}* (from base {s['base_price']:,.0f})",
         f"📦 Available supply: *{s['supply']:,}*",
         f"🔒 Max per user: *{s['max_per_user']}* shares",
+        "",
+        f"💧 Liquidity Pool: {_get_liquidity_status(_get_liquidity_pool(ticker))}",
         "",
         f"*Your Holdings:*",
         f"  Shares: *{held_qty}*"
