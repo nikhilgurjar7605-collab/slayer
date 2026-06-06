@@ -64,6 +64,7 @@ def _get_wb_player(user_id: int) -> dict:
             "last_deposit_day": None,
             "last_withdraw_day": None,
             "last_withdraw_at": None,
+            "last_weekly_grant": None,
             "total_deposited": 0,
             "total_withdrawn": 0,
         }
@@ -84,6 +85,23 @@ def _reset_daily(wbp: dict) -> dict:
         wbp["withdrawn_today"] = 0
         wbp["last_withdraw_day"] = today
         changed = True
+
+    # Weekly SP grant: every Monday, add 1000 SP to world bank stock
+    current_monday = datetime.utcnow().date() - timedelta(days=datetime.utcnow().date().weekday())
+    last_monday_str = current_monday.isoformat()
+    
+    if wbp.get("last_weekly_grant") != last_monday_str:
+        # Grant 1000 SP to the world bank
+        col("world_bank").update_one(
+            {"_id": "global"},
+            {"$inc": {"sp_stock": WEEKLY_SP_GRANT}}
+        )
+        wbp["last_weekly_grant"] = last_monday_str
+        col("world_bank_players").update_one(
+            {"user_id": wbp["user_id"]},
+            {"$set": {"last_weekly_grant": last_monday_str}},
+            upsert=True,
+        )
 
     if changed:
         col("world_bank_players").update_one(
