@@ -1226,15 +1226,159 @@ async def stock_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 You own: {owned} shares of {ticker}"""
     
-    # Create buttons for 1, 5, 10 shares
+    # Create buttons for 1, 5, 10 shares and a sell button if user owns shares
     keyboard = [
         [
             InlineKeyboardButton("1️⃣", callback_data=f"stock_buy_{ticker}_1"),
             InlineKeyboardButton("5️⃣", callback_data=f"stock_buy_{ticker}_5"),
             InlineKeyboardButton("🔟", callback_data=f"stock_buy_{ticker}_10"),
         ],
-        [InlineKeyboardButton("◀️ Back to Market", callback_data="stock_back")]
     ]
+    if owned > 0:
+        keyboard.append([InlineKeyboardButton("💸 Sell Shares", callback_data=f"stock_sell_{ticker}")])
+    keyboard.append([InlineKeyboardButton("◀️ Back to Market", callback_data="stock_back")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
+async def stock_sell_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stock sell button clicks."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not query.data.startswith("stock_sell_"):
+        return
+    
+    ticker = query.data.replace("stock_sell_", "")
+    if ticker not in STOCKS:
+        await query.edit_message_text("❌ Invalid stock.")
+        return
+    
+    user_id = update.effective_user.id
+    player = get_player(user_id)
+    if not player:
+        await query.edit_message_text("❌ Use /start first.")
+        return
+    
+    holding = _get_holding(user_id, ticker)
+    owned = holding.get("shares", 0)
+    if owned <= 0:
+        await query.edit_message_text("❌ You don't own any shares of this stock.")
+        return
+    
+    cfg = STOCKS[ticker]
+    price = _get_price(ticker)
+    avg_cost = holding.get("avg_cost", price)
+    
+    # Calculate P&L
+    proceeds = round(price * owned)
+    cost_b = round(avg_cost * owned)
+    pnl = proceeds - cost_b
+    pnl_pct = (pnl / cost_b * 100) if cost_b else 0
+    pnl_str = f"{'▲ +' if pnl >= 0 else '▼ '}¥{abs(pnl):,} ({'+' if pnl >= 0 else ''}{pnl_pct:.1f}%)"
+    pnl_clr_hint = "📈" if pnl >= 0 else "📉"
+    
+    text = f"""💸 SELL SHARES
+    
+{cfg['emoji']} {cfg['name']} ({ticker})
+
+📦 Shares owned: {owned}
+💰 Price/share: ¥{price:,.2f}
+💸 Total proceeds: ¥{proceeds:,}
+{pnl_clr_hint} P&L: {pnl_str}
+
+Select how many shares to sell:"""
+    
+    # Create buttons for selling different amounts
+    sell_options = []
+    if owned >= 10:
+        sell_options.append(InlineKeyboardButton("🔟", callback_data=f"stock_sell_confirm_{ticker}_10"))
+    if owned >= 5:
+        sell_options.append(InlineKeyboardButton("5️⃣", callback_data=f"stock_sell_confirm_{ticker}_5"))
+    if owned >= 1:
+        sell_options.append(InlineKeyboardButton("1️⃣", callback_data=f"stock_sell_confirm_{ticker}_1"))
+    sell_options.append(InlineKeyboardButton(f"All ({owned})", callback_data=f"stock_sell_confirm_{ticker}_{owned}"))
+    
+    keyboard = [sell_options, [InlineKeyboardButton("◀️ Back", callback_data=f"stock_view_{ticker}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+
+
+async def stock_sell_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stock sell confirmation button clicks."""
+    query = update.callback_query
+    await query.answer()
+    
+    if not query.data.startswith("stock_sell_confirm_"):
+        return
+    
+    parts = query.data.replace("stock_sell_confirm_", "").split("_")
+    if len(parts) != 2:
+        await query.edit_message_text("❌ Invalid sell request.")
+        return
+    
+    ticker = parts[0]
+    try:
+        shares = int(parts[1])
+    except ValueError:
+        await query.edit_message_text("❌ Invalid shares.")
+        return
+    
+    if ticker not in STOCKS:
+        await query.edit_message_text("❌ Invalid stock.")
+        return
+    
+    user_id = update.effective_user.id
+    player = get_player(user_id)
+    if not player:
+        await query.edit_message_text("❌ Use /start first.")
+        return
+    
+    holding = _get_holding(user_id, ticker)
+    owned = holding.get("shares", 0)
+    if owned < shares:
+        await query.edit_message_text(f"❌ You only own {owned} shares.")
+        return
+    
+    cfg = STOCKS[ticker]
+    price = _get_price(ticker)
+    avg_cost = holding.get("avg_cost", price)
+    proceeds = round(price * shares)
+    cost_b = round(avg_cost * shares)
+    pnl = proceeds - cost_b
+    pnl_pct = (pnl / cost_b * 100) if cost_b else 0
+    
+    # Execute sale
+    update_player(user_id, yen=player["yen"] + proceeds)
+    
+    new_shares = owned - shares
+    if new_shares == 0:
+        col("stock_holdings").delete_one({"user_id": user_id, "ticker": ticker})
+    else:
+        col("stock_holdings").update_one(
+            {"user_id": user_id, "ticker": ticker},
+            {"$set": {"shares": new_shares, "updated_at": datetime.utcnow()}}
+        )
+    
+    # Tiny downward nudge on sell
+    nudge_price(ticker, -0.001 * shares / 100)
+    
+    pnl_str = f"{'▲ +' if pnl >= 0 else '▼ '}¥{abs(pnl):,} ({'+' if pnl >= 0 else ''}{pnl_pct:.1f}%)"
+    pnl_clr_hint = "📈" if pnl >= 0 else "📉"
+    
+    text = f"""✅ *SHARES SOLD!*
+━━━━━━━━━━━━━━━━━━━━━
+{cfg['emoji']} *{cfg['name']}* (`{ticker}`)
+
+📦 Shares sold:  *{shares}*
+💰 Price/share:  *¥{price:,.2f}*
+💸 Proceeds:     *¥{proceeds:,}*
+{pnl_clr_hint} P&L:         *{pnl_str}*
+📊 Remaining:    *{new_shares} shares*"""
+    
+    keyboard = [[InlineKeyboardButton("◀️ Back to Market", callback_data="stock_back")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
