@@ -150,7 +150,7 @@ def init_db():
     db.stock_portfolio.create_index("user_id")
     db.stock_history.create_index([("user_id", 1), ("at", -1)])
     db.stock_cooldowns.create_index([("user_id", 1), ("ticker", 1)])
-    db.players.create_index("user_id")  # Ensure player lookups are fast
+    # Note: players.user_id already has a unique index on line 109, so we skip duplicate creation
     
     # ── AMM / Liquidity Pool indexes ──────────────────────────────────────
     db.liquidity_pools.create_index("ticker", unique=True)
