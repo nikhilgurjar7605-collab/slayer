@@ -357,10 +357,21 @@ def _remove_liquidity(user_id: int, ticker: str, lp_amount: float) -> tuple[bool
 
 def _get_portfolio(user_id: int) -> dict:
     doc = col(PORTFOLIO_COL).find_one({"user_id": user_id}) or {}
-    return doc.get("holdings", {})
+    holdings = doc.get("holdings", {})
+    # Ensure holdings is always a dict, not None or other type
+    if not isinstance(holdings, dict):
+        holdings = {}
+    return holdings
 
 
 def _set_holding(user_id: int, ticker: str, shares: int, avg_buy: float):
+    # First ensure the portfolio document exists with a holdings dict
+    col(PORTFOLIO_COL).update_one(
+        {"user_id": user_id},
+        {"$setOnInsert": {"holdings": {}}},
+        upsert=True,
+    )
+    
     if shares <= 0:
         col(PORTFOLIO_COL).update_one(
             {"user_id": user_id},
@@ -954,7 +965,7 @@ async def stock_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # ── Execute buy ──────────────────────────────────────────────────
     # Weighted average buy price
-    new_avg = ((held.get("avg_buy", 0) * held_qty) + (stock["price"] * qty)) / (held_qty + qty)
+    new_avg = ((held.get("avg_buy", 0) * held_qty) + (stock["price"] * qty)) / (held_qty + qty) if (held_qty + qty) > 0 else stock["price"]
     _set_holding(user_id, ticker, held_qty + qty, round(new_avg, 4))
 
     # Deduct yen
