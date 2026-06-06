@@ -32,10 +32,11 @@ from utils.guards import dm_only
 DEFAULT_SP_PRICE = 10_000
 DEPOSIT_YEN_RATE = 1.00
 DEPOSIT_DAILY_CAP = 10
-WITHDRAW_DAILY_CAP = 100
+WITHDRAW_DAILY_CAP = 100  # User can buy 100 SP per week (reset weekly)
 WITHDRAW_MAX_PER_TXN = 100
 WITHDRAW_COOLDOWN_H = 6
 MIN_LEVEL = 15
+WEEKLY_SP_GRANT = 1000  # Worldbank grants 1000 SP every week automatically
 
 
 def _get_bank() -> dict:

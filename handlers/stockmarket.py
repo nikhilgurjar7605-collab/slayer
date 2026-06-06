@@ -49,9 +49,9 @@ COOLDOWN_COL    = "stock_cooldowns"
 LIQUIDITY_COL   = "liquidity_pools"
 
 ITEMS_PER_PAGE      = 6          # stocks shown per page in /market
-BUY_COOLDOWN_SECS   = 60         # seconds between buying the same stock
-MIN_HOLD_SECONDS    = 300        # must hold a stock 5 min before selling
-MAX_DAILY_BUYS      = 30         # total buy actions per user per day
+BUY_COOLDOWN_SECS   = 0          # No cooldown between buying the same stock (instant trades)
+MIN_HOLD_SECONDS    = 0          # No hold requirement - can sell immediately
+MAX_DAILY_BUYS      = 100        # Total buy actions per user per day (increased limit)
 PRICE_IMPACT_PCT    = 0.002      # each share bought/sold moves price 0.2%
 MAX_PRICE_IMPACT    = 0.15       # single trade can't move price more than 15%
 CURRENCY_EMOJI      = "💎"
@@ -113,8 +113,20 @@ def _save_stock(ticker: str, data: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_liquidity_pool(ticker: str) -> Optional[dict]:
-    """Get liquidity pool data for a stock."""
-    return col(LIQUIDITY_COL).find_one({"ticker": ticker})
+    """Get liquidity pool data for a stock. Auto-creates pool if missing."""
+    pool = col(LIQUIDITY_COL).find_one({"ticker": ticker})
+    
+    # Auto-create default liquidity pool if none exists
+    if not pool:
+        stocks = _load_stocks()
+        stock_data = stocks.get(ticker, {})
+        # Create initial pool with default reserves based on stock price and supply
+        default_yen_reserve = 100000  # 100k Yen initial liquidity
+        default_stock_reserve = max(1000, stock_data.get("supply", 1000) // 10)  # 10% of supply
+        _create_liquidity_pool(ticker, default_stock_reserve, default_yen_reserve)
+        pool = col(LIQUIDITY_COL).find_one({"ticker": ticker})
+    
+    return pool
 
 
 def _get_liquidity_status(pool: Optional[dict]) -> str:
@@ -122,7 +134,6 @@ def _get_liquidity_status(pool: Optional[dict]) -> str:
     if not pool:
         return "⚪ No Pool"
     
-    total_value = pool.get("stock_reserve", 0) * pool.get("yen_reserve", 0) / max(pool.get("stock_reserve", 1), 1)
     total_value = pool.get("yen_reserve", 0)  # Simplified: use yen reserve as liquidity indicator
     
     if total_value >= 50000:
