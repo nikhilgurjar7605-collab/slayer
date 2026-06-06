@@ -1155,10 +1155,13 @@ if __name__ == '__main__':
 
     HOST = os.environ.get("HOST", "0.0.0.0")
     try:
-        PORT = int(str(os.environ.get("PORT", "10000")).strip())
+        PORT = int(str(os.environ.get("PORT", "8080")).strip())
     except (TypeError, ValueError):
-        PORT = 10000
+        PORT = 8080
     RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    
+    # Health server runs on a different internal port to avoid conflict with webhook
+    HEALTH_PORT = PORT + 1  # Use next port for health server
     _health_started = threading.Event()
 
     class _H(BaseHTTPRequestHandler):
@@ -1185,8 +1188,8 @@ if __name__ == '__main__':
                         "\n".join([
                             "Demon Slayer RPG Bot",
                             f"Status: {status}",
-                            f"Host: {HOST}",
-                            f"Port: {PORT}",
+                            f"Bot Port: {PORT}",
+                            f"Health Port: {HEALTH_PORT}",
                             f"Render URL: {RENDER_URL or 'not set'}",
                         ]),
                     )
@@ -1196,8 +1199,8 @@ if __name__ == '__main__':
                         {
                             "service": "demon-slayer-rpg-bot",
                             "status": status.lower().replace(" ", "_"),
-                            "host": HOST,
-                            "port": PORT,
+                            "bot_port": PORT,
+                            "health_port": HEALTH_PORT,
                             "render_url": RENDER_URL or None,
                         },
                     )
@@ -1213,9 +1216,9 @@ if __name__ == '__main__':
 
     def _run_health():
         try:
-            srv = ThreadingHTTPServer((HOST, PORT), _H)
+            srv = ThreadingHTTPServer((HOST, HEALTH_PORT), _H)
             _health_started.set()
-            print(f"[HEALTH] Listening on {HOST}:{PORT}", flush=True)
+            print(f"[HEALTH] Listening on {HOST}:{HEALTH_PORT}", flush=True)
             if RENDER_URL:
                 print(f"[HEALTH] Render URL: {RENDER_URL}", flush=True)
                 print(f"[HEALTH] Health check: {RENDER_URL}/healthz", flush=True)
@@ -1227,13 +1230,14 @@ if __name__ == '__main__':
     t = threading.Thread(target=_run_health, daemon=True)
     t.start()
     _health_started.wait(timeout=3)
-    print(f"[BOT] Render health server ready on {HOST}:{PORT}. Starting bot...", flush=True)
+    print(f"[BOT] Health server ready on {HOST}:{HEALTH_PORT}. Starting bot on port {PORT}...", flush=True)
 
     import time as _time
     import urllib.request as _urllib_req
     import urllib.error   as _urllib_err
 
-    _PING_TARGET   = (RENDER_URL + "/healthz") if RENDER_URL else f"http://127.0.0.1:{PORT}/healthz"
+    # Ping the health endpoint on the separate health port
+    _PING_TARGET   = (RENDER_URL + "/healthz") if RENDER_URL else f"http://127.0.0.1:{HEALTH_PORT}/healthz"
     _PING_INTERVAL = 8 * 60
     _PING_TIMEOUT  = 15
 
