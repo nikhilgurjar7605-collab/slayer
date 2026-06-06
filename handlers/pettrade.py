@@ -785,7 +785,7 @@ async def _do_agree(query, user_id: int, rest: str, context):
     trade = _get_trade(trade_id)
     if not trade:
         return await query.answer("❌ Trade not found.", show_alert=True)
-    if trade["status"] != "selecting":
+    if trade["status"] not in ("selecting",):
         return await query.answer("⚠️ Trade not active.", show_alert=True)
 
     expected_id = trade["initiator_id"] if side == "i" else trade["target_id"]
@@ -798,7 +798,7 @@ async def _do_agree(query, user_id: int, rest: str, context):
     # Anti-scam: Re-verify pets are still tradable before agreeing
     i_pet = trade["initiator_pet"]
     t_pet = trade["target_pet"]
-    
+
     if side == "i":
         is_locked, lock_reason = _is_pet_locked(user_id, i_pet)
         if is_locked:
@@ -810,14 +810,41 @@ async def _do_agree(query, user_id: int, rest: str, context):
             _set(trade_id, target_pet=None, target_agreed=False)
             return await query.answer(f"❌ Pet locked: {lock_reason}", show_alert=True)
 
+    # Atomically set agreed=True only if trade is still "selecting"
+    # This prevents a stale agree from firing after a cancel
     if side == "i":
-        _set(trade_id, initiator_agreed=True)
+        result = col("pet_trades").update_one(
+            {"_id": ObjectId(trade_id), "status": "selecting", "initiator_agreed": False},
+            {"$set": {"initiator_agreed": True}}
+        )
     else:
-        _set(trade_id, target_agreed=True)
+        result = col("pet_trades").update_one(
+            {"_id": ObjectId(trade_id), "status": "selecting", "target_agreed": False},
+            {"$set": {"target_agreed": True}}
+        )
 
+    if result.modified_count == 0:
+        # Already agreed or trade state changed — just refresh the screen silently
+        trade = _get_trade(trade_id)
+        if not trade or trade["status"] not in ("selecting", "executing", "done"):
+            return
+        if trade["status"] in ("executing", "done"):
+            return  # _execute already running or done, screen will update
+    
     trade = _get_trade(trade_id)
 
     if trade["initiator_agreed"] and trade["target_agreed"]:
+        # Atomically claim the trade for execution — prevents double-execution race condition
+        # Only ONE of the two concurrent agree clicks will succeed this update.
+        claimed = col("pet_trades").find_one_and_update(
+            {"_id": ObjectId(trade_id), "status": "selecting",
+             "initiator_agreed": True, "target_agreed": True},
+            {"$set": {"status": "executing"}},
+        )
+        if not claimed:
+            # Another agree click already claimed it — do nothing, screen will update shortly
+            return
+        trade = _get_trade(trade_id)
         await _execute(trade, context)
         # Edit the trade screen to show success
         trade_chat = trade.get("trade_chat_id") or trade["target_id"]
@@ -1001,10 +1028,11 @@ async def _execute(trade: dict, context):
         return False
 
     # Duplicate-name clash guard — check BEFORE touching anything
-    if col("pets").find_one({"user_id": i_id, "name": t_pet}):
+    # Exclude the pets being traded themselves from the clash check
+    if col("pets").find_one({"user_id": i_id, "name": t_pet, "_id": {"$ne": t_doc["_id"]}}):
         await _fail(f"❌ Trade failed — you already own a *{t_pet}*!")
         return False
-    if col("pets").find_one({"user_id": t_id, "name": i_pet}):
+    if col("pets").find_one({"user_id": t_id, "name": i_pet, "_id": {"$ne": i_doc["_id"]}}):
         await _fail(f"❌ Trade failed — the other player already owns a *{i_pet}*!")
         return False
 
