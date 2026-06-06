@@ -138,6 +138,13 @@ def init_db():
     # Press logs index (added for performance)
     db.press_logs.create_index([("user_id", 1), ("timestamp", DESCENDING)])
 
+    # ── Stock market indexes ──────────────────────────────────────────────
+    db.stocks.create_index("ticker")
+    db.stock_portfolio.create_index("user_id")
+    db.stock_history.create_index([("user_id", 1), ("at", -1)])
+    db.stock_cooldowns.create_index([("user_id", 1), ("ticker", 1)])
+    db.players.create_index("user_id")  # Ensure player lookups are fast
+
     # Seed Black Market
     bm_items = [
         # Rare materials
