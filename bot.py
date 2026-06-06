@@ -39,10 +39,11 @@ logging.root.addHandler(_explore_handler)
 
 # ── Telegram Log Handler: Sends logs to Telegram group ─────────────────────
 class TelegramLogHandler(logging.Handler):
-    def __init__(self, bot, chat_id):
+    def __init__(self, bot, chat_id, loop=None):
         super().__init__(level=logging.INFO)
         self.bot = bot
         self.chat_id = chat_id
+        self.loop = loop
     
     def emit(self, record):
         try:
@@ -52,9 +53,20 @@ class TelegramLogHandler(logging.Handler):
             # Truncate long messages to fit Telegram limits
             if len(msg) > 4000:
                 msg = msg[:4000] + "... (truncated)"
+            
+            # Get current loop or create a new one if needed
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop - skip logging to avoid crashes
+                return
+            
+            if loop.is_closed():
+                return
+                
             asyncio.run_coroutine_threadsafe(
                 self.bot.send_message(chat_id=self.chat_id, text=f"📝 **LOG**:\n{msg}", parse_mode="Markdown"),
-                asyncio.get_event_loop()
+                loop
             )
         except Exception as e:
             # Prevent logging errors from causing infinite loops
@@ -1267,5 +1279,16 @@ if __name__ == '__main__':
             if _restart_count >= _MAX_RESTARTS:
                 print(f"[BOT] Too many crashes ({_MAX_RESTARTS}). Giving up.", flush=True)
                 raise
+            # Clean up any closed event loops before restart
+            try:
+                for loop in asyncio.all_loops():
+                    if loop.is_closed():
+                        continue
+                    try:
+                        loop.stop()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             print(f"[BOT] Restarting in {_RESTART_DELAY}s…", flush=True)
             _time.sleep(_RESTART_DELAY)
