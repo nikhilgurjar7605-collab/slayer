@@ -391,6 +391,10 @@ _cooldown_cache: dict[tuple[int, str, str], datetime] = {}
 
 def _check_buy_cooldown(user_id: int, ticker: str) -> Optional[int]:
     """Returns seconds remaining on cooldown, or None if clear."""
+    # BUY_COOLDOWN_SECS is 0, so no cooldown - skip all checks
+    if BUY_COOLDOWN_SECS <= 0:
+        return None
+    
     cache_key = (user_id, ticker, "buy")
     
     # Check cache first
@@ -482,14 +486,8 @@ def _check_daily_limit(user_id: int) -> bool:
 
 def _check_sandwich(user_id: int, ticker: str) -> bool:
     """Returns True if user bought this stock in the last 60s (sandwich block)."""
-    one_min_ago = datetime.utcnow() - timedelta(seconds=60)
-    count = col(HISTORY_COL).count_documents({
-        "user_id": user_id,
-        "ticker": ticker,
-        "action": "buy",
-        "at": {"$gte": one_min_ago},
-    })
-    return count > 0
+    # Disabled - allow users to buy and sell freely without sandwich restrictions
+    return False
 
 
 # ══════════════════════════════════════════════════════════════════════════
