@@ -126,13 +126,13 @@ def _get_liquidity_status(pool: Optional[dict]) -> str:
     total_value = pool.get("yen_reserve", 0)  # Simplified: use yen reserve as liquidity indicator
     
     if total_value >= 50000:
-        return "🟢 High (Stable)"
+        return "⬆️ High (Stable)"
     elif total_value >= 20000:
-        return "🟡 Medium"
+        return "➡️ Medium"
     elif total_value >= 5000:
-        return "🟠 Low (Volatile)"
+        return "⬇️ Low (Volatile)"
     else:
-        return "🔴 Very Low (Risky)"
+        return "⚠️ Very Low (Risky)"
 
 
 def _create_liquidity_pool(ticker: str, stock_reserve: float, yen_reserve: float):
@@ -695,6 +695,7 @@ async def market(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @dm_only
 async def stockbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Alias to open market for buying stocks."""
     await market(update, context)
 
 
@@ -795,7 +796,7 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"📈 Total invested: *{total_invested:,.0f}* {CURRENCY_NAME}",
         f"💰 Portfolio value: *{total_value:,.0f}* {CURRENCY_NAME}",
-        f"{'🟢' if total_pnl >= 0 else '🔴'} Net P/L: *{total_pnl_sign}{total_pnl:,.0f}* {CURRENCY_NAME}",
+        f"{'⬆️' if total_pnl >= 0 else '⬇️'} Net P/L: *{total_pnl_sign}{total_pnl:,.0f}* {CURRENCY_NAME}",
         f"💵 Wallet: *{player['yen']:,}* {CURRENCY_NAME}",
     ]
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
