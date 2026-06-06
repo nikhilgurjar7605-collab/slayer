@@ -194,6 +194,7 @@ from handlers.stockmarket import (
     stock_view_callback, stock_buy_callback, stock_sell_callback,
     stock_sell_confirm_callback, stock_back_callback, market_page_callback,
     addstock, removestock, nudgeprice_cmd, stock_portfolio_callback,
+    addliquidity, removeliquidity, viewliquidity,
 )
 from handlers.referral import referral
 from handlers.style_art import breathing, art, givestyle, giveart
@@ -907,6 +908,9 @@ def main():
         ('addstock',      addstock),
         ('removestock',   removestock),
         ('nudgeprice',    nudgeprice_cmd),
+        ('addliquidity',  addliquidity),
+        ('removeliquidity', removeliquidity),
+        ('viewliquidity', viewliquidity),
         ('addgifbanner',    addgifbanner),
         ('removegifbanner', removegifbanner),
         ('listgifbanners',  listgifbanners),

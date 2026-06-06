@@ -46,6 +46,7 @@ STOCKS_COL      = "stocks"
 PORTFOLIO_COL   = "stock_portfolio"
 HISTORY_COL     = "stock_history"
 COOLDOWN_COL    = "stock_cooldowns"
+LIQUIDITY_COL   = "liquidity_pools"
 
 ITEMS_PER_PAGE      = 6          # stocks shown per page in /market
 BUY_COOLDOWN_SECS   = 60         # seconds between buying the same stock
@@ -56,8 +57,15 @@ MAX_PRICE_IMPACT    = 0.15       # single trade can't move price more than 15%
 CURRENCY_EMOJI      = "💎"
 CURRENCY_NAME       = "Yen"
 
+# AMM / Uniswap-style constants
+AMM_FEE_PCT         = 0.003      # 0.3% fee on trades (Uniswap standard)
+SLIPPAGE_TOLERANCE  = 0.05       # 5% max slippage warning threshold
+MIN_LIQUIDITY       = 1000       # Minimum liquidity to prevent manipulation
+
 # Default in-memory STOCKS dict (also mirrored in DB) — admins can expand via /addstock
 STOCKS: dict[str, dict] = {}  # populated from DB at runtime
+_stock_cache_time = 0  # timestamp when STOCKS was last loaded
+_STOCK_CACHE_TTL = 10  # cache stocks for 10 seconds
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -65,8 +73,15 @@ STOCKS: dict[str, dict] = {}  # populated from DB at runtime
 # ══════════════════════════════════════════════════════════════════════════
 
 def _load_stocks() -> dict:
-    """Pull all stocks from MongoDB into the STOCKS cache."""
-    global STOCKS
+    """Pull all stocks from MongoDB into the STOCKS cache with TTL caching."""
+    global STOCKS, _stock_cache_time
+    import time
+    
+    # Return cached data if still valid
+    if STOCKS and (time.time() - _stock_cache_time) < _STOCK_CACHE_TTL:
+        return STOCKS
+    
+    # Cache miss or expired - fetch from DB
     docs = list(col(STOCKS_COL).find({}))
     STOCKS = {}
     for d in docs:
@@ -81,6 +96,7 @@ def _load_stocks() -> dict:
             "max_per_user": int(d.get("max_per_user", 50)),
             "change_pct":float(d.get("change_pct", 0.0)),
         }
+    _stock_cache_time = time.time()
     return STOCKS
 
 
@@ -90,6 +106,210 @@ def _save_stock(ticker: str, data: dict):
         {"$set": data},
         upsert=True
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AMM / LIQUIDITY POOL HELPERS (Uniswap-style)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_liquidity_pool(ticker: str) -> Optional[dict]:
+    """Get liquidity pool data for a stock."""
+    return col(LIQUIDITY_COL).find_one({"ticker": ticker})
+
+
+def _create_liquidity_pool(ticker: str, stock_reserve: float, yen_reserve: float):
+    """Create a new liquidity pool for a stock."""
+    col(LIQUIDITY_COL).update_one(
+        {"ticker": ticker},
+        {
+            "$set": {
+                "ticker": ticker,
+                "stock_reserve": stock_reserve,
+                "yen_reserve": yen_reserve,
+                "total_shares": 0,
+                "created_at": datetime.utcnow()
+            }
+        },
+        upsert=True
+    )
+
+
+def _calculate_slippage(ticker: str, trade_type: str, amount: float) -> tuple[float, float, float]:
+    """
+    Calculate price impact and slippage using Uniswap AMM formula.
+    Returns: (effective_price, price_impact_pct, fee_amount)
+    
+    Formula: x * y = k (constant product)
+    - For buy: new_stock_price = (yen_reserve + amount) / (stock_reserve - shares_bought)
+    - For sell: new_stock_price = (yen_reserve - amount) / (stock_reserve + shares_sold)
+    """
+    pool = _get_liquidity_pool(ticker)
+    if not pool:
+        # No pool yet, use base stock price with no slippage
+        stocks = _load_stocks()
+        base_price = stocks.get(ticker, {}).get("price", 100)
+        fee = amount * AMM_FEE_PCT
+        return base_price, 0.0, fee
+    
+    stock_reserve = pool["stock_reserve"]
+    yen_reserve = pool["yen_reserve"]
+    
+    if trade_type == "buy":
+        # How many shares can be bought with 'amount' Yen?
+        # (yen_reserve + amount) * (stock_reserve - shares) = yen_reserve * stock_reserve
+        # Simplified: shares = stock_reserve - (k / (yen_reserve + amount))
+        k = stock_reserve * yen_reserve
+        new_yen = yen_reserve + amount
+        new_stock = k / new_yen if new_yen > 0 else stock_reserve
+        shares_received = stock_reserve - new_stock
+        
+        if shares_received <= 0:
+            return 0, 1.0, amount * AMM_FEE_PCT
+        
+        effective_price = amount / shares_received
+        base_price = yen_reserve / stock_reserve if stock_reserve > 0 else effective_price
+        price_impact = (effective_price - base_price) / base_price if base_price > 0 else 0
+    else:  # sell
+        # How much Yen received for selling 'amount' shares?
+        # (yen_reserve - yen_out) * (stock_reserve + amount) = k
+        k = stock_reserve * yen_reserve
+        new_stock = stock_reserve + amount
+        new_yen = k / new_stock if new_stock > 0 else yen_reserve
+        yen_received = yen_reserve - new_yen
+        
+        if yen_received <= 0:
+            return 0, 1.0, 0
+        
+        effective_price = yen_received / amount
+        base_price = yen_reserve / stock_reserve if stock_reserve > 0 else effective_price
+        price_impact = (base_price - effective_price) / base_price if base_price > 0 else 0
+    
+    fee = amount * AMM_FEE_PCT if trade_type == "buy" else yen_received * AMM_FEE_PCT if trade_type == "sell" else 0
+    return max(0.01, effective_price), max(0, price_impact), fee
+
+
+def _add_liquidity(user_id: int, ticker: str, stock_amount: float, yen_amount: float) -> tuple[bool, str, float]:
+    """
+    Add liquidity to a pool and receive LP tokens.
+    Returns: (success, message, lp_tokens_received)
+    """
+    pool = _get_liquidity_pool(ticker)
+    
+    if not pool:
+        # Create initial pool
+        _create_liquidity_pool(ticker, stock_amount, yen_amount)
+        # Mint LP tokens to user (1:1 with initial liquidity)
+        lp_tokens = min(stock_amount, yen_amount)
+        portfolio_doc = col(PORTFOLIO_COL).find_one({"user_id": user_id}) or {}
+        holdings = portfolio_doc.get("holdings", {})
+        lp_key = f"LP_{ticker}"
+        current_lp = holdings.get(lp_key, {}).get("shares", 0) if isinstance(holdings.get(lp_key), dict) else 0
+        col(PORTFOLIO_COL).update_one(
+            {"user_id": user_id},
+            {"$set": {f"holdings.{lp_key}": {"shares": current_lp + lp_tokens, "avg_buy": yen_amount / lp_tokens if lp_tokens > 0 else 0}}},
+            upsert=True
+        )
+        return True, f"✅ Created liquidity pool for {ticker}! Received {lp_tokens:.2f} LP tokens.", lp_tokens
+    
+    # Adding to existing pool
+    total_shares = pool.get("total_shares", 0)
+    stock_reserve = pool["stock_reserve"]
+    yen_reserve = pool["yen_reserve"]
+    
+    # Calculate proportional LP tokens
+    if total_shares > 0:
+        lp_tokens = min(
+            (stock_amount / stock_reserve) * total_shares,
+            (yen_amount / yen_reserve) * total_shares
+        )
+    else:
+        lp_tokens = min(stock_amount, yen_amount)
+    
+    # Update pool reserves
+    col(LIQUIDITY_COL).update_one(
+        {"ticker": ticker},
+        {
+            "$inc": {"stock_reserve": stock_amount, "yen_reserve": yen_amount, "total_shares": lp_tokens},
+            "$set": {"last_updated": datetime.utcnow()}
+        }
+    )
+    
+    # Credit LP tokens to user
+    lp_key = f"LP_{ticker}"
+    portfolio_doc = col(PORTFOLIO_COL).find_one({"user_id": user_id}) or {}
+    holdings = portfolio_doc.get("holdings", {})
+    current_lp_data = holdings.get(lp_key, {})
+    current_lp = current_lp_data.get("shares", 0) if isinstance(current_lp_data, dict) else 0
+    current_avg = current_lp_data.get("avg_buy", 0) if isinstance(current_lp_data, dict) else 0
+    
+    # Calculate new average buy price for LP tokens
+    total_value = (current_lp * current_avg) + (lp_tokens * (yen_amount / lp_tokens if lp_tokens > 0 else 0))
+    new_avg = total_value / (current_lp + lp_tokens) if (current_lp + lp_tokens) > 0 else 0
+    
+    col(PORTFOLIO_COL).update_one(
+        {"user_id": user_id},
+        {"$set": {f"holdings.{lp_key}": {"shares": current_lp + lp_tokens, "avg_buy": new_avg}}},
+        upsert=True
+    )
+    
+    return True, f"✅ Added liquidity to {ticker}! Received {lp_tokens:.2f} LP tokens.", lp_tokens
+
+
+def _remove_liquidity(user_id: int, ticker: str, lp_amount: float) -> tuple[bool, str, float, float]:
+    """
+    Remove liquidity from a pool by burning LP tokens.
+    Returns: (success, message, stock_returned, yen_returned)
+    """
+    pool = _get_liquidity_pool(ticker)
+    if not pool:
+        return False, "❌ No liquidity pool found for this stock.", 0, 0
+    
+    total_shares = pool.get("total_shares", 0)
+    if total_shares <= 0:
+        return False, "❌ No liquidity in this pool.", 0, 0
+    
+    if lp_amount > total_shares:
+        return False, f"❌ You can't remove more liquidity than exists ({total_shares:.2f} LP tokens available).", 0, 0
+    
+    # Calculate share of reserves
+    share = lp_amount / total_shares
+    stock_returned = pool["stock_reserve"] * share
+    yen_returned = pool["yen_reserve"] * share
+    
+    # Update pool
+    col(LIQUIDITY_COL).update_one(
+        {"ticker": ticker},
+        {
+            "$inc": {"stock_reserve": -stock_returned, "yen_reserve": -yen_returned, "total_shares": -lp_amount},
+            "$set": {"last_updated": datetime.utcnow()}
+        }
+    )
+    
+    # Burn LP tokens from user
+    lp_key = f"LP_{ticker}"
+    portfolio_doc = col(PORTFOLIO_COL).find_one({"user_id": user_id}) or {}
+    holdings = portfolio_doc.get("holdings", {})
+    current_lp_data = holdings.get(lp_key, {})
+    current_lp = current_lp_data.get("shares", 0) if isinstance(current_lp_data, dict) else 0
+    
+    if current_lp < lp_amount:
+        return False, f"❌ Insufficient LP tokens. You have {current_lp:.2f}.", 0, 0
+    
+    new_lp = current_lp - lp_amount
+    if new_lp <= 0:
+        col(PORTFOLIO_COL).update_one(
+            {"user_id": user_id},
+            {"$unset": {f"holdings.{lp_key}": ""}},
+            upsert=True
+        )
+    else:
+        col(PORTFOLIO_COL).update_one(
+            {"user_id": user_id},
+            {"$set": {f"holdings.{lp_key}": {"shares": new_lp, "avg_buy": current_lp_data.get("avg_buy", 0)}}},
+            upsert=True
+        )
+    
+    return True, f"✅ Removed liquidity from {ticker}! Received {stock_returned:.2f} shares + {yen_returned:.2f} Yen.", stock_returned, yen_returned
 
 
 def _get_portfolio(user_id: int) -> dict:
@@ -137,40 +357,87 @@ def log_stock_event(event: str, data: dict = None):
 #  ANTI-EXPLOIT GUARDS
 # ══════════════════════════════════════════════════════════════════════════
 
+# In-memory cache for cooldowns to reduce DB hits
+_cooldown_cache: dict[tuple[int, str, str], datetime] = {}
+
 def _check_buy_cooldown(user_id: int, ticker: str) -> Optional[int]:
     """Returns seconds remaining on cooldown, or None if clear."""
+    cache_key = (user_id, ticker, "buy")
+    
+    # Check cache first
+    if cache_key in _cooldown_cache:
+        doc_at = _cooldown_cache[cache_key]
+        elapsed = (datetime.utcnow() - doc_at).total_seconds()
+        remaining = BUY_COOLDOWN_SECS - elapsed
+        if remaining > 0:
+            return int(remaining)
+        else:
+            # Cache expired, remove it
+            _cooldown_cache.pop(cache_key, None)
+            return None
+    
+    # Cache miss - fetch from DB
     doc = col(COOLDOWN_COL).find_one({"user_id": user_id, "ticker": ticker, "type": "buy"})
     if not doc:
         return None
     elapsed = (datetime.utcnow() - doc["at"]).total_seconds()
     remaining = BUY_COOLDOWN_SECS - elapsed
-    return int(remaining) if remaining > 0 else None
+    if remaining > 0:
+        # Cache the result
+        _cooldown_cache[cache_key] = doc["at"]
+        return int(remaining)
+    return None
 
 
 def _set_buy_cooldown(user_id: int, ticker: str):
+    now = datetime.utcnow()
     col(COOLDOWN_COL).update_one(
         {"user_id": user_id, "ticker": ticker, "type": "buy"},
-        {"$set": {"at": datetime.utcnow()}},
+        {"$set": {"at": now}},
         upsert=True,
     )
+    # Update cache
+    _cooldown_cache[(user_id, ticker, "buy")] = now
 
 
 def _check_sell_cooldown(user_id: int, ticker: str) -> Optional[int]:
     """Returns seconds until user can sell (must hold MIN_HOLD_SECONDS)."""
+    cache_key = (user_id, ticker, "last_buy_time")
+    
+    # Check cache first
+    if cache_key in _cooldown_cache:
+        doc_at = _cooldown_cache[cache_key]
+        elapsed = (datetime.utcnow() - doc_at).total_seconds()
+        remaining = MIN_HOLD_SECONDS - elapsed
+        if remaining > 0:
+            return int(remaining)
+        else:
+            # Cache expired, remove it
+            _cooldown_cache.pop(cache_key, None)
+            return None
+    
+    # Cache miss - fetch from DB
     doc = col(COOLDOWN_COL).find_one({"user_id": user_id, "ticker": ticker, "type": "last_buy_time"})
     if not doc:
         return None
     elapsed = (datetime.utcnow() - doc["at"]).total_seconds()
     remaining = MIN_HOLD_SECONDS - elapsed
-    return int(remaining) if remaining > 0 else None
+    if remaining > 0:
+        # Cache the result
+        _cooldown_cache[cache_key] = doc["at"]
+        return int(remaining)
+    return None
 
 
 def _set_last_buy_time(user_id: int, ticker: str):
+    now = datetime.utcnow()
     col(COOLDOWN_COL).update_one(
         {"user_id": user_id, "ticker": ticker, "type": "last_buy_time"},
-        {"$set": {"at": datetime.utcnow()}},
+        {"$set": {"at": now}},
         upsert=True,
     )
+    # Update cache
+    _cooldown_cache[(user_id, ticker, "last_buy_time")] = now
 
 
 def _check_daily_limit(user_id: int) -> bool:
@@ -1055,3 +1322,190 @@ async def stock_portfolio_callback(update: Update, context: ContextTypes.DEFAULT
         )
     except Exception:
         pass
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  AMM / LIQUIDITY POOL COMMANDS
+# ══════════════════════════════════════════════════════════════════════════
+
+async def addliquidity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Add liquidity to a stock pool and earn LP tokens.
+    Usage: /addliquidity <ticker> <stock_amount> <yen_amount>
+    """
+    user_id = update.effective_user.id
+    player = get_player(user_id)
+    
+    if len(context.args) != 3:
+        await update.message.reply_text(
+            "❌ *Usage:* `/addliquidity <ticker> <stock_amount> <yen_amount>`\n\n"
+            "Example: `/addliquidity AAPL 100 50000`\n"
+            "This adds 100 shares of AAPL + 50,000 Yen to the liquidity pool.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    ticker = context.args[0].upper()
+    try:
+        stock_amount = float(context.args[1])
+        yen_amount = int(context.args[2])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid amounts. Please use numbers.")
+        return
+    
+    if stock_amount <= 0 or yen_amount <= 0:
+        await update.message.reply_text("❌ Amounts must be positive.")
+        return
+    
+    # Check if user has enough stocks
+    portfolio = _get_portfolio(user_id)
+    current_shares = portfolio.get(ticker, {}).get("shares", 0) if isinstance(portfolio.get(ticker), dict) else 0
+    
+    if current_shares < stock_amount:
+        await update.message.reply_text(
+            f"❌ Insufficient {ticker} shares.\n"
+            f"You have: {current_shares}\nRequired: {stock_amount}"
+        )
+        return
+    
+    # Check if user has enough Yen
+    if player["yen"] < yen_amount:
+        await update.message.reply_text(
+            f"❌ Insufficient Yen.\n"
+            f"You have: {player['yen']:,}\nRequired: {yen_amount:,}"
+        )
+        return
+    
+    # Deduct from user
+    col(PORTFOLIO_COL).update_one(
+        {"user_id": user_id},
+        {"$set": {f"holdings.{ticker}.shares": current_shares - stock_amount}}
+    )
+    update_player(user_id, {"yen": player["yen"] - yen_amount})
+    
+    # Add to liquidity pool
+    success, msg, lp_tokens = _add_liquidity(user_id, ticker, stock_amount, yen_amount)
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
+    
+    log_stock_event("ADD_LIQUIDITY", {
+        "user_id": user_id,
+        "ticker": ticker,
+        "stock_amount": stock_amount,
+        "yen_amount": yen_amount,
+        "lp_tokens": lp_tokens
+    })
+
+
+async def removeliquidity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Remove liquidity from a pool by burning LP tokens.
+    Usage: /removeliquidity <ticker> <lp_amount>
+    """
+    user_id = update.effective_user.id
+    
+    if len(context.args) != 2:
+        await update.message.reply_text(
+            "❌ *Usage:* `/removeliquidity <ticker> <lp_amount>`\n\n"
+            "Example: `/removeliquidity AAPL 50`\n"
+            "This removes 50 LP tokens from the AAPL pool.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    ticker = context.args[0].upper()
+    try:
+        lp_amount = float(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid LP amount. Please use a number.")
+        return
+    
+    if lp_amount <= 0:
+        await update.message.reply_text("❌ LP amount must be positive.")
+        return
+    
+    # Remove liquidity
+    success, msg, stock_returned, yen_returned = _remove_liquidity(user_id, ticker, lp_amount)
+    
+    if success:
+        # Credit back to user
+        player = get_player(user_id)
+        
+        # Add shares back to portfolio
+        portfolio = _get_portfolio(user_id)
+        current_shares = portfolio.get(ticker, {}).get("shares", 0) if isinstance(portfolio.get(ticker), dict) else 0
+        col(PORTFOLIO_COL).update_one(
+            {"user_id": user_id},
+            {"$set": {f"holdings.{ticker}.shares": current_shares + stock_returned}}
+        )
+        
+        # Add Yen back
+        update_player(user_id, {"yen": player["yen"] + yen_returned})
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
+    
+    if success:
+        log_stock_event("REMOVE_LIQUIDITY", {
+            "user_id": user_id,
+            "ticker": ticker,
+            "lp_amount": lp_amount,
+            "stock_returned": stock_returned,
+            "yen_returned": yen_returned
+        })
+
+
+async def viewliquidity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    View liquidity pool info for a stock.
+    Usage: /viewliquidity <ticker>
+    """
+    if len(context.args) != 1:
+        await update.message.reply_text(
+            "❌ *Usage:* `/viewliquidity <ticker>`\n\n"
+            "Example: `/viewliquidity AAPL`",
+            parse_mode="Markdown"
+        )
+        return
+    
+    ticker = context.args[0].upper()
+    pool = _get_liquidity_pool(ticker)
+    stocks = _load_stocks()
+    stock_info = stocks.get(ticker, {})
+    
+    if not pool:
+        await update.message.reply_text(
+            f"📊 *{ticker}* Liquidity Pool\n\n"
+            f"❌ No liquidity pool exists yet.\n"
+            f"Be the first to add liquidity with `/addliquidity {ticker} <amount> <yen>`!",
+            parse_mode="Markdown"
+        )
+        return
+    
+    stock_reserve = pool["stock_reserve"]
+    yen_reserve = pool["yen_reserve"]
+    total_shares = pool.get("total_shares", 0)
+    
+    current_price = yen_reserve / stock_reserve if stock_reserve > 0 else 0
+    
+    lines = [
+        f"💧 *{ticker}* LIQUIDITY POOL",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"📈 Stock Reserve: *{stock_reserve:,.2f}* shares",
+        f"💰 Yen Reserve: *{yen_reserve:,.0f}* {CURRENCY_NAME}",
+        f"💵 Current Price: *{current_price:,.2f}* {CURRENCY_NAME}/share",
+        f"🎫 Total LP Tokens: *{total_shares:,.2f}",
+        "",
+        f"📊 Base Price: *{stock_info.get('price', 0):,.2f}* {CURRENCY_NAME}",
+        f"📈 24h Change: {_change_arrow(stock_info.get('change_pct', 0))} {stock_info.get('change_pct', 0):.2f}%",
+    ]
+    
+    keyboard = [[
+        InlineKeyboardButton("➕ Add Liquidity", callback_data=f"amm_add_{ticker}"),
+        InlineKeyboardButton("➖ Remove Liquidity", callback_data=f"amm_remove_{ticker}")
+    ]]
+    
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
