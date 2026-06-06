@@ -93,7 +93,7 @@ def _load_stocks() -> dict:
             "price":     float(d.get("price", 100)),
             "base_price":float(d.get("base_price", 100)),
             "supply":    int(d.get("supply", 1000)),
-            "max_per_user": int(d.get("max_per_user", 50)),
+            "max_per_user": int(d.get("max_per_user", 10000)),  # Increased from 50 to 10000 to allow multiple buys
             "change_pct":float(d.get("change_pct", 0.0)),
         }
     _stock_cache_time = time.time()
@@ -144,6 +144,20 @@ def _get_liquidity_status(pool: Optional[dict]) -> str:
         return "⬇️ Low (Volatile)"
     else:
         return "⚠️ Very Low (Risky)"
+
+
+def _ensure_liquidity_pool(ticker: str):
+    """Ensure a liquidity pool exists for a stock, create if missing."""
+    pool = col(LIQUIDITY_COL).find_one({"ticker": ticker})
+    
+    # Auto-create default liquidity pool if none exists
+    if not pool:
+        stocks = _load_stocks()
+        stock_data = stocks.get(ticker, {})
+        # Create initial pool with default reserves based on stock price and supply
+        default_yen_reserve = 100000  # 100k Yen initial liquidity
+        default_stock_reserve = max(1000, stock_data.get("supply", 1000) // 10)  # 10% of supply
+        _create_liquidity_pool(ticker, default_stock_reserve, default_yen_reserve)
 
 
 def _create_liquidity_pool(ticker: str, stock_reserve: float, yen_reserve: float):
@@ -496,6 +510,9 @@ def _check_sandwich(user_id: int, ticker: str) -> bool:
 
 def _apply_price_impact(ticker: str, shares: int, direction: str) -> float:
     """Apply market impact after a trade. Returns new price."""
+    # Ensure liquidity pool exists before trading
+    _ensure_liquidity_pool(ticker)
+    
     stocks = _load_stocks()
     if ticker not in stocks:
         return 0.0
@@ -633,7 +650,7 @@ def _stock_detail_text(ticker: str, user_id: int) -> tuple[str, InlineKeyboardMa
         f"📦 Available supply: *{s['supply']:,}*",
         f"🔒 Max per user: *{s['max_per_user']}* shares",
         "",
-        f"💧 Liquidity Pool: {_get_liquidity_status(_get_liquidity_pool(ticker))}",
+        f"💧 Liquidity Pool: {_get_liquidity_status(_ensure_liquidity_pool(ticker) or _get_liquidity_pool(ticker))}",
         "",
         f"*Your Holdings:*",
         f"  Shares: *{held_qty}*"
@@ -1135,7 +1152,7 @@ async def addstock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     emoji        = args[4] if len(args) > 4 else "📊"
-    max_per_user = int(args[5]) if len(args) > 5 else 50
+    max_per_user = int(args[5]) if len(args) > 5 else 10000  # Increased default from 50 to 10000
 
     if supply <= 0 or price <= 0:
         await update.message.reply_text("❌ Price and supply must be > 0.")
