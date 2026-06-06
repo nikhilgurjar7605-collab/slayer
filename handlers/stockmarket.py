@@ -718,6 +718,12 @@ async def stocksell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = []
     total_value = 0
     for ticker, h in holdings.items():
+        # Skip LP tokens in regular portfolio view
+        if ticker.startswith("LP_"):
+            continue
+        # Handle both dict and legacy int formats
+        if not isinstance(h, dict):
+            continue
         s = stocks.get(ticker, {})
         cur_price = s.get("price", 0)
         val = h["shares"] * cur_price
@@ -763,6 +769,12 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_invested = 0
     total_value    = 0
     for ticker, h in holdings.items():
+        # Skip LP tokens in regular portfolio view
+        if ticker.startswith("LP_"):
+            continue
+        # Handle both dict and legacy int formats
+        if not isinstance(h, dict):
+            continue
         s = stocks.get(ticker, {})
         cur = s.get("price", 0)
         invested = h["avg_buy"] * h["shares"]
@@ -1316,6 +1328,12 @@ async def stock_portfolio_callback(update: Update, context: ContextTypes.DEFAULT
     lines = ["💼 *YOUR PORTFOLIO*", "━━━━━━━━━━━━━━━━━━━━━━━━━━━", ""]
     total_value = 0
     for ticker, h in holdings.items():
+        # Skip LP tokens in regular portfolio view
+        if ticker.startswith("LP_"):
+            continue
+        # Handle both dict and legacy int formats
+        if not isinstance(h, dict):
+            continue
         s = stocks.get(ticker, {})
         cur  = s.get("price", 0)
         val  = h["shares"] * cur
