@@ -558,11 +558,16 @@ async def petaccept(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def pt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Routes all  pt_*  callback data."""
     query   = update.callback_query
-    await query.answer()
     data    = query.data
     user_id = query.from_user.id
 
-    if   data.startswith("pt_accept_"):   await _do_accept(query, user_id, data[10:], context)
+    if data == "noop":
+        try:
+            await query.answer()
+        except Exception:
+            pass
+        return
+    elif data.startswith("pt_accept_"):   await _do_accept(query, user_id, data[10:], context)
     elif data.startswith("pt_decline_"):  await _do_decline(query, user_id, data[11:], context)
     elif data.startswith("pt_pick_"):     await _do_pick(query, user_id, data[8:], context)
     elif data.startswith("pt_repick_"):   await _do_repick(query, user_id, data[10:], context)
@@ -578,6 +583,10 @@ async def pt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════════════════════
 
 async def _do_accept(query, user_id: int, trade_id: str, context):
+    try:
+        await query.answer()
+    except Exception:
+        pass
     trade = _get_trade(trade_id)
     if not trade:
         return await query.answer("❌ Trade not found.", show_alert=True)
@@ -626,6 +635,10 @@ async def _do_accept(query, user_id: int, trade_id: str, context):
 
 
 async def _do_decline(query, user_id: int, trade_id: str, context):
+    try:
+        await query.answer()
+    except Exception:
+        pass
     trade = _get_trade(trade_id)
     if not trade:
         return await query.answer("❌ Trade not found.", show_alert=True)
@@ -650,6 +663,10 @@ async def _do_decline(query, user_id: int, trade_id: str, context):
 
 async def _do_pick(query, user_id: int, rest: str, context):
     """rest = '{trade_id}_{side}_{pet_name}'  — trade_id is 24 hex chars."""
+    try:
+        await query.answer()
+    except Exception:
+        pass
     trade_id = rest[:24]
     side     = rest[25]          # 'i' or 't'
     pet_name = rest[27:]         # everything after '{id}_{side}_'
@@ -702,6 +719,10 @@ async def _do_pick(query, user_id: int, rest: str, context):
 
 async def _do_repick(query, user_id: int, rest: str, context):
     """Reset a player's pet selection so they can pick again."""
+    try:
+        await query.answer()
+    except Exception:
+        pass
     trade_id = rest[:24]
     side     = rest[25]
 
@@ -725,6 +746,10 @@ async def _do_repick(query, user_id: int, rest: str, context):
 
 async def _do_page(query, user_id: int, rest: str, side: str, context):
     """Handle pet-picker pagination.  rest = '{trade_id}_{page_num}'"""
+    try:
+        await query.answer()
+    except Exception:
+        pass
     trade_id = rest[:24]
     page     = int(rest[25:])
 
@@ -752,7 +777,6 @@ async def _do_agree(query, user_id: int, rest: str, context):
     trade_id = rest[:24]
     side     = rest[25:]
 
-    # Always answer the button press immediately to stop the spinner
     try:
         await query.answer()
     except Exception:
@@ -855,6 +879,10 @@ async def _do_agree(query, user_id: int, rest: str, context):
 
 
 async def _do_cancel(query, user_id: int, trade_id: str, context):
+    try:
+        await query.answer()
+    except Exception:
+        pass
     trade = _get_trade(trade_id)
     if not trade:
         return await query.answer("❌ Trade not found.", show_alert=True)
@@ -885,6 +913,10 @@ async def _do_showpick(query, user_id: int, trade_id: str, context):
     Initiator tapped 'Pick my pet' from their notification.
     Edit their notification message into a personal pet picker.
     """
+    try:
+        await query.answer()
+    except Exception:
+        pass
     trade = _get_trade(trade_id)
     if not trade or trade["status"] != "selecting":
         return await query.answer("⚠️ Trade no longer active.", show_alert=True)
@@ -944,65 +976,72 @@ async def _execute(trade: dict, context):
     t_pet    = trade["target_pet"]
     trade_id = trade["trade_id"]
 
+    # Fetch by _id so we have stable document references that won't shift under us
     i_doc = col("pets").find_one({"user_id": i_id, "name": i_pet})
     t_doc = col("pets").find_one({"user_id": t_id, "name": t_pet})
 
-    if not i_doc or not t_doc:
+    trade_chat = trade.get("trade_chat_id") or t_id
+    trade_msg  = trade.get("trade_msg_id")
+
+    async def _fail(msg: str):
         _set(trade_id, status="cancelled")
-        trade_chat = trade.get("trade_chat_id") or t_id
-        trade_msg  = trade.get("trade_msg_id")
         try:
             await context.bot.edit_message_text(
-                chat_id=trade_chat,
-                message_id=trade_msg,
-                text=(
-                    "❌ *Trade failed* — one or both pets could not be found.\n"
-                    "_They may have been released or traded elsewhere._"
-                ),
-                parse_mode="Markdown",
+                chat_id=trade_chat, message_id=trade_msg,
+                text=msg, parse_mode="Markdown",
             )
         except Exception:
             pass
+
+    if not i_doc or not t_doc:
+        await _fail(
+            "❌ *Trade failed* — one or both pets could not be found.\n"
+            "_They may have been released or traded elsewhere._"
+        )
         return False
 
-    # Duplicate-name clash guard
+    # Duplicate-name clash guard — check BEFORE touching anything
     if col("pets").find_one({"user_id": i_id, "name": t_pet}):
-        trade_chat = trade.get("trade_chat_id") or t_id
-        trade_msg  = trade.get("trade_msg_id")
-        try:
-            await context.bot.edit_message_text(
-                chat_id=trade_chat, message_id=trade_msg,
-                text=f"❌ Trade failed — you already own a *{t_pet}*!",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
+        await _fail(f"❌ Trade failed — you already own a *{t_pet}*!")
         return False
     if col("pets").find_one({"user_id": t_id, "name": i_pet}):
-        trade_chat = trade.get("trade_chat_id") or t_id
-        trade_msg  = trade.get("trade_msg_id")
-        try:
-            await context.bot.edit_message_text(
-                chat_id=trade_chat, message_id=trade_msg,
-                text=f"❌ Trade failed — the other player already owns a *{i_pet}*!",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
+        await _fail(f"❌ Trade failed — the other player already owns a *{i_pet}*!")
         return False
 
     was_i_active = i_doc.get("active", False)
     was_t_active = t_doc.get("active", False)
 
-    # Swap
-    col("pets").update_one({"user_id": i_id, "name": i_pet}, {"$set": {"user_id": t_id, "active": False}})
-    col("pets").update_one({"user_id": t_id, "name": t_pet}, {"$set": {"user_id": i_id, "active": was_i_active}})
+    # ── Atomic swap using _id — never use (user_id + name) after ownership changes ──
+    # Initiator's pet → target player (always set active=False; target manages their own active)
+    col("pets").update_one(
+        {"_id": i_doc["_id"]},
+        {"$set": {"user_id": t_id, "active": False}}
+    )
+    # Target's pet → initiator player (preserve initiator's active status if they traded active pet)
+    col("pets").update_one(
+        {"_id": t_doc["_id"]},
+        {"$set": {"user_id": i_id, "active": was_i_active}}
+    )
 
-    # If target traded away their active pet, activate another
+    # ── If initiator traded away their active pet, they now have t_pet active (handled above).
+    #    But if t_pet is also not active, pick any remaining pet for initiator. ──
+    if was_i_active and not was_t_active:
+        # t_pet arrived as active=False; initiator needs an active pet
+        # The newly received t_pet IS now initiator's — set it active
+        col("pets").update_one(
+            {"_id": t_doc["_id"]},
+            {"$set": {"active": True}}
+        )
+
+    # ── If target traded away their active pet, activate another pet for them ──
     if was_t_active:
-        nxt = col("pets").find_one({"user_id": t_id, "active": False})
+        # i_pet arrived as active=False for target; find any other pet for target
+        nxt = col("pets").find_one({"user_id": t_id, "active": False, "_id": {"$ne": i_doc["_id"]}})
         if nxt:
             col("pets").update_one({"_id": nxt["_id"]}, {"$set": {"active": True}})
+        else:
+            # Only pet they have is the received one — activate it
+            col("pets").update_one({"_id": i_doc["_id"]}, {"$set": {"active": True}})
 
     _set(trade_id, status="done")
 
