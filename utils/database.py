@@ -7,6 +7,7 @@ Drop-in replacement for the SQLite version — all function signatures identical
 import json
 import re
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pymongo import MongoClient, DESCENDING
 from pymongo.collection import Collection
 
@@ -18,6 +19,12 @@ DB_NAME   = "demon_slayer_rpg"
 
 _client = None
 _db     = None
+
+# ── In-Memory Cache ───────────────────────────────────────────────────────
+# LRU cache for frequently accessed data to reduce DB hits
+_stock_price_cache = {}
+_player_cache = {}
+_CACHE_TTL_SECONDS = 30  # Cache expires after 30 seconds
 
 
 ITEM_NAME_ALIASES = {
@@ -370,8 +377,23 @@ def _player_defaults(faction="slayer"):
 
 
 def get_player(user_id):
+    """Get player with in-memory caching for speed."""
+    import time
+    cache_key = str(user_id)
+    
+    # Check cache
+    if cache_key in _player_cache:
+        cached_data, cached_time = _player_cache[cache_key]
+        if time.time() - cached_time < _CACHE_TTL_SECONDS:
+            doc = cached_data.copy()
+            doc.pop("_id", None)
+            return doc
+    
+    # Cache miss or expired - fetch from DB
     doc = col("players").find_one({"user_id": user_id})
     if doc:
+        # Update cache
+        _player_cache[cache_key] = (doc.copy(), time.time())
         doc.pop("_id", None)
         return doc
     return None
@@ -391,10 +413,15 @@ def create_player(user_id, username, name, faction, style, style_emoji,
         {"$setOnInsert": d},
         upsert=True
     )
+    # Invalidate cache for this user
+    _player_cache.pop(str(user_id), None)
 
 
 def update_player(user_id, **kwargs):
+    """Update player and invalidate cache."""
     col("players").update_one({"user_id": user_id}, {"$set": kwargs})
+    # Invalidate cache for this user
+    _player_cache.pop(str(user_id), None)
 
 
 def get_all_players():
