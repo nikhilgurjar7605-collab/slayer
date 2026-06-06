@@ -1276,14 +1276,31 @@ if __name__ == '__main__':
                 raise
             # Clean up any closed event loops before restart
             try:
-                for loop in asyncio.all_loops():
-                    if loop.is_closed():
-                        continue
+                # Get all running loops and stop them
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
                     try:
-                        loop.stop()
-                    except Exception:
-                        pass
+                        # Python 3.12+ method
+                        loops = asyncio.all_loops()
+                    except AttributeError:
+                        # Fallback for older Python
+                        loops = [asyncio.get_event_loop()]
+                    
+                    for loop in loops:
+                        if not loop.is_closed():
+                            try:
+                                loop.stop()
+                            except Exception:
+                                pass
             except Exception:
                 pass
+            
+            # Create a fresh event loop for the next iteration
+            try:
+                asyncio.set_event_loop(asyncio.new_event_loop())
+            except Exception:
+                pass
+                
             print(f"[BOT] Restarting in {_RESTART_DELAY}s…", flush=True)
             _time.sleep(_RESTART_DELAY)
