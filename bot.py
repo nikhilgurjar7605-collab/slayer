@@ -180,7 +180,7 @@ from handlers.stockmarket import (
     marketcrash, marketboom, marketreset, update_stock_prices,
     log_stock_event, nudge_price, STOCKS,
     stock_view_callback, stock_buy_callback, stock_sell_callback,
-    stock_back_callback, market_page_callback
+    stock_sell_confirm_callback, stock_back_callback, market_page_callback
 )
 from handlers.referral import referral
 from handlers.style_art import breathing, art, givestyle, giveart
@@ -598,6 +598,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('shop_'):             await shop_page_callback(update, context)
     elif data.startswith('stock_view_'):       await stock_view_callback(update, context)
     elif data.startswith('stock_buy_'):        await stock_buy_callback(update, context)
+    elif data.startswith('stock_sell_confirm_'): await stock_sell_confirm_callback(update, context)
     elif data.startswith('stock_sell_'):       await stock_sell_callback(update, context)
     elif data == 'stock_back':                 await stock_back_callback(update, context)
     elif data.startswith('market_page_'):      await market_page_callback(update, context)
