@@ -14,7 +14,7 @@ services:
         sync: false
       - key: OWNER_ID
         sync: false
-      - key: WEBHOOK_URL
+      - key: RENDER_EXTERNAL_URL
         sync: false
       - key: HOST
         value: 0.0.0.0
