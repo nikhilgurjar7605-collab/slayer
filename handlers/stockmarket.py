@@ -58,6 +58,8 @@ CURRENCY_NAME       = "Yen"
 
 # Default in-memory STOCKS dict (also mirrored in DB) — admins can expand via /addstock
 STOCKS: dict[str, dict] = {}  # populated from DB at runtime
+_stock_cache_time = 0  # timestamp when STOCKS was last loaded
+_STOCK_CACHE_TTL = 10  # cache stocks for 10 seconds
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -65,8 +67,15 @@ STOCKS: dict[str, dict] = {}  # populated from DB at runtime
 # ══════════════════════════════════════════════════════════════════════════
 
 def _load_stocks() -> dict:
-    """Pull all stocks from MongoDB into the STOCKS cache."""
-    global STOCKS
+    """Pull all stocks from MongoDB into the STOCKS cache with TTL caching."""
+    global STOCKS, _stock_cache_time
+    import time
+    
+    # Return cached data if still valid
+    if STOCKS and (time.time() - _stock_cache_time) < _STOCK_CACHE_TTL:
+        return STOCKS
+    
+    # Cache miss or expired - fetch from DB
     docs = list(col(STOCKS_COL).find({}))
     STOCKS = {}
     for d in docs:
@@ -81,6 +90,7 @@ def _load_stocks() -> dict:
             "max_per_user": int(d.get("max_per_user", 50)),
             "change_pct":float(d.get("change_pct", 0.0)),
         }
+    _stock_cache_time = time.time()
     return STOCKS
 
 
@@ -137,40 +147,87 @@ def log_stock_event(event: str, data: dict = None):
 #  ANTI-EXPLOIT GUARDS
 # ══════════════════════════════════════════════════════════════════════════
 
+# In-memory cache for cooldowns to reduce DB hits
+_cooldown_cache: dict[tuple[int, str, str], datetime] = {}
+
 def _check_buy_cooldown(user_id: int, ticker: str) -> Optional[int]:
     """Returns seconds remaining on cooldown, or None if clear."""
+    cache_key = (user_id, ticker, "buy")
+    
+    # Check cache first
+    if cache_key in _cooldown_cache:
+        doc_at = _cooldown_cache[cache_key]
+        elapsed = (datetime.utcnow() - doc_at).total_seconds()
+        remaining = BUY_COOLDOWN_SECS - elapsed
+        if remaining > 0:
+            return int(remaining)
+        else:
+            # Cache expired, remove it
+            _cooldown_cache.pop(cache_key, None)
+            return None
+    
+    # Cache miss - fetch from DB
     doc = col(COOLDOWN_COL).find_one({"user_id": user_id, "ticker": ticker, "type": "buy"})
     if not doc:
         return None
     elapsed = (datetime.utcnow() - doc["at"]).total_seconds()
     remaining = BUY_COOLDOWN_SECS - elapsed
-    return int(remaining) if remaining > 0 else None
+    if remaining > 0:
+        # Cache the result
+        _cooldown_cache[cache_key] = doc["at"]
+        return int(remaining)
+    return None
 
 
 def _set_buy_cooldown(user_id: int, ticker: str):
+    now = datetime.utcnow()
     col(COOLDOWN_COL).update_one(
         {"user_id": user_id, "ticker": ticker, "type": "buy"},
-        {"$set": {"at": datetime.utcnow()}},
+        {"$set": {"at": now}},
         upsert=True,
     )
+    # Update cache
+    _cooldown_cache[(user_id, ticker, "buy")] = now
 
 
 def _check_sell_cooldown(user_id: int, ticker: str) -> Optional[int]:
     """Returns seconds until user can sell (must hold MIN_HOLD_SECONDS)."""
+    cache_key = (user_id, ticker, "last_buy_time")
+    
+    # Check cache first
+    if cache_key in _cooldown_cache:
+        doc_at = _cooldown_cache[cache_key]
+        elapsed = (datetime.utcnow() - doc_at).total_seconds()
+        remaining = MIN_HOLD_SECONDS - elapsed
+        if remaining > 0:
+            return int(remaining)
+        else:
+            # Cache expired, remove it
+            _cooldown_cache.pop(cache_key, None)
+            return None
+    
+    # Cache miss - fetch from DB
     doc = col(COOLDOWN_COL).find_one({"user_id": user_id, "ticker": ticker, "type": "last_buy_time"})
     if not doc:
         return None
     elapsed = (datetime.utcnow() - doc["at"]).total_seconds()
     remaining = MIN_HOLD_SECONDS - elapsed
-    return int(remaining) if remaining > 0 else None
+    if remaining > 0:
+        # Cache the result
+        _cooldown_cache[cache_key] = doc["at"]
+        return int(remaining)
+    return None
 
 
 def _set_last_buy_time(user_id: int, ticker: str):
+    now = datetime.utcnow()
     col(COOLDOWN_COL).update_one(
         {"user_id": user_id, "ticker": ticker, "type": "last_buy_time"},
-        {"$set": {"at": datetime.utcnow()}},
+        {"$set": {"at": now}},
         upsert=True,
     )
+    # Update cache
+    _cooldown_cache[(user_id, ticker, "last_buy_time")] = now
 
 
 def _check_daily_limit(user_id: int) -> bool:
