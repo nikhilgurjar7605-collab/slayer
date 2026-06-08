@@ -956,11 +956,12 @@ async def stock_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    # 5) Wallet check
+    # 5) Wallet check - using Gold Bullion for stocks
     total_cost = int(stock["price"] * qty)
-    if player["yen"] < total_cost:
+    player_gold = player.get("gold_bullion", 0)
+    if player_gold < total_cost:
         await query.answer(
-            f"❌ Need {total_cost:,} {CURRENCY_NAME}. You have {player['yen']:,}.",
+            f"❌ Need {total_cost:,} {STOCK_CURRENCY_NAME}. You have {player_gold:,}.",
             show_alert=True
         )
         return
@@ -970,8 +971,8 @@ async def stock_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     new_avg = ((held.get("avg_buy", 0) * held_qty) + (stock["price"] * qty)) / (held_qty + qty) if (held_qty + qty) > 0 else stock["price"]
     _set_holding(user_id, ticker, held_qty + qty, round(new_avg, 4))
 
-    # Deduct yen
-    update_player(user_id, yen=player["yen"] - total_cost)
+    # Deduct gold bullion
+    update_player(user_id, gold_bullion=player_gold - total_cost)
 
     # Reduce supply
     _save_stock(ticker, {"supply": stock["supply"] - qty})
@@ -1104,7 +1105,8 @@ async def stock_sell_confirm_callback(update: Update, context: ContextTypes.DEFA
 
     # ── Execute sell ──────────────────────────────────────────────────
     revenue = int(stock["price"] * qty)
-    update_player(user_id, yen=player["yen"] + revenue)
+    player_gold = player.get("gold_bullion", 0)
+    update_player(user_id, gold_bullion=player_gold + revenue)
 
     new_qty = held_qty - qty
     _set_holding(user_id, ticker, new_qty, held.get("avg_buy", 0))
