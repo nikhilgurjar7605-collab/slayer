@@ -50,11 +50,12 @@ def bm_auto_close():
     log.info("[BM] Auto-close triggered (06:00 UTC). Expiring all BM stock.")
     # Remove force-open flag if still set
     col("black_market").delete_many({"item_name": "__OPEN__"})
-    # Expire all remaining items (even those added mid-night)
-    col("black_market").update_many(
-        {"item_name": {"$ne": "__OPEN__"}, "status": "active"},
-        {"$set": {"status": "expired"}}
+    # Expire all remaining items (even those added mid-night) by setting stock to 0
+    result = col("black_market").update_many(
+        {"item_name": {"$ne": "__OPEN__"}, "stock": {"$gt": 0}},
+        {"$set": {"stock": 0, "status": "expired"}}
     )
+    log.info(f"[BM] Expired {result.modified_count} items during auto-close.")
 
 
 def get_bm_stock():

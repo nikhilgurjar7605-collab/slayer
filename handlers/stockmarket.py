@@ -51,11 +51,13 @@ LIQUIDITY_COL   = "liquidity_pools"
 ITEMS_PER_PAGE      = 6          # stocks shown per page in /market
 BUY_COOLDOWN_SECS   = 0          # No cooldown between buying the same stock (instant trades)
 MIN_HOLD_SECONDS    = 0          # No hold requirement - can sell immediately
-MAX_DAILY_BUYS      = 100        # Total buy actions per user per day (increased limit)
+MAX_DAILY_BUYS      = 500        # Total buy actions per user per day (increased for better UX)
 PRICE_IMPACT_PCT    = 0.002      # each share bought/sold moves price 0.2%
 MAX_PRICE_IMPACT    = 0.15       # single trade can't move price more than 15%
 CURRENCY_EMOJI      = "💎"
 CURRENCY_NAME       = "Yen"
+STOCK_CURRENCY_EMOJI = "🏆"
+STOCK_CURRENCY_NAME  = "Gold Bullion"
 
 # AMM / Uniswap-style constants
 AMM_FEE_PCT         = 0.003      # 0.3% fee on trades (Uniswap standard)
