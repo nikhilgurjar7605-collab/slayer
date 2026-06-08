@@ -1,1 +1,1 @@
-Nothing should be ignored in this case, as only a Python source file (`handlers/blackmarket.py`) was modified and there are no build artifacts, dependencies, or temporary files in the changes.
+Nothing needs to be added to the .gitignore file since only source code files (.py) were modified and no build artifacts, dependencies, or temporary files were detected in the changes.
