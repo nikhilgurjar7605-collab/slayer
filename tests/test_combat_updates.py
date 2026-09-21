@@ -1,4 +1,7 @@
+import os
 import random
+
+os.environ.setdefault("MONGO_URL", "REDACTED_MONGODB_URIst.invalid")
 
 from utils.combat_updates import (
     apply_exploration_event,
