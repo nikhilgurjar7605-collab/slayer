@@ -65,7 +65,7 @@ TIER_CONFIG = {
     "legendary": {
         "label":        "🟣 Legendary Tier",
         "base_yen":     1_000_000,       # 1M per-participant base
-        "clan_xp":      10_000_000,         # 100K clan XP
+        "clan_xp":      50_000,         # 100K clan XP
         "item_pool":    ["Muzan Blood"], # only Muzan Blood drops
         "item_chance":  1.00,            # everyone gets one
         "mvp_bonus":    500_000,         # big MVP bonus
@@ -119,7 +119,7 @@ RAID_BOSSES = {
         "techniques": ["Blood Explosion", "Cellular Manipulation", "Infinite Blood"],
     },
     "Yoriichi": {
-        "hp": 5_000, "atk": 950, "emoji": "🌅", "tier": "legendary",
+        "hp": 500_000, "atk": 950, "emoji": "🌅", "tier": "legendary",
         "enrage_pct": 0.25,
         "techniques": ["Sun Breathing", "Thirteenth Form", "Dance of the Fire God"],
     },
