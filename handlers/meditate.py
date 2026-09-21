@@ -14,7 +14,7 @@ from utils.helpers import get_level
 
 log = logging.getLogger(__name__)
 
-COOLDOWN_SECONDS = 0 # 1 hour
+COOLDOWN_SECONDS = 3600 # 1 hour
 
 def _get_meditate_cooldown(user_id: int) -> datetime | None:
     doc = col("cooldowns").find_one({"user_id": user_id, "type": "meditate"})
