@@ -114,12 +114,12 @@ RAID_BOSSES = {
     },
     # ── LEGENDARY TIER ────────────────────────────────────────────────────────
     "Muzan": {
-        "hp": 3_000_000, "atk": 950, "emoji": "😈", "tier": "legendary",
+        "hp": 400_000, "atk": 848, "emoji": "😈", "tier": "legendary",
         "enrage_pct": 0.30,
         "techniques": ["Blood Explosion", "Cellular Manipulation", "Infinite Blood"],
     },
     "Yoriichi": {
-        "hp": 5_000_000, "atk": 1200, "emoji": "🌅", "tier": "legendary",
+        "hp": 500_000, "atk": 950, "emoji": "🌅", "tier": "legendary",
         "enrage_pct": 0.25,
         "techniques": ["Sun Breathing", "Thirteenth Form", "Dance of the Fire God"],
     },
