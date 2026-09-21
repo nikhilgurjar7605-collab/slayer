@@ -26,9 +26,9 @@ from utils.guards import dm_only
 from utils.helpers import hp_bar
 from handlers.explore import get_level
 
-RAID_COOLDOWN_DAYS = 3
+RAID_COOLDOWN_DAYS = 0
 RAID_JOIN_FEE      = 10000
-RAID_MAX_MEMBERS   = 0
+RAID_MAX_MEMBERS   = 15
 
 # ── TIER DEFINITIONS ─────────────────────────────────────────────────────────
 # Each boss has a "tier": "low", "medium", or "high"
@@ -37,28 +37,28 @@ RAID_MAX_MEMBERS   = 0
 TIER_CONFIG = {
     "low": {
         "label":        "🟢 Low Tier",
-        "base_yen":     3_000,
+        "base_yen":     13_000,
         "clan_xp":      500,
         "item_pool":    ["Boss Shard", "Whetstone", "Demon Bone", "Iron Fragment"],
-        "item_chance":  0.50,
+        "item_chance":  0.25,
         "mvp_bonus":    1_500,
         "kill_bonus":   1.3,
     },
     "medium": {
         "label":        "🟡 Medium Tier",
-        "base_yen":     7_000,
+        "base_yen":     37_000,
         "clan_xp":      1_500,
         "item_pool":    ["Demon Crystal", "Nichirin Fragment", "Moon Shard", "Spirit Core"],
-        "item_chance":  0.70,
+        "item_chance":  0.50,
         "mvp_bonus":    4_000,
         "kill_bonus":   1.5,
     },
     "high": {
         "label":        "🔴 High Tier",
-        "base_yen":     18_000,
+        "base_yen":     100_000,
         "clan_xp":      4_000,
         "item_pool":    ["Upper Moon Core", "Demon King Fragment", "Crimson Nichirin", "Yoriichi Scroll"],
-        "item_chance":  1.00,
+        "item_chance":  0.75,
         "mvp_bonus":    12_000,
         "kill_bonus":   2.0,
     },
