@@ -26,8 +26,8 @@ from utils.guards import dm_only
 from utils.helpers import hp_bar
 from handlers.explore import get_level
 
-RAID_COOLDOWN_DAYS = 7
-RAID_JOIN_FEE      = 500
+RAID_COOLDOWN_DAYS = 3
+RAID_JOIN_FEE      = 10000
 RAID_MAX_MEMBERS   = 15
 
 # ── TIER DEFINITIONS ─────────────────────────────────────────────────────────
