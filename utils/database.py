@@ -13,8 +13,9 @@ from pymongo.collection import Collection
 
 # ── Connection ────────────────────────────────────────────────────────────
 import os as _os
-MONGO_URL = _os.environ.get("MONGO_URL", 
-    "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0")
+MONGO_URL = _os.environ.get("MONGO_URL", "").strip()
+if not MONGO_URL:
+    raise RuntimeError("MONGO_URL environment variable is required")
 DB_NAME   = "demon_slayer_rpg"
 
 _client = None
@@ -539,11 +540,18 @@ def set_battle_state(user_id, enemy, in_combat=False):
             "enemy_hp":      enemy["hp"],
             "enemy_max_hp":  enemy["hp"],
             "enemy_atk":     enemy["atk"],
+            "abilities":     enemy.get("abilities", []),
             "threat":        enemy.get("threat", "🟢 LOW"),
             "prize_xp":      enemy["xp"],
             "prize_yen":     enemy["yen"],
             "prize_drops":   json.dumps(drops),
             "faction_type":  enemy.get("faction_type", ""),
+            "event_key":     enemy.get("event_key", "normal"),
+            "event_label":   enemy.get("event_label", "🌲 WILD ENCOUNTER"),
+            "event_description": enemy.get("event_description", ""),
+            "ambush_damage": int(enemy.get("ambush_damage", 0) or 0),
+            "is_elite":      1 if enemy.get("is_elite") else 0,
+            "boss_phase":    1,
             "is_boss":       1 if enemy.get("is_boss") else 0,
             "active":        1,
             "in_combat":     1 if in_combat else 0,

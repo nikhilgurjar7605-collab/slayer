@@ -1,1 +1,23 @@
-Nothing should be ignored in this case, as only a Python source file (`handlers/blackmarket.py`) was modified and there are no build artifacts, dependencies, or temporary files in the changes.
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python caches and local artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Test and tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local IDE and OS files
+.vscode/
+.idea/
+.DS_Store

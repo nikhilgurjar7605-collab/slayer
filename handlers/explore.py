@@ -33,6 +33,15 @@ from handlers.pets import (
     get_pet_passives, send_egg_drop_message,
 )
 from utils.pressure import calc_pressure, pressure_display, get_chaos_modifier
+from utils.combat_updates import (
+    apply_exploration_event,
+    boss_phase_transition,
+    choose_enemy_action,
+    encounter_preview,
+    reward_multiplier,
+    roll_exploration_event,
+    status_summary,
+)
 from config import (
     TECHNIQUES, STATUS_EFFECTS_DATA, TECHNIQUE_STATUS_EFFECTS,
     SLAYER_ENEMIES, DEMON_ENEMIES, REGION_ENEMIES, TRAVEL_ZONES,
@@ -185,6 +194,12 @@ def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_li
         f"`{player_hp_bar}`"
     )
 
+    status_lines = status_summary(get_status_effects(player.get('user_id')))
+    status_block = f"\n🧪 *Effects:* {' | '.join(status_lines[:5])}" if status_lines else ""
+    phase_block = ""
+    if state.get('is_boss'):
+        phase_block = f"\n☠️ Phase {state.get('boss_phase', 1)}: {state.get('boss_phase_name', 'NORMAL')}"
+
     ally_block = ""
     if ally and state.get('active_ally_id') and state.get('ally_hp') is not None:
         ally_hp_bar = format_hp_bar_poke(state['ally_hp'], state['ally_max_hp'])
@@ -208,6 +223,10 @@ def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_li
     if turn_line:
         parts.append(turn_line)
     parts.append(player_block)
+    if phase_block:
+        parts.append(phase_block)
+    if status_block:
+        parts.append(status_block)
     if ally_block:
         parts.append(ally_block)
 
@@ -521,6 +540,36 @@ def get_active_ally(state):
         return None
     return get_player(state.get('active_ally_id'))
 
+
+def _apply_boss_phase_transition(user_id, previous_hp, current_hp, state, log, context):
+    """Persist and announce a boss phase change without changing legacy flow."""
+    transition = boss_phase_transition(
+        previous_hp,
+        current_hp,
+        int(state.get('enemy_max_hp', 0) or 0),
+        bool(state.get('is_boss')),
+    )
+    if not transition:
+        return
+    col('battle_state').update_one(
+        {'user_id': user_id},
+        {'$set': {'boss_phase': transition['phase'], 'boss_phase_name': transition['name']}},
+    )
+    context.user_data['boss_phase_attack_mult'] = transition['attack_multiplier']
+    context.user_data['boss_enraged'] = transition['phase'] >= 2
+    log.append(f"☠️ *PHASE {transition['phase']}: {transition['name']}* — {transition['message']}")
+
+
+def _enemy_ai_hint(state, context):
+    """Return a readable AI action hint for the battle log/UI."""
+    action, description = choose_enemy_action(
+        state,
+        int(state.get('enemy_hp', 0) or 0),
+        int(state.get('enemy_max_hp', 1) or 1),
+    )
+    context.user_data['enemy_action'] = action
+    return description
+
 # ─────────────────────────────────────────────────────────────────────────
 #  EXPLORE (compact UI)
 # ─────────────────────────────────────────────────────────────────────────
@@ -556,7 +605,10 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_player(user_id, explore_count=player.get('explore_count', 0) + 1, explores_since_boss=min(20, player.get('explores_since_boss', 20) + 1))
     player = get_player(user_id)
     enemy_template = get_enemies_for_region(player)
-    enemy = dict(enemy_template)
+    enemy = apply_exploration_event(
+        enemy_template,
+        roll_exploration_event(boss=bool(enemy_template.get('is_boss'))),
+    )
 
     if enemy.get('yoriichi'):
         from config import _yoriichi_hp_for_level
@@ -592,6 +644,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     zone = next((z for z in TRAVEL_ZONES if z['id'] == location), TRAVEL_ZONES[0])
     boss_tag = "  ⚠️ *BOSS*" if enemy.get('is_boss') else ""
     active_pet = get_active_pet(user_id)
+    preview = encounter_preview(enemy, level)
 
     enemy_hp_bar  = format_hp_bar_poke(enemy['hp'], enemy['hp'])
     player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
@@ -599,6 +652,8 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     encounter_text = (
         f"*{enemy['name'].upper()}*{boss_tag}\n"
+        f"{preview['event_label']} — {preview['event_description']}\n"
+        f"Threat: *{preview['threat']}* | Recommended level: *{preview['recommended_level']}*\n"
         f"HP : {enemy['hp']:,}/{enemy['hp']:,}\n"
         f"`{enemy_hp_bar}`\n\n"
         f"─────────────────────\n"
@@ -639,9 +694,12 @@ async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     drops = json.loads(state['prize_drops']) if state['prize_drops'] else []
     drops_text = ', '.join(drops) if drops else 'None'
+    event_line = state.get('event_label', '🌲 WILD ENCOUNTER')
+    threat_line = 'HIGH' if state.get('is_boss') else ('MODERATE' if state.get('is_elite') else 'NORMAL')
     text = (
         f"🏆 *REWARD PREVIEW*\n\n"
         f"{state['enemy_emoji']} *{state['enemy_name']}*\n"
+        f"{event_line} | Threat: *{threat_line}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"⭐ XP:    +{state['prize_xp']}\n"
         f"💰 Yen:   +{state['prize_yen']}¥\n"
@@ -680,6 +738,15 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data[f'battle_ctx_{user_id}'] = {}
     context.user_data['turn'] = 1
 
+    opening_log = []
+    ambush_damage = int(state.get('ambush_damage', 0) or 0)
+    if ambush_damage > 0:
+        new_hp = max(1, player['hp'] - ambush_damage)
+        update_player(user_id, hp=new_hp)
+        player = get_player(user_id)
+        opening_log.append(f"🩸 *AMBUSH!* You lose {ambush_damage} HP before the fight begins.")
+    opening_log.append(_enemy_ai_hint(state, context))
+
     battle_skills = _safe_get_skills(user_id)
     battle_bonuses = _safe_get_bonuses(user_id, context)
     player = _apply_battle_start_skill_bonuses(user_id, player, battle_bonuses, context, [])
@@ -716,6 +783,10 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pdisp = pressure_display(pressure, location)
     boss_line = f"\n☠️ *BOSS BATTLE!* HP x3 | ATK x1.5" if state.get('is_boss') else ""
     intro = f"⚔️ *BATTLE BEGINS!*{boss_line}\n{pdisp}"
+    if state.get('event_label'):
+        intro += f"\n{state['event_label']}"
+    if opening_log:
+        intro += "\n" + "\n".join(opening_log)
     if skill_lines:
         intro += "\n" + "\n".join(skill_lines)
     if pet_lines:
@@ -792,8 +863,10 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_battle_enemy_hp(user_id, new_koku_hp)
         state = get_battle_state(user_id)
         log.append(f"🌙 Kokushibo regenerates {regen_amt} HP!")
-    new_enemy_hp = max(0, state['enemy_hp'] - base_dmg)
+    previous_enemy_hp = state['enemy_hp']
+    new_enemy_hp = max(0, previous_enemy_hp - base_dmg)
     update_battle_enemy_hp(user_id, new_enemy_hp)
+    _apply_boss_phase_transition(user_id, previous_enemy_hp, new_enemy_hp, state, log, context)
     combo += 1
     context.user_data['combo'] = combo
     if not bonuses.get('null_status'):
@@ -890,6 +963,7 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_combat_keyboard(has_ally=bool(ally_upd))
         )
         return
+    log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
@@ -904,7 +978,7 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_battle_state(user_id, enemy_hp=reflected_enemy_hp)
         log.append(f"Ice Mirror! Reflected {reflect_dmg} damage back!")
     if context.user_data.get('boss_enraged'):
-        enemy_dmg = int(enemy_dmg * 1.30)
+        enemy_dmg = int(enemy_dmg * context.user_data.get('boss_phase_attack_mult', 1.30))
     if pressure.get('is_chaos'):
         enemy_dmg = int(enemy_dmg * get_chaos_modifier())
     blind_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
@@ -1236,9 +1310,11 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state = get_battle_state(user_id)
         log.append(f"🌙 Kokushibo regenerates {regen_amt2} HP!")
     new_sta = max(0, player['sta'] - actual_sta_cost)
-    new_enemy_hp = max(0, state['enemy_hp'] - total_dmg)
+    previous_enemy_hp = state['enemy_hp']
+    new_enemy_hp = max(0, previous_enemy_hp - total_dmg)
     update_player(user_id, sta=new_sta)
     update_battle_enemy_hp(user_id, new_enemy_hp)
+    _apply_boss_phase_transition(user_id, previous_enemy_hp, new_enemy_hp, state, log, context)
     if new_enemy_hp <= 0:
         await handle_victory(query, user_id, player, state, log, context)
         return
@@ -1305,6 +1381,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
         )
         return
+    log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
@@ -1319,7 +1396,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_battle_state(user_id, enemy_hp=reflected_enemy_hp)
         log.append(f"Ice Mirror! Reflected {reflect_dmg} damage back!")
     if context.user_data.get('boss_enraged'):
-        enemy_dmg = int(enemy_dmg * 1.30)
+        enemy_dmg = int(enemy_dmg * context.user_data.get('boss_phase_attack_mult', 1.30))
     if pressure.get('is_chaos'):
         enemy_dmg = int(enemy_dmg * get_chaos_modifier())
     blind_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
@@ -1643,6 +1720,17 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     log.append(f"💀 *{state['enemy_name']}* — DEFEATED!")
     xp_gain = state['prize_xp']
     yen_gain = state['prize_yen']
+    reward_mult, reward_bonus_lines = reward_multiplier(
+        state,
+        context.user_data.get('turn', 1) if context else 1,
+        player.get('hp', 0),
+        player.get('max_hp', 0),
+        context.user_data.get('combat_items_used', 0) if context else 0,
+    )
+    xp_gain = int(xp_gain * reward_mult)
+    yen_gain = int(yen_gain * reward_mult)
+    if reward_bonus_lines:
+        log.append("🎁 " + " | ".join(reward_bonus_lines))
     xp_gain, yen_gain = apply_pet_passives_to_rewards(user_id, xp_gain, yen_gain)
     drops = json.loads(state['prize_drops']) if state['prize_drops'] else []
     if player.get('story_bonus') == 'xp_bonus':

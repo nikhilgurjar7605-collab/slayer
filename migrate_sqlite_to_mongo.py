@@ -10,6 +10,7 @@ Point SQLITE_PATH to your old .db file below.
 """
 
 import sqlite3
+import os
 import json
 from datetime import datetime
 from pymongo import MongoClient
@@ -17,7 +18,9 @@ from pymongo import MongoClient
 # ── CONFIG ────────────────────────────────────────────────────────────────
 SQLITE_PATH = "data/game.db"       # ← change this if your db file is elsewhere
                                     #   common names: bot.db, game.db, demon_slayer.db
-MONGO_URL   = "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0"
+MONGO_URL   = os.environ.get("MONGO_URL", "").strip()
+if not MONGO_URL:
+    raise RuntimeError("MONGO_URL environment variable is required")
 DB_NAME     = "demon_slayer_rpg"
 # ─────────────────────────────────────────────────────────────────────────
 

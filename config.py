@@ -38,9 +38,9 @@ def _bootstrap_env() -> None:
 
 _bootstrap_env()
 
-BOT_TOKEN    = os.environ.get("BOT_TOKEN",    "8688074019:AAE8BPx2SD1T9W0uYYlCym99wh_VU87rdaU")
+BOT_TOKEN    = os.environ.get("BOT_TOKEN",    "").strip()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "DemonSlayerXbot")
-MONGO_URL    = os.environ.get("MONGO_URL",    "mongodb+srv://yesvashisht2005_db_user:rjuAwTHG8qO6545f@cluster0.nwvwqpj.mongodb.net/?appName=Cluster0")
+MONGO_URL    = os.environ.get("MONGO_URL",    "").strip()
 DB_PATH = None  # Legacy — not used with MongoDB
 LOG_CHANNEL = int(os.environ.get('LOG_CHANNEL'))
 
