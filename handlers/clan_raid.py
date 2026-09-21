@@ -119,7 +119,7 @@ RAID_BOSSES = {
         "techniques": ["Blood Explosion", "Cellular Manipulation", "Infinite Blood"],
     },
     "Yoriichi": {
-        "hp": 500_000, "atk": 950, "emoji": "🌅", "tier": "legendary",
+        "hp": 5_000, "atk": 950, "emoji": "🌅", "tier": "legendary",
         "enrage_pct": 0.25,
         "techniques": ["Sun Breathing", "Thirteenth Form", "Dance of the Fire God"],
     },
