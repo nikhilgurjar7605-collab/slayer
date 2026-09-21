@@ -37,12 +37,12 @@ RAID_MAX_MEMBERS   = 15
 TIER_CONFIG = {
     "low": {
         "label":        "🟢 Low Tier",
-        "base_yen":     3_000,          # per-participant base before share calc
-        "clan_xp":      500,            # XP added to clan after win
+        "base_yen":     3_000,
+        "clan_xp":      500,
         "item_pool":    ["Boss Shard", "Whetstone", "Demon Bone", "Iron Fragment"],
-        "item_chance":  0.50,           # chance each participant gets an item
-        "mvp_bonus":    1_500,          # extra yen for #1 damage dealer
-        "kill_bonus":   1.3,            # multiplier if boss is fully killed
+        "item_chance":  0.50,
+        "mvp_bonus":    1_500,
+        "kill_bonus":   1.3,
     },
     "medium": {
         "label":        "🟡 Medium Tier",
@@ -58,9 +58,18 @@ TIER_CONFIG = {
         "base_yen":     18_000,
         "clan_xp":      4_000,
         "item_pool":    ["Upper Moon Core", "Demon King Fragment", "Crimson Nichirin", "Yoriichi Scroll"],
-        "item_chance":  1.00,           # everyone gets an item
+        "item_chance":  1.00,
         "mvp_bonus":    12_000,
         "kill_bonus":   2.0,
+    },
+    "legendary": {
+        "label":        "🟣 Legendary Tier",
+        "base_yen":     1_000_000,       # 1M per-participant base
+        "clan_xp":      100_000,         # 100K clan XP
+        "item_pool":    ["Muzan Blood"], # only Muzan Blood drops
+        "item_chance":  1.00,            # everyone gets one
+        "mvp_bonus":    500_000,         # big MVP bonus
+        "kill_bonus":   2.5,             # huge kill multiplier
     },
 }
 
@@ -103,15 +112,21 @@ RAID_BOSSES = {
         "enrage_pct": 0.35,
         "techniques": ["Moon Breathing", "Crescent Moon Slashes", "Upper Moon Fury"],
     },
+    # ── LEGENDARY TIER ────────────────────────────────────────────────────────
     "Muzan": {
-        "hp": 100_000, "atk": 280, "emoji": "😈", "tier": "high",
+        "hp": 3_000_000, "atk": 950, "emoji": "😈", "tier": "legendary",
         "enrage_pct": 0.30,
         "techniques": ["Blood Explosion", "Cellular Manipulation", "Infinite Blood"],
+    },
+    "Yoriichi": {
+        "hp": 5_000_000, "atk": 1200, "emoji": "🌅", "tier": "legendary",
+        "enrage_pct": 0.25,
+        "techniques": ["Sun Breathing", "Thirteenth Form", "Dance of the Fire God"],
     },
 }
 
 # Group bosses by tier for the /clanraid bosses display
-TIER_ORDER = ["low", "medium", "high"]
+TIER_ORDER = ["low", "medium", "high", "legendary"]
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
