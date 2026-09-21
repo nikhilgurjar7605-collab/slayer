@@ -28,7 +28,7 @@ from handlers.explore import get_level
 
 RAID_COOLDOWN_DAYS = 3
 RAID_JOIN_FEE      = 10000
-RAID_MAX_MEMBERS   = 15
+RAID_MAX_MEMBERS   = 0
 
 # ── TIER DEFINITIONS ─────────────────────────────────────────────────────────
 # Each boss has a "tier": "low", "medium", or "high"
@@ -65,7 +65,7 @@ TIER_CONFIG = {
     "legendary": {
         "label":        "🟣 Legendary Tier",
         "base_yen":     1_000_000,       # 1M per-participant base
-        "clan_xp":      100_000,         # 100K clan XP
+        "clan_xp":      10_000_000,         # 100K clan XP
         "item_pool":    ["Muzan Blood"], # only Muzan Blood drops
         "item_chance":  1.00,            # everyone gets one
         "mvp_bonus":    500_000,         # big MVP bonus
