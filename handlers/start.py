@@ -15,6 +15,41 @@ WAITING_NAME     = 1
 CHOOSING_FACTION = 2
 CHOOSING_STORY   = 3
 
+# In-memory guard: user_id -> timestamp of last faction spin start.
+# Prevents double-taps on the Path buttons from running two spins at once.
+_faction_spin_lock = {}
+
+
+async def _safe_answer(query, text=""):
+    """Answer a callback query without crashing if it already expired."""
+    try:
+        await query.answer(text)
+    except Exception:
+        pass
+
+
+async def conv_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Conversation timeout — nudge the player so the flow doesn't die silently."""
+    state = context.state
+    msg = update.effective_message
+    if not msg:
+        return ConversationHandler.END
+    if state == WAITING_NAME:
+        await msg.reply_text(
+            "⏳ Character creation timed out.\n"
+            "Send /start again to begin your journey! 🌸"
+        )
+    elif state in (CHOOSING_FACTION, CHOOSING_STORY):
+        user_id = update.effective_user.id
+        if get_player(user_id):
+            await msg.reply_text("⚔️ Your character is ready! Use /menu to play.")
+        else:
+            await msg.reply_text(
+                "⏳ Your story choice timed out.\n"
+                "Send /start again to continue your journey! 🌸"
+            )
+    return ConversationHandler.END
+
 
 async def _safe_edit(query, text, **kwargs):
     """Edit a message safely, falling back to reply on failure."""
@@ -160,122 +195,171 @@ async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def choose_faction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    user_id = query.from_user.id
 
-    faction = query.data.split("_")[1]
-    context.user_data["faction"] = faction
+    # ── Idempotency guard (fixes "button keeps spinning" on double-tap) ──
+    # If a spin is already running for this user, just answer politely.
+    now = datetime.now().timestamp()
+    last = _faction_spin_lock.get(user_id, 0)
+    if now - last < 6:
+        await _safe_answer(query, "⏳ The fates are already spinning...")
+        return CHOOSING_FACTION
+    _faction_spin_lock[user_id] = now
 
-    full_pool = BREATHING_STYLES if faction == "slayer" else DEMON_ARTS
-    label     = "Breathing Style" if faction == "slayer" else "Blood Demon Art"
+    try:
+        faction = query.data.split("_", 1)[1]
+        if faction not in ("slayer", "demon"):
+            _faction_spin_lock.pop(user_id, None)
+            await _safe_answer(query, "⚠️ Invalid path choice.")
+            return CHOOSING_FACTION
+        context.user_data["faction"] = faction
 
-    # ── EXCLUSIVITY FILTER ───────────────────────────────────────────────
-    from utils.database import col as _col
-    pool    = []
-    weights = []
-    for s in full_pool:
-        w = s.get("gacha_weight", 5)
-        if w == 0:
-            continue  # ULTRA LEGENDARY — never from gacha
-        if s["name"] == "Stone Breathing":
-            if _col("players").find_one({"style": "Stone Breathing"}):
-                continue  # Already taken
-        pool.append(s)
-        weights.append(w)
+        full_pool = BREATHING_STYLES if faction == "slayer" else DEMON_ARTS
+        label     = "Breathing Style" if faction == "slayer" else "Blood Demon Art"
 
-    if not pool:
-        pool    = full_pool[:5]
-        weights = [10] * len(pool)
+        # ── EXCLUSIVITY FILTER ───────────────────────────────────────────────
+        from utils.database import col as _col
+        pool    = []
+        weights = []
+        for s in full_pool:
+            w = s.get("gacha_weight", 5)
+            if w == 0:
+                continue  # ULTRA LEGENDARY — never from gacha
+            if s["name"] == "Stone Breathing":
+                if _col("players").find_one({"style": "Stone Breathing"}):
+                    continue  # Already taken
+            pool.append(s)
+            weights.append(w)
 
-    # ── GACHA ANIMATION ──────────────────────────────────────────────────
-    spin_emojis  = [s["emoji"] for s in pool]
-    spin_display = " → ".join(random.choices(spin_emojis, k=6))
+        if not pool:
+            pool    = full_pool[:5]
+            weights = [10] * len(pool)
 
-    await _safe_edit(
-        query,
-        f"🎰 *The fates are spinning...*\n\n"
-        f"🎲 Rolling...\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"{spin_display}...\n"
-        f"━━━━━━━━━━━━━━━\n\n"
-        f"✨ *Deciding your {label}...*",
-        parse_mode="Markdown"
-    )
+        # ── Remove buttons BEFORE editing (prevents re-taps / stale clicks) ──
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await _safe_answer(query, "🎰 Rolling the fates...")
 
-    await asyncio.sleep(2)
+        # ── GACHA ANIMATION ──────────────────────────────────────────────────
+        spin_emojis  = [s["emoji"] for s in pool]
+        spin_display = " → ".join(random.choices(spin_emojis, k=6))
 
-    chosen = random.choices(pool, weights=weights, k=1)[0]
-    context.user_data["style"]       = chosen["name"]
-    context.user_data["style_emoji"] = chosen["emoji"]
+        await _safe_edit(
+            query,
+            f"🎰 *The fates are spinning...*\n\n"
+            f"🎲 Rolling...\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"{spin_display}...\n"
+            f"━━━━━━━━━━━━━━━\n\n"
+            f"✨ *Deciding your {label}...*",
+            parse_mode="Markdown"
+        )
 
-    rarity = chosen["rarity"]
-    if "ULTRA" in rarity:
-        reveal = "🌑 ✨✨✨ 𝙐𝙇𝙏𝙍𝘼 𝙇𝙀𝙂𝙀𝙉𝘿𝘼𝙍𝙔 ✨✨✨"
-    elif "LEGENDARY" in rarity:
-        reveal = "🌟 ★★★★★ 𝙇𝙀𝙂𝙀𝙉𝘿𝘼𝙍𝙔 ★★★★★"
-    elif "RARE" in rarity:
-        reveal = "💎 ★★★ 𝙍𝘼𝙍𝙀"
-    else:
-        reveal = "✨ ★★ 𝘾𝙊𝙈𝙈𝙊𝙉"
+        await asyncio.sleep(2)
 
-    await _safe_edit(
-        query,
-        f"🎰 *THE FATES HAVE SPOKEN!*\n\n"
-        f"{reveal}\n\n"
-        f"{chosen['emoji']} *{chosen['name'].upper()}*\n"
-        f"{rarity}\n\n"
-        f"_\"{chosen['description']}\"_",
-        parse_mode="Markdown"
-    )
+        chosen = random.choices(pool, weights=weights, k=1)[0]
+        context.user_data["style"]       = chosen["name"]
+        context.user_data["style_emoji"] = chosen["emoji"]
 
-    await asyncio.sleep(2)
+        rarity = chosen["rarity"]
+        if "ULTRA" in rarity:
+            reveal = "🌑 ✨✨✨ 𝙐𝙇𝙏𝙍𝘼 𝙇𝙀𝙂𝙀𝙉𝘿𝘼𝙍𝙔 ✨✨✨"
+        elif "LEGENDARY" in rarity:
+            reveal = "🌟 ★★★★★ 𝙇𝙀𝙂𝙀𝙉𝘿𝘼𝙍𝙔 ★★★★★"
+        elif "RARE" in rarity:
+            reveal = "💎 ★★★ 𝙍𝘼𝙍𝙀"
+        else:
+            reveal = "✨ ★★ 𝘾𝙊𝙈𝙈𝙊𝙉"
 
-    keyboard = [
-        [
-            InlineKeyboardButton("😢 Lost Family",       callback_data="story_1"),
-            InlineKeyboardButton("🏯 Noble Clan",        callback_data="story_2"),
-        ],
-        [
-            InlineKeyboardButton("🌾 Village Protector", callback_data="story_3"),
-            InlineKeyboardButton("🗡️ Wandering Warrior", callback_data="story_4"),
+        await _safe_edit(
+            query,
+            f"🎰 *THE FATES HAVE SPOKEN!*\n\n"
+            f"{reveal}\n\n"
+            f"{chosen['emoji']} *{chosen['name'].upper()}*\n"
+            f"{rarity}\n\n"
+            f"_\"{chosen['description']}\"_",
+            parse_mode="Markdown"
+        )
+
+        await asyncio.sleep(2)
+
+        keyboard = [
+            [
+                InlineKeyboardButton("😢 Lost Family",       callback_data="story_1"),
+                InlineKeyboardButton("🏯 Noble Clan",        callback_data="story_2"),
+            ],
+            [
+                InlineKeyboardButton("🌾 Village Protector", callback_data="story_3"),
+                InlineKeyboardButton("🗡️ Wandering Warrior", callback_data="story_4"),
+            ]
         ]
-    ]
 
-    await _safe_edit(
-        query,
-        f"📖 *What is your story?*\n\n"
-        f"😢 *Lost Family to Demons*\n"
-        f"   _Revenge burns hotter than any flame._\n"
-        f"   Bonus: +10% damage vs enemies\n\n"
-        f"🏯 *Noble Clan Duty*\n"
-        f"   _Born and trained for this purpose._\n"
-        f"   Bonus: +10% defense\n\n"
-        f"🌾 *Village Protector*\n"
-        f"   _You fight for the innocent._\n"
-        f"   Bonus: +10% HP\n\n"
-        f"🗡️ *Wandering Warrior*\n"
-        f"   _No past. Only the blade._\n"
-        f"   Bonus: +10% XP gain",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return CHOOSING_STORY
+        await _safe_edit(
+            query,
+            f"📖 *What is your story?*\n\n"
+            f"😢 *Lost Family to Demons*\n"
+            f"   _Revenge burns hotter than any flame._\n"
+            f"   Bonus: +10% damage vs enemies\n\n"
+            f"🏯 *Noble Clan Duty*\n"
+            f"   _Born and trained for this purpose._\n"
+            f"   Bonus: +10% defense\n\n"
+            f"🌾 *Village Protector*\n"
+            f"   _You fight for the innocent._\n"
+            f"   Bonus: +10% HP\n\n"
+            f"🗡️ *Wandering Warrior*\n"
+            f"   _No past. Only the blade._\n"
+            f"   Bonus: +10% XP gain",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return CHOOSING_STORY
+    finally:
+        _faction_spin_lock.pop(user_id, None)
 
 
 async def choose_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
-    story_id = int(query.data.split("_")[1])
-    story    = STORIES[story_id - 1]
+    # ── Validate payload (fixes crash on malformed/out-of-range story ids) ──
+    try:
+        story_id = int(query.data.split("_", 1)[1])
+        story    = STORIES[story_id - 1]
+    except (ValueError, IndexError):
+        await _safe_answer(query, "⚠️ Invalid choice. Please pick a story again.")
+        return CHOOSING_STORY
+    if not isinstance(story, dict) or "name" not in story or "bonus_type" not in story:
+        await _safe_answer(query, "⚠️ Invalid choice. Please pick a story again.")
+        return CHOOSING_STORY
+
+    # Strip the story buttons immediately so double-taps can't re-enter here
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await _safe_answer(query, f"{story.get('emoji', '📖')} {story['name']}...")
+
+    # ── If character was already created (late/duplicate tap), don't recreate ──
+    user_id = query.from_user.id
+    existing = get_player(user_id)
+    if existing:
+        await _safe_edit(
+            query,
+            f"⚔️ Welcome, *{existing['name']}*! Your character is ready.\n\n"
+            "/menu - Return to main hub",
+            parse_mode="Markdown"
+        )
+        return ConversationHandler.END
+
     context.user_data["story"]       = story["name"]
     context.user_data["story_bonus"] = story["bonus_type"]
 
-    user_id     = query.from_user.id
     username    = query.from_user.username or query.from_user.first_name
-    name        = context.user_data["char_name"]
-    faction     = context.user_data["faction"]
-    style       = context.user_data["style"]
-    style_emoji = context.user_data["style_emoji"]
+    name        = context.user_data.get("char_name") or query.from_user.first_name
+    faction     = context.user_data.get("faction", "slayer")
+    style       = context.user_data.get("style", "")
+    style_emoji = context.user_data.get("style_emoji", "🗡️")
     story_name  = story["name"]
     story_bonus = story["bonus_type"]
 
