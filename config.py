@@ -42,7 +42,14 @@ BOT_TOKEN    = os.environ.get("BOT_TOKEN",    "").strip()
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "DemonSlayerXbot")
 MONGO_URL    = os.environ.get("MONGO_URL",    "").strip()
 DB_PATH = None  # Legacy — not used with MongoDB
-LOG_CHANNEL = int(os.environ.get('LOG_CHANNEL'))
+# Optional error-log channel; falls back to OWNER_ID when unset/invalid so the bot never crashes at import.
+def _safe_int_env(key, default=0):
+    try:
+        return int(os.environ.get(key) or default)
+    except (TypeError, ValueError):
+        return default
+
+LOG_CHANNEL = _safe_int_env('LOG_CHANNEL', 0) or _safe_int_env('OWNER_ID', 1214273889)
 
 # ═══════════════════════════════════════════════════
 # ADMIN SETUP — FILL THESE IN BEFORE RUNNING THE BOT
