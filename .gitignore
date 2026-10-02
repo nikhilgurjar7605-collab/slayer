@@ -1,23 +1,2 @@
-# Environment and secrets
-.env
-.env.*
-!.env.example
-
-# Python caches and local artifacts
 __pycache__/
-*.py[cod]
-*$py.class
-*.db
-*.sqlite
-*.sqlite3
-*.log
-
-# Test and tooling caches
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Local IDE and OS files
-.vscode/
-.idea/
-.DS_Store
+*.pyc

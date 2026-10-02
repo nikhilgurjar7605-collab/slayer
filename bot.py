@@ -95,7 +95,7 @@ from utils.guards import dm_only, owner_only, owner_only_button
 from apscheduler.schedulers.background import BackgroundScheduler
 from handlers.missions import register_missions, refresh_missions_job
 from utils.database import get_player, col, init_db
-from handlers.start import (start, get_name, choose_faction, choose_story,
+from handlers.start import (start, get_name, choose_faction, choose_story, conv_timeout,
                             WAITING_NAME, CHOOSING_FACTION, CHOOSING_STORY)
 from handlers.menu import menu, close_menu
 from handlers.profile import profile, profile_techniques, profile_more_info, setbanner, clearbanner, bannershow, banner_decision_callback, bannerpending, approvebanner, banner_successful_payment
@@ -125,6 +125,7 @@ from handlers.pets import (
     pet_catch_callback, pet_flee_callback, pet_hatch_callback,
 )
 from handlers.lottery import lottery, lottery_play
+from handlers.gacha import summon, spirits_cmd, shards_cmd, gacha_callback
 from handlers.slayermark import slayermark
 from handlers.gif_store import (
     addgifbanner, removegifbanner, listgifbanners, setmygifbanner,
@@ -706,9 +707,12 @@ def main():
         per_chat=True,
         per_user=True,
         allow_reentry=False,
-        conversation_timeout=300,
+        conversation_timeout=600,
     )
     app.add_handler(conv)
+
+    # Notify timed-out players so the creation flow doesn't die silently
+    app.add_handler(MessageHandler(filters.ALL, conv_timeout), group=ConversationHandler.TIMEOUT_GROUP)
 
     # ── Maintenance check — runs BEFORE everything else (group=-2) ───────
     app.add_handler(MessageHandler(filters.ALL, _global_maintenance_check), group=-2)
@@ -961,6 +965,9 @@ def main():
         ('unlist',       unlist),
         ('markethistory',markethistory),
         ('lottery',      lottery_play),
+        ('summon',       summon),
+        ('spirits',      spirits_cmd),
+        ('shards',       shards_cmd),
         ('joinraid',     joinraid),
         ('raidattack',   raidattack),
         ('travel',       travel),
@@ -1044,6 +1051,7 @@ def main():
     app.add_handler(PreCheckoutQueryHandler(_unified_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT & filters.ChatType.PRIVATE, _unified_successful_payment))
     app.add_handler(CallbackQueryHandler(callback_router))
+    app.add_handler(CallbackQueryHandler(gacha_callback, pattern=r'^(gacha_|spirit_equip_)'), group=1)
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
 

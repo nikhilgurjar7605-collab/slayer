@@ -362,6 +362,14 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         _pet_atk = get_pet_passives(user_id).get('atk_pct', 0)
         if _pet_atk:
             dmg = int(dmg * (1 + _pet_atk))
+        # ── Gacha: equipped spirit ATK bonus ──────────────────────────────
+        try:
+            from utils.database import get_spirit_bonuses
+            _sp_atk = get_spirit_bonuses(user_id).get('atk_pct', 0)
+            if _sp_atk:
+                dmg = int(dmg * (1 + _sp_atk))
+        except Exception:
+            pass
         if context and context.user_data.get(f'pet_low_hp_boost_{user_id}'):
             _boost = context.user_data.pop(f'pet_low_hp_boost_{user_id}')
             dmg = int(dmg * (1 + _boost))
@@ -406,6 +414,16 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
     tier = player.get('potential_tier', 0)
     if tier > 0:
         dmg = max(1, int(dmg * (1 - tier * 0.03)))
+
+    # ── Gacha: equipped spirit DEF bonus ──────────────────────────────────
+    if user_id:
+        try:
+            from utils.database import get_spirit_bonuses
+            _sp_def = get_spirit_bonuses(user_id).get('def_pct', 0)
+            if _sp_def:
+                dmg = max(1, int(dmg * (1 - _sp_def)))
+        except Exception:
+            pass
 
     return dmg
 
@@ -646,6 +664,15 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_pet = get_active_pet(user_id)
     preview = encounter_preview(enemy, level)
 
+    # ── Gacha: rare shard find while exploring (non-boss encounters) ──────
+    _shard_found = 0
+    if not enemy.get('is_boss'):
+        try:
+            from handlers.gacha import grant_explore_shards
+            _shard_found = grant_explore_shards(user_id)
+        except Exception:
+            _shard_found = 0
+
     enemy_hp_bar  = format_hp_bar_poke(enemy['hp'], enemy['hp'])
     player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
     player_level  = get_level(player['xp'])
@@ -662,6 +689,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"`{player_hp_bar}`"
         f"{chr(10) + '🐾 ' + active_pet['name'] + ' active' if active_pet else ''}\n\n"
         f"⭐ `{enemy['xp']:,}` XP  💰 `{enemy['yen']:,}`¥"
+        f"{chr(10) + '🔮 You found a Spirit Shard while exploring! (+1)' if _shard_found else ''}"
     )
 
     if is_callback:
@@ -1732,6 +1760,16 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     if reward_bonus_lines:
         log.append("🎁 " + " | ".join(reward_bonus_lines))
     xp_gain, yen_gain = apply_pet_passives_to_rewards(user_id, xp_gain, yen_gain)
+    # ── Gacha: equipped spirit XP/Yen bonuses ─────────────────────────────
+    try:
+        from utils.database import get_spirit_bonuses as _gsb
+        _sp_b = _gsb(user_id)
+        if _sp_b.get('xp_pct'):
+            xp_gain = int(xp_gain * (1 + _sp_b['xp_pct']))
+        if _sp_b.get('yen_pct'):
+            yen_gain = int(yen_gain * (1 + _sp_b['yen_pct']))
+    except Exception:
+        pass
     drops = json.loads(state['prize_drops']) if state['prize_drops'] else []
     if player.get('story_bonus') == 'xp_bonus':
         xp_gain = int(xp_gain * 1.1)
@@ -1800,6 +1838,15 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     if state.get('is_boss'):
         add_item(user_id, 'Boss Shard', 'material')
         drop_lines.append(f"🔸 Boss Shard _(found in {_region_label})_")
+        # ── Gacha: boss spirit-shard reward (max 5) ──────────────────────
+        try:
+            from handlers.gacha import roll_boss_shards
+            from utils.database import add_shards as _add_shards
+            _bs = roll_boss_shards(state.get('enemy_name', ''))
+            _add_shards(user_id, _bs)
+            drop_lines.append(f"🔮 +{_bs} Spirit Shards _(boss reward)_")
+        except Exception:
+            pass
     faction = player.get('faction', 'slayer')
     enemy_faction_type = state.get('faction_type', '')
     devour_msg = ""
