@@ -74,12 +74,18 @@ def _admin_gate(uid) -> bool:
 # Bosses are intentionally brutal — players NEED strong spirits to win.
 # explore.py, raid_manager.py and clan_raid.py all import these so every
 # boss path scales identically.
-BOSS_HP_MULT      = 6     # boss HP multiplier            (was 3)
-BOSS_ATK_MULT     = 2.2   # boss ATK multiplier           (was 1.5)
-BOSS_XP_MULT      = 4     # reward XP multiplier          (was 3)
-BOSS_YEN_MULT     = 4     # reward Yen multiplier         (was 3)
-BOSS_LEVEL_HP_K   = 0.10  # +10% boss HP per player level (was 0.05)
-BOSS_LEVEL_ATK_K  = 0.06  # +6%  boss ATK per player level (was 0.03)
+# ── Boss difficulty tuning ────────────────────────────────────────────────
+# "Hard, but beatable": bosses hit ~2x as hard and have a big HP pool, but
+# the multipliers are CAP-BOUNDED so late-game players don't get one-shot,
+# and rewards scale with the fight so beating them always feels worth it.
+BOSS_HP_MULT      = 7     # boss HP multiplier            (was 6)
+BOSS_ATK_MULT     = 2.8   # boss ATK multiplier           (was 2.2 — hits harder)
+BOSS_XP_MULT      = 5     # reward XP multiplier          (was 4 — risk pays more)
+BOSS_YEN_MULT     = 5     # reward Yen multiplier         (was 4)
+BOSS_LEVEL_HP_K   = 0.06  # +6% boss HP per player level  (was 0.10 — capped growth)
+BOSS_LEVEL_ATK_K  = 0.03  # +3%  boss ATK per player level (was 0.06 — no runaway scaling)
+BOSS_HP_CAP       = 60    # total HP growth cap: x60 base HP max
+BOSS_ATK_CAP      = 10    # total ATK growth cap: x10 base ATK max
 
 
 def spirit_level_multiplier(level: int) -> float:

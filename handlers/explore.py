@@ -640,10 +640,12 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         roll_exploration_event(boss=bool(enemy_template.get('is_boss'))),
     )
 
-    # ── Boss scaling: intentionally brutal — players NEED spirits to win ──
+    # ── Boss scaling: hard but beatable — players NEED spirits to win ──
+    # Growth is cap-bounded (BOSS_HP_CAP / BOSS_ATK_CAP) so bosses stay
+    # dangerous at every level without one-shotting geared late-game players.
     from handlers.gacha_admin import (
         BOSS_HP_MULT, BOSS_ATK_MULT, BOSS_XP_MULT, BOSS_YEN_MULT,
-        BOSS_LEVEL_HP_K, BOSS_LEVEL_ATK_K,
+        BOSS_LEVEL_HP_K, BOSS_LEVEL_ATK_K, BOSS_HP_CAP, BOSS_ATK_CAP,
     )
     if enemy.get('is_boss'):
         lvl_hp_k, lvl_atk_k = BOSS_LEVEL_HP_K, BOSS_LEVEL_ATK_K
@@ -657,12 +659,15 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enemy['hp'] = 2_000_000 + max(0, level - 80) * 15_000
         enemy['atk'] = int(enemy['atk'] * (1 + level * max(0.05, lvl_atk_k)))
     else:
-        enemy['hp'] = int(enemy['hp'] * (1 + level * lvl_hp_k))
-        enemy['atk'] = int(enemy['atk'] * (1 + level * lvl_atk_k))
+        base_hp, base_atk = enemy['hp'], enemy['atk']
+        enemy['hp'] = min(int(base_hp * (1 + level * lvl_hp_k)), int(base_hp * BOSS_HP_CAP))
+        enemy['atk'] = min(int(base_atk * (1 + level * lvl_atk_k)), int(base_atk * BOSS_ATK_CAP))
     if enemy.get('is_boss'):
         if not enemy.get('yoriichi') and not enemy.get('kokushibo'):
-            enemy['hp'] = int(enemy['hp'] * BOSS_HP_MULT)
-        enemy['atk'] = int(enemy['atk'] * BOSS_ATK_MULT)
+            enemy['hp'] = min(int(enemy['hp'] * BOSS_HP_MULT),
+                              int(enemy_template.get('hp', enemy['hp']) * BOSS_HP_CAP))
+            enemy['atk'] = min(int(enemy['atk'] * BOSS_ATK_MULT),
+                               int(enemy_template.get('atk', enemy['atk']) * BOSS_ATK_CAP))
         enemy['xp'] = int(enemy['xp'] * BOSS_XP_MULT)
         enemy['yen'] = int(enemy['yen'] * BOSS_YEN_MULT)
     else:
