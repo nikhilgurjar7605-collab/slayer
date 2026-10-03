@@ -13,6 +13,7 @@ import logging
 log = logging.getLogger(__name__)
 
 import random
+import re
 
 from utils.database import col, get_equipped_spirits
 
@@ -35,7 +36,12 @@ def _normalize(doc: dict) -> dict:
 
 
 def get_all_spirits() -> list:
-    """Full summonable roster: config defaults + everything the owner added."""
+    """Full summonable roster: config defaults + everything the owner added.
+
+    Spirits the owner removed via /spiritremove (or /spiritadd remove) are
+    filtered out through the persistent "gacha_blocked" set — this works even
+    for the config.GACHA_SPIRITS defaults, which live in code.
+    """
     try:
         from config import GACHA_SPIRITS
         base = [dict(s) for s in GACHA_SPIRITS]
@@ -46,12 +52,16 @@ def get_all_spirits() -> list:
     except Exception as e:
         log.debug("gacha_spirits collection unavailable: %s", e)
         extra = []
+    blocked = blocked_names()
     seen = set()
     roster = []
     for s in base + extra:
-        if s["name"] and s["name"] not in seen:
-            seen.add(s["name"])
-            roster.append(s)
+        if not s["name"] or s["name"] in seen:
+            continue
+        if s["name"] in blocked or s["name"].lower() in {b.lower() for b in blocked}:
+            continue
+        seen.add(s["name"])
+        roster.append(s)
     _cache["list"] = roster
     _cache["by_name"] = {s["name"]: s for s in roster}
     return roster
@@ -143,10 +153,82 @@ def spirit_move_line(user_id, chance_mult: float = 1.0) -> tuple[str, float] | N
     return line, round(min(0.75, dmg_frac), 3)
 
 
+def find_pool_spirit(name: str) -> dict | None:
+    """Case-insensitive lookup of a spirit in the merged pool (config + runtime)."""
+    if not name:
+        return None
+    target = name.strip().lower()
+    for s in get_all_spirits():
+        if (s.get("name") or "").strip().lower() == target:
+            return s
+    return None
+
+
 def remove_spirit_from_pool(name: str) -> bool:
-    res = col("gacha_spirits").delete_one({"name": name})
+    """Remove a runtime-added spirit from the summon pool (case-insensitive).
+
+    NOTE: config.GACHA_SPIRITS defaults live in code, not the DB — they cannot
+    be deleted at runtime. Use block_spirit() to pull them out of the pool
+    without touching config.py.
+    """
+    doc = None
+    try:
+        doc = col("gacha_spirits").find_one(
+            {"name": {"$regex": f"^{re.escape(name.strip())}$", "$options": "i"}}
+        )
+    except Exception as e:
+        log.debug("gacha_spirits remove lookup failed: %s", e)
+    if not doc:
+        return False
+    res = col("gacha_spirits").delete_one({"_id": doc["_id"]})
+    # Also drop any block flag so re-adding later works cleanly.
+    try:
+        col("gacha_blocked").delete_many({"name": doc["name"]})
+    except Exception:
+        pass
     invalidate_cache()
     return res.deleted_count > 0
+
+
+# ── Blocking spirits (works for config defaults too) ───────────────────────
+# Owner-added spirits are stored in Mongo and can simply be deleted. The base
+# roster lives in config.GACHA_SPIRITS (code), so to remove one of *those*
+# from gacha at runtime we keep its name in a small "gacha_blocked" collection
+# that get_all_spirits() filters out. Persists across restarts.
+
+def blocked_names() -> set:
+    try:
+        return {d.get("name", "") for d in col("gacha_blocked").find({})}
+    except Exception as e:
+        log.debug("gacha_blocked read failed: %s", e)
+        return set()
+
+
+def block_spirit(name: str) -> bool:
+    """Pull a spirit out of the summon pool (works for config defaults too)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    col("gacha_blocked").update_one(
+        {"name": name}, {"$set": {"name": name}}, upsert=True
+    )
+    invalidate_cache()
+    return True
+
+
+def unblock_spirit(name: str) -> bool:
+    """Undo block_spirit() — the spirit becomes summonable again."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    doc = col("gacha_blocked").find_one(
+        {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
+    )
+    if not doc:
+        return False
+    col("gacha_blocked").delete_one({"_id": doc["_id"]})
+    invalidate_cache()
+    return True
 
 
 # ── Guardian protection: spirits absorb part of incoming boss damage ───────

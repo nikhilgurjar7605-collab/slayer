@@ -35,8 +35,36 @@ from config import OWNER_ID
 from utils.database import col
 from utils.spirits import (
     get_all_spirits, add_spirit_to_pool, remove_spirit_from_pool,
-    spirits_in_universe, invalidate_cache,
+    spirits_in_universe, invalidate_cache, find_pool_spirit,
+    block_spirit, unblock_spirit, blocked_names,
 )
+
+
+def _admin_gate(uid) -> bool:
+    """Admin/owner access check that NEVER raises.
+
+    Every sub-call is individually guarded so a failure in one path (e.g. the
+    Mongo lookup inside has_admin_access) can't abort the whole command with an
+    unhandled exception — that was why /spiritadd appeared to 'do nothing'.
+    """
+    try:
+        if _is_owner(uid):
+            return True
+    except Exception:
+        log.exception("gacha admin gate (_is_owner) failed")
+    try:
+        from handlers.temp_owner import is_temp_owner
+        if is_temp_owner(int(uid)):
+            return True
+    except Exception:
+        pass
+    try:
+        from handlers.admin import has_admin_access
+        if has_admin_access(int(uid)):
+            return True
+    except Exception:
+        log.debug("has_admin_access lookup failed", exc_info=True)
+    return False
 
 # ── Boss difficulty scaling (single source of truth) ───────────────────────
 # Bosses are intentionally brutal — players NEED strong spirits to win.
@@ -150,11 +178,13 @@ def _list_pool_text() -> str:
             lines.append(f"  …and {len(spirits)-12} more")
         lines.append("")
     lines.extend([
-        "📖 *HOW TO USE* — one command, `/spiritadd`:",
+        "📖 *HOW TO USE* — gacha admin commands:",
         "• `/spiritadd` → guided: asks Universe → Emoji → Name → Rarity → Passives",
         "• `/spiritadd list` → this pool view",
         "• `/spiritadd label <text>` → rename the players' summon button",
-        "• `/spiritadd remove <Name>` → delete a runtime-added spirit",
+        "• `/spiritremove <Name>` → remove ANY spirit from gacha",
+        "   (runtime spirits are deleted; config defaults get blocked)",
+        "• `/spiritunblock <Name>` → put a removed/blocked spirit back in the pool",
     ])
     return "\n".join(lines)
 
@@ -165,8 +195,8 @@ def _list_pool_text() -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 async def spiritadd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not _is_owner(user_id):
-        await update.message.reply_text("👑 Owner only.")
+    if not _admin_gate(user_id):
+        await update.message.reply_text("👑 Owner/admin only.")
         return ConversationHandler.END
 
     args = " ".join(context.args or []).strip()
@@ -176,17 +206,7 @@ async def spiritadd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     if args.lower().startswith("remove "):
-        name = args[len("remove "):].strip()
-        if not name:
-            await update.message.reply_text("Usage: `/spiritadd remove <Spirit Name>`", parse_mode="Markdown")
-            return ConversationHandler.END
-        if remove_spirit_from_pool(name):
-            await update.message.reply_text(f"🗑️ *{name}* removed from the summon pool.", parse_mode="Markdown")
-        else:
-            await update.message.reply_text(
-                f"⚠️ *{name}* is not in the runtime pool.\n"
-                f"(Config default spirits cannot be removed — edit config.py for those.)",
-                parse_mode="Markdown")
+        await _do_remove(update, args[len("remove "):].strip())
         return ConversationHandler.END
 
     if args.lower().startswith("label "):
@@ -207,6 +227,76 @@ async def spiritadd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown", reply_markup=ReplyKeyboardRemove(),
     )
     return ASK_UNIVERSE
+
+
+async def _do_remove(update: Update, name: str):
+    """Shared removal logic for /spiritremove and `/spiritadd remove <Name>`.
+
+    • Runtime-added spirits are deleted from the pool permanently.
+    • config.GACHA_SPIRITS defaults cannot be deleted from code, so they get
+      *blocked* — instantly pulled out of every player's gacha (persisted in
+      Mongo). Undo with `/spiritunblock <Name>`.
+    """
+    if not name:
+        await update.message.reply_text(
+            "Usage: `/spiritremove <Spirit Name>`\n"
+            "Example: `/spiritremove Nine-Tailed Fox Spirit`",
+            parse_mode="Markdown")
+        return
+    target = find_pool_spirit(name)          # case-insensitive, merged pool
+    if remove_spirit_from_pool(name):        # runtime (DB) spirit → deleted
+        await update.message.reply_text(
+            f"🗑️ *{name}* removed from the summon pool.", parse_mode="Markdown")
+        return
+    if target:                               # config default → block it
+        block_spirit(target["name"])
+        await update.message.reply_text(
+            f"🚫 *{target['name']}* blocked from the summon pool!\n"
+            f"It no longer appears in anyone's /summon rolls.\n"
+            f"_It lives in config.py, so it was blocked (not deleted). "
+            f"Undo anytime with_ `/spiritunblock {target['name']}`",
+            parse_mode="Markdown")
+        return
+    already = {b.lower() for b in blocked_names()}
+    if name.lower() in already:
+        await update.message.reply_text(
+            f"⚠️ *{name}* is already blocked from the pool.\n"
+            f"Undo with `/spiritunblock {name}`", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(
+            f"❓ No spirit named *{name}* in the pool.\n"
+            f"Check exact spelling with `/spiritadd list`.", parse_mode="Markdown")
+
+
+async def spiritremove_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/spiritremove <Name> — admin command to remove any spirit from gacha."""
+    if not update.message:
+        return
+    user_id = update.effective_user.id
+    if not _admin_gate(user_id):
+        await update.message.reply_text("👑 Owner/admin only.")
+        return
+    await _do_remove(update, " ".join(context.args or []).strip())
+
+
+async def spiritunblock_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/spiritunblock <Name> — re-enable a previously removed/blocked spirit."""
+    if not update.message:
+        return
+    user_id = update.effective_user.id
+    if not _admin_gate(user_id):
+        await update.message.reply_text("👑 Owner/admin only.")
+        return
+    name = " ".join(context.args or []).strip()
+    if not name:
+        await update.message.reply_text("Usage: `/spiritunblock <Spirit Name>`", parse_mode="Markdown")
+        return
+    if unblock_spirit(name):
+        await update.message.reply_text(
+            f"✅ *{name}* is back in the summon pool!", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(
+            f"⚠️ *{name}* was not blocked. Nothing to undo.", parse_mode="Markdown")
 
 
 async def spiritadd_universe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -273,8 +363,8 @@ def get_rarity_emoji(r: str) -> str:
 
 async def spiritadd_rarity_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not _is_owner(query.from_user.id):
-        await query.answer("👑 Owner only.", show_alert=True)
+    if not _admin_gate(query.from_user.id):
+        await query.answer("👑 Owner/admin only.", show_alert=True)
         return ASK_RARITY
     data = query.data or ""
     if not data.startswith("ospi_rar_"):
@@ -377,6 +467,12 @@ async def spiritadd_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "image": ns.get("image", ""),
     })
     if ok:
+        # If this name was previously blocked (e.g. a config default the owner
+        # removed earlier), un-block it so the fresh spirit actually appears.
+        try:
+            unblock_spirit(ns.get("name", ""))
+        except Exception:
+            pass
         _caption = (
             f"✅ Rift opened! {ns.get('emoji','👻')} *{ns.get('name','')}* "
             f"({ns.get('rarity','Rare')}) from *{universe}* is now summonable by ALL players!\n\n"
@@ -403,7 +499,7 @@ async def spiritadd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """ASK_IMAGE state: accept a photo OR a URL text OR skip."""
     msg = update.message
     user_id = msg.from_user.id
-    if not _is_owner(user_id):
+    if not _admin_gate(user_id):
         return ASK_IMAGE
     ref = _extract_image_ref(msg)
     if ref:
@@ -436,7 +532,7 @@ async def spiritadd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def register_spirit_admin(app):
-    """Register the ONE owner command (/spiritadd) + its rarity picker.
+    """Register the gacha admin commands + guided /spiritadd conversation.
     Call once from bot.py main()."""
     conv = ConversationHandler(
         entry_points=[CommandHandler('spiritadd', spiritadd_start)],
@@ -460,6 +556,12 @@ def register_spirit_admin(app):
     # Priority group so the guided flow is never swallowed by global handlers.
     app.add_handler(conv, group=1)
 
+    # ── Direct admin commands for removing spirits from gacha ─────────────
+    # Registered in group=0 BEFORE callback_router etc., same as every other
+    # command; plain CommandHandler works in DMs and groups.
+    app.add_handler(CommandHandler('spiritremove', spiritremove_cmd))
+    app.add_handler(CommandHandler('spiritunblock', spiritunblock_cmd))
+
 
 # ── (legacy panel callbacks kept as no-ops for old messages still on screen) ─
 async def spiritsadmin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -467,8 +569,8 @@ async def spiritsadmin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     exist in chats after the upgrade to the single-command design."""
     query = update.callback_query
     data = query.data or ""
-    if not _is_owner(query.from_user.id):
-        await query.answer("👑 Owner only.", show_alert=True)
+    if not _admin_gate(query.from_user.id):
+        await query.answer("👑 Owner/admin only.", show_alert=True)
         return
 
     if data == "ospi_noop":
