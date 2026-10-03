@@ -1315,6 +1315,8 @@ def add_spirit(user_id, spirit: dict) -> bool:
                 "name": spirit["name"],
                 "emoji": spirit.get("emoji", ""),
                 "rarity": spirit.get("rarity", "Common"),
+                "universe": spirit.get("universe", "Demon Slayer"),
+                "lore": spirit.get("lore", ""),
                 "passive": spirit.get("passive", {}),
                 "equipped": False,
                 "first_summoned": datetime.now(),
@@ -1322,6 +1324,24 @@ def add_spirit(user_id, spirit: dict) -> bool:
         },
         upsert=True,
     )
+    # Keep stored metadata fresh (owner edits universes/lore/passives via admin panel)
+    meta = {}
+    if spirit.get("universe"):
+        meta["universe"] = spirit["universe"]
+    if spirit.get("lore"):
+        meta["lore"] = spirit["lore"]
+    if spirit.get("emoji"):
+        meta["emoji"] = spirit["emoji"]
+    if spirit.get("rarity"):
+        meta["rarity"] = spirit["rarity"]
+    if spirit.get("passive") is not None:
+        meta["passive"] = spirit["passive"]
+    if meta:
+        col("spirits").update_one(
+            {"user_id": user_id, "name": spirit["name"]},
+            {"$set": meta},
+        )
+    _player_cache.pop(str(user_id), None)  # derived bonuses may have changed
     return res.upserted_id is not None
 
 
