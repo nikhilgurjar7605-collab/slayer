@@ -1,23 +1,28 @@
 """
 handlers/gacha_admin.py — OWNER cross-universe spirit management
 
-Two commands only:
+ONE command only:
 
-  /spiritsadmin                     → owner control panel (buttons + help)
   /spiritadd                        → add a spirit from ANY anime universe.
         The owner types the command WITHOUT arguments; the bot then asks in
         plain language, one question at a time (conversation):
             Universe name  →  Emoji  →  Spirit name  →  Rarity  →  Passives
         No rigid syntax to memorise.
 
+Quick sub-forms of the same command:
+  /spiritadd list                   → show every universe & spirit in the pool
+  /spiritadd label <text>           → rename the players' cross-universe
+                                       summon button (owner decides the text)
+  /spiritadd remove <Name>          → delete a runtime-added spirit
+
 The added spirits are stored in the "gacha_spirits" Mongo collection via
 utils.spirits, persist across restarts, and instantly become summonable by
-every player through the cross-universe button in /summon. The label of that
-player-facing button is set from the panel (owner decides the text himself).
+every player through the cross-universe button in /summon.
 
-Callback prefix: ospi_   (registered separately in bot.py)
+Callback prefix: ospi_   (rarity picker inside the conversation)
 """
 import logging
+import os
 log = logging.getLogger(__name__)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
@@ -32,6 +37,47 @@ from utils.spirits import (
     get_all_spirits, add_spirit_to_pool, remove_spirit_from_pool,
     spirits_in_universe, invalidate_cache,
 )
+
+# ── Robust owner check: OWNER_ID + temp owner + env override + sudo admins ─
+def _owner_ids() -> set:
+    ids = {OWNER_ID}
+    try:
+        extra = os.environ.get("EXTRA_OWNER_IDS", "")
+        for tok in extra.replace(";", ",").split(","):
+            tok = tok.strip()
+            if tok.lstrip("-").isdigit():
+                ids.add(int(tok))
+    except Exception:
+        pass
+    try:
+        from config import SUDO_ADMIN_IDS
+        ids.update(SUDO_ADMIN_IDS)
+    except Exception:
+        pass
+    return ids
+
+
+def _is_owner(uid) -> bool:
+    """Owner (or temp owner / sudo admin) — same rules as the rest of the bot."""
+    try:
+        uid = int(uid)
+    except (TypeError, ValueError):
+        return False
+    if uid in _owner_ids():
+        return True
+    try:
+        from handlers.admin import is_owner as _bot_is_owner
+        if _bot_is_owner(uid):
+            return True
+    except Exception:
+        pass
+    try:
+        from handlers.admin import has_admin_access
+        if has_admin_access(uid):
+            return True
+    except Exception:
+        pass
+    return False
 
 VALID_RARITIES = ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 
@@ -64,59 +110,41 @@ def _is_owner(uid) -> bool:
     return uid == OWNER_ID
 
 
-def _panel_keyboard() -> InlineKeyboardMarkup:
+def _list_pool_text() -> str:
+    """Owner-friendly overview of every universe & spirit in the pool."""
     pool = get_all_spirits()
     uni_counts = {}
     for s in pool:
         u = s.get("universe") or "Custom"
-        uni_counts[u] = uni_counts.get(u, 0) + 1
-    rows = [[InlineKeyboardButton(f"🌌 {u} ({c})", callback_data=f"ospi_view_{u.replace('_', '__')}")]
-            for u, c in sorted(uni_counts.items())][:6]
-    kb = [
-        rows or [[InlineKeyboardButton("🌌 No universes yet", callback_data="ospi_noop")]],
-        [InlineKeyboardButton("➕ Add Spirit (/spiritadd)", callback_data="ospi_addhelp")],
-        [InlineKeyboardButton("🏷️ Set Summon Button Label", callback_data="ospi_labelhelp")],
-        [InlineKeyboardButton("🔄 Refresh Panel", callback_data="ospi_refresh")],
+        uni_counts.setdefault(u, [])
+        uni_counts[u].append(s)
+    lines = [
+        "🌌 *SUMMON POOL*",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        f"Total spirits: *{len(pool)}*  ·  Button label: *{get_btn_label()}*",
+        "",
     ]
-    return InlineKeyboardMarkup(kb)
-
-
-async def _send_panel(bot, chat_id, edit_msg=None):
-    pool = get_all_spirits()
-    text = (
-        "🌌 *SPIRIT RIFT CONTROL — OWNER PANEL*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Total summonable spirits: *{len(pool)}*\n"
-        f"Player button label: *{get_btn_label()}*\n\n"
-        "Tap a universe to inspect its spirits.\n\n"
-        "➜ *Add* a spirit from any anime: use `/spiritadd` (guided)\n"
-        "➜ *Remove:* `/spiritadd remove <Name>`\n"
-        "➜ *Rename* the players' cross-universe summon button with the 🏷️ button below."
-    )
-    kb = _panel_keyboard()
-    if edit_msg is not None:
-        try:
-            await edit_msg.edit_text(text, reply_markup=kb, parse_mode="Markdown")
-            return
-        except Exception:
-            pass
-    await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode="Markdown")
+    for u in sorted(uni_counts):
+        spirits = uni_counts[u]
+        lines.append(f"*{u}* ({len(spirits)})")
+        for s in spirits[:12]:
+            lines.append(f"  {s.get('emoji','👻')} {s.get('name','?')} [{s.get('rarity','Common')}]")
+        if len(spirits) > 12:
+            lines.append(f"  …and {len(spirits)-12} more")
+        lines.append("")
+    lines.extend([
+        "📖 *HOW TO USE* — one command, `/spiritadd`:",
+        "• `/spiritadd` → guided: asks Universe → Emoji → Name → Rarity → Passives",
+        "• `/spiritadd list` → this pool view",
+        "• `/spiritadd label <text>` → rename the players' summon button",
+        "• `/spiritadd remove <Name>` → delete a runtime-added spirit",
+    ])
+    return "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  COMMAND 1 — /spiritsadmin  (owner panel)
-# ═══════════════════════════════════════════════════════════════════════════
-async def spiritsadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_owner(user_id):
-        await update.message.reply_text("👑 Owner only.")
-        return
-    await _send_panel(context.bot, update.effective_chat.id)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  COMMAND 2 — /spiritadd  (guided conversation, owner only)
-#    "/spiritadd remove <Name>" also handled here as a quick sub-form.
+#  THE ONE COMMAND — /spiritadd  (guided conversation, owner only)
+#    Sub-forms handled here too: list / label <text> / remove <Name>
 # ═══════════════════════════════════════════════════════════════════════════
 async def spiritadd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -125,6 +153,11 @@ async def spiritadd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     args = " ".join(context.args or []).strip()
+
+    if args.lower() in ("list", "pool", "show"):
+        await update.message.reply_text(_list_pool_text(), parse_mode="Markdown")
+        return ConversationHandler.END
+
     if args.lower().startswith("remove "):
         name = args[len("remove "):].strip()
         if not name:
@@ -286,7 +319,6 @@ async def spiritadd_passive(update: Update, context: ContextTypes.DEFAULT_TYPE):
             + (f"Passive: {_fmt_passive(passive)}" if passive else ""),
             parse_mode="Markdown",
         )
-        await _send_panel(context.bot, update.effective_chat.id)
     else:
         await update.message.reply_text("❌ Could not add spirit (empty name?). Try /spiritadd again.")
     context.user_data.pop("new_spirit", None)
@@ -305,7 +337,8 @@ async def spiritadd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def register_spirit_admin(app):
-    """Register the two owner commands. Call once from bot.py main()."""
+    """Register the ONE owner command (/spiritadd) + its rarity picker.
+    Call once from bot.py main()."""
     conv = ConversationHandler(
         entry_points=[CommandHandler('spiritadd', spiritadd_start)],
         states={
@@ -319,16 +352,17 @@ def register_spirit_admin(app):
             CommandHandler('cancel', spiritadd_cancel),
             CommandHandler('spiritadd', spiritadd_start),
         ],
-        per_chat=False, per_user=True, per_args=False,
+        per_chat=False, per_user=True,
         conversation_timeout=300,
     )
-    app.add_handler(conv)
-    app.add_handler(CommandHandler('spiritsadmin', spiritsadmin))
-    app.add_handler(CallbackQueryHandler(spiritsadmin_callback, pattern=r'^ospi_(view_|noop|addhelp|labelhelp|refresh|full)'), group=1)
+    # Priority group so the guided flow is never swallowed by global handlers.
+    app.add_handler(conv, group=1)
 
 
-# ── Panel callbacks ────────────────────────────────────────────────────────
+# ── (legacy panel callbacks kept as no-ops for old messages still on screen) ─
 async def spiritsadmin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles taps on any older /spiritsadmin panel messages that may still
+    exist in chats after the upgrade to the single-command design."""
     query = update.callback_query
     data = query.data or ""
     if not _is_owner(query.from_user.id):
@@ -351,7 +385,6 @@ async def spiritsadmin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(
                 f"🌌 *UNIVERSE: {universe}*\n━━━━━━━━━━━━━━━━━━\n{body}\n\n"
                 f"➕ Add more with `/spiritadd` · 🗑️ Remove: `/spiritadd remove <Name>`",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="ospi_refresh")]]),
                 parse_mode="Markdown",
             )
         except Exception:
@@ -359,69 +392,9 @@ async def spiritsadmin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
         return
 
-    if data == "ospi_addhelp":
-        try:
-            await query.edit_message_text(
-                "➕ *ADD A SPIRIT FROM ANY ANIME*\n\n"
-                "Just type:\n`/spiritadd`\n\n"
-                "The bot will ask you, one by one:\n"
-                "1️⃣ Universe name (any anime — or invent your own!)\n"
-                "2️⃣ Emoji\n"
-                "3️⃣ Spirit name\n"
-                "4️⃣ Rarity (buttons: Common → Legendary)\n"
-                "5️⃣ Optional passives: `atk%, def%, hp%` e.g. `15,0,10` or `skip`\n\n"
-                "The spirit is instantly summonable by every player!",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="ospi_refresh")]]),
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
-        await query.answer()
-        return
-
-    if data == "ospi_labelhelp":
-        # Ask the owner to simply reply with the new label text.
-        context.user_data["awaiting_label"] = True
-        try:
-            await query.edit_message_text(
-                "🏷️ *SET THE PLAYER-FACING SUMMON BUTTON TEXT*\n\n"
-                f"Current label: *{get_btn_label()}*\n\n"
-                "Now *reply with the exact text* you want players to see on the "
-                "cross-universe button in /summon (max 60 characters).\n\n"
-                "_(You can also do it later with `/spiritadd label <text>`)_",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
-        await query.answer()
-        return
-
-    if data in ("ospi_full", "ospi_refresh"):
-        try:
-            await query.answer()
-        except Exception:
-            pass
-        await _send_panel(context.bot, query.message.chat_id, edit_msg=query.message)
-        return
-
+    # Everything else → just point the owner at the one command.
+    try:
+        await query.edit_message_text(_list_pool_text(), parse_mode="Markdown")
+    except Exception:
+        pass
     await query.answer()
-
-
-# ── Label capture (plain message after tapping 🏷️ Set Button Label) ───────
-async def label_capture(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """If the owner tapped 'Set Button Label', their next plain text message
-    becomes the new cross-universe button label."""
-    if not context.user_data.get("awaiting_label"):
-        return None
-    text = (update.message.text or "").strip()
-    if not text:
-        return None
-    context.user_data.pop("awaiting_label", None)
-    label = text[:60]
-    set_btn_label(label)
-    await update.message.reply_text(
-        f"🏷️ Done! Players now see this button in /summon:\n*{label}*\n\n"
-        f"_Spirits from other universes summonable: {len(get_all_spirits())}_",
-        parse_mode="Markdown",
-    )
-    return True
