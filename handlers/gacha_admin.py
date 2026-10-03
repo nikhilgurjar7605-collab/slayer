@@ -23,6 +23,7 @@ Callback prefix: ospi_   (rarity picker inside the conversation)
 """
 import logging
 import os
+import re
 log = logging.getLogger(__name__)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
@@ -374,67 +375,131 @@ async def spiritadd_rarity_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
     if rarity not in VALID_RARITIES:
         rarity = "Rare"
     context.user_data["new_spirit"]["rarity"] = rarity
+    _passive_prompt_md = (
+        f"⭐ Rarity: *{rarity}*\n\n"
+        "📈 *5/6* — Passive bonuses? Send three numbers:\n"
+        "`atk%, def%, hp%`\n"
+        "_Example:_ `15,0,10`  ·  or send *skip* for none.\n"
+        "_Tip: Epic/Legendary spirits can carry big numbers (e.g. `30,25,20`)._"
+    )
+    _passive_prompt_plain = (
+        f"⭐ Rarity: {rarity}\n\n"
+        "📈 5/6 — Passive bonuses? Send three numbers:\n"
+        "atk%, def%, hp%\n"
+        "Example: 15,0,10  ·  or send skip for none.\n"
+        "Tip: Epic/Legendary spirits can carry big numbers (e.g. 30,25,20)."
+    )
     try:
-        await query.edit_message_text(
-            f"⭐ Rarity: *{rarity}*\n\n"
-            "📈 *5/6* — Passive bonuses? Send three numbers:\n"
-            "`atk%, def%, hp%`\n"
-            "_Example:_ `15,0,10`  ·  or send *skip* for none.\n"
-            "_Tip: Epic/Legendary spirits can carry big numbers (e.g. `30,25,20`)._",
-            parse_mode="Markdown", reply_markup=None,
-        )
+        try:
+            await query.edit_message_text(_passive_prompt_md,
+                                          parse_mode="Markdown", reply_markup=None)
+        except Exception:
+            # MarkdownV1 errors (or stale message) must NEVER strand the user
+            # on the rarity screen — fall back to plain text.
+            try:
+                await query.edit_message_text(_passive_prompt_plain, reply_markup=None)
+            except Exception:
+                await query.message.reply_text(_passive_prompt_plain)
     except Exception:
-        await query.message.reply_text(
-            f"⭐ Rarity: *{rarity}*\n\nSend passives as `atk%, def%, hp%` (e.g. `15,0,10`) or *skip*.",
-            parse_mode="Markdown")
+        log.exception("spiritadd rarity→passive transition failed")
     await query.answer()
     return ASK_PASSIVE
 
 
 async def spiritadd_passive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg_text = (update.message.text or "").strip()
-    ns = context.user_data.get("new_spirit", {})
-    if msg_text.lower() == "cancel":
-        await update.message.reply_text("🚫 Cancelled.")
+    """ASK_PASSIVE state — accept `atk%, def%, hp%` (also spaces / 'skip').
+
+    Robust parsing: any separator (comma/space/slash/semicolon) works, and if
+    nothing numeric can be extracted we re-ask instead of silently moving on.
+    """
+    msg = update.message
+    msg_text = ((msg.text if msg else "") or "").strip()
+    ns = context.user_data.setdefault("new_spirit", {})
+    low = msg_text.lower()
+    if low == "cancel":
+        await msg.reply_text("🚫 Cancelled.")
+        context.user_data.pop("new_spirit", None)
         return ConversationHandler.END
+
     passive = {}
-    if msg_text.lower() not in ("skip", "none", "-", "0", ""):
+    if low not in ("skip", "none", "-", "no", "0", ""):
         keys = ["atk_pct", "def_pct", "hp_pct", "sta_pct", "spd_pct"]
-        nums = [x.strip() for x in msg_text.split(",")]
-        for i, n in enumerate(nums[:5]):
+        tokens = [t for t in re.split(r"[,\s;/]+", msg_text) if t]
+        vals = []
+        for t in tokens:
             try:
-                v = float(n)
-                if v:
-                    passive[keys[i]] = round(v / 100.0, 4)
+                vals.append(float(t))
             except ValueError:
-                pass
+                vals.append(None)
+        if any(v is None for v in vals) or not vals:
+            await msg.reply_text(
+                "🤔 I couldn't read those numbers. Send three values like:\n"
+                "`15, 0, 10`  (ATK%, DEF%, HP%)  ·  or send *skip* for none.",
+                parse_mode="Markdown")
+            return ASK_PASSIVE
+        for i, v in enumerate(vals[:5]):
+            if v:
+                passive[keys[i]] = round(v / 100.0, 4)
+
     ns["passive"] = passive
-    await update.message.reply_text(
-        (_fmt_passive(passive) + "\n\n") if passive else "No passives.\n\n",
-        "⚔️ *6/6a* — Signature battle move?\n"
-        "Send the text shown in battle logs when the spirit attacks.\n"
-        "Use `{e}` for its emoji and `{n}` for its name.\n"
-        "_Example:_ `{e} {n} unleashes Rasengan: Spirit Fang!`\n"
-        "Send *skip* for a default line based on rarity.",
-        parse_mode="Markdown",
+    # Fallback reply if Markdown ever fails on this message (unbalanced chars).
+    _plain = (
+        ((_fmt_passive(passive) + "\n\n") if passive else "No passives.\n\n")
+        + "⚔️ 6/6a — Signature battle move?\n"
+          "Send the text shown in battle logs when the spirit attacks.\n"
+          "Use {e} for its emoji and {n} for its name.\n"
+          "Example: {e} {n} unleashes Rasengan: Spirit Fang!\n"
+          "Send skip for a default line based on rarity."
     )
+    try:
+        await msg.reply_text(
+            (_fmt_passive(passive) + "\n\n") if passive else "No passives.\n\n",
+            "⚔️ *6/6a* — Signature battle move?\n"
+            "Send the text shown in battle logs when the spirit attacks.\n"
+            "Use `{e}` for its emoji and `{n}` for its name.\n"
+            "_Example:_ `{e} {n} unleashes Rasengan: Spirit Fang!`\n"
+            "Send *skip* for a default line based on rarity.",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        log.debug("passive→move transition markdown failed, plain retry", exc_info=True)
+        try:
+            await msg.reply_text(_plain)
+        except Exception:
+            log.exception("could not advance spiritadd conversation past ASK_PASSIVE")
+            return ASK_PASSIVE
     return ASK_MOVE
 
 
 async def spiritadd_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg_text = (update.message.text or "").strip()
-    ns = context.user_data.get("new_spirit", {})
+    msg = update.message
+    msg_text = ((msg.text if msg else "") or "").strip()
+    ns = context.user_data.setdefault("new_spirit", {})
     if msg_text.lower() == "cancel":
-        await update.message.reply_text("🚫 Cancelled.")
+        await msg.reply_text("🚫 Cancelled.")
+        context.user_data.pop("new_spirit", None)
         return ConversationHandler.END
-    if msg_text.lower() not in ("skip", "none", "-"):
+    if msg_text.lower() not in ("skip", "none", "-", "no"):
         ns["move"] = msg_text[:200]
-    await update.message.reply_text(
+    _img_md = (
         "🖼️ *6/6b* — Spirit artwork (optional).\n"
         "Send a *photo* now and it will be stored with the spirit (shown when\n"
-        "players summon it), or type an *image URL*, or send *skip* for none.",
-        parse_mode="Markdown",
+        "players summon it), or type an *image URL*, or send *skip* for none."
     )
+    _img_plain = (
+        "🖼️ 6/6b — Spirit artwork (optional).\n"
+        "Send a photo now and it will be stored with the spirit (shown when\n"
+        "players summon it), or type an image URL, or send skip for none."
+    )
+    try:
+        try:
+            await msg.reply_text(_img_md, parse_mode="Markdown")
+        except Exception:
+            # Never strand the conversation on ASK_MOVE if formatting fails.
+            await msg.reply_text(_img_plain)
+    except Exception:
+        log.exception("could not advance spiritadd conversation past ASK_MOVE")
+        return ASK_MOVE
     return ASK_IMAGE
 
 
@@ -531,6 +596,17 @@ async def spiritadd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+def _on_conv_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """conversation_timeout fired — tell the admin instead of going silent,
+    and drop any half-collected spirit data."""
+    try:
+        if update and update.message:
+            context.user_data.pop("new_spirit", None)
+            update.message.reply_text("⌛ Spirit creation timed out. Start again with /spiritadd")
+    except Exception:
+        log.debug("conv timeout notice failed", exc_info=True)
+
+
 def register_spirit_admin(app):
     """Register the gacha admin commands + guided /spiritadd conversation.
     Call once from bot.py main()."""
@@ -551,7 +627,8 @@ def register_spirit_admin(app):
             CommandHandler('spiritadd', spiritadd_start),
         ],
         per_chat=False, per_user=True,
-        conversation_timeout=300,
+        conversation_timeout=900,          # 15 min — enough to answer every step
+        additional_args={"keep_user_data": True},
     )
     # Priority group so the guided flow is never swallowed by global handlers.
     app.add_handler(conv, group=1)
