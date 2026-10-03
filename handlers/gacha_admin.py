@@ -38,6 +38,27 @@ from utils.spirits import (
     spirits_in_universe, invalidate_cache,
 )
 
+# ── Boss difficulty scaling (single source of truth) ───────────────────────
+# Bosses are intentionally brutal — players NEED strong spirits to win.
+# explore.py, raid_manager.py and clan_raid.py all import these so every
+# boss path scales identically.
+BOSS_HP_MULT      = 6     # boss HP multiplier            (was 3)
+BOSS_ATK_MULT     = 2.2   # boss ATK multiplier           (was 1.5)
+BOSS_XP_MULT      = 4     # reward XP multiplier          (was 3)
+BOSS_YEN_MULT     = 4     # reward Yen multiplier         (was 3)
+BOSS_LEVEL_HP_K   = 0.10  # +10% boss HP per player level (was 0.05)
+BOSS_LEVEL_ATK_K  = 0.06  # +6%  boss ATK per player level (was 0.03)
+
+
+def spirit_level_multiplier(level: int) -> float:
+    """Combat-relevant spirit passives grow ~2% per player level (capped x2.5).
+
+    This is what lets spirits keep pace against the heavily-scaled bosses —
+    a Lv-100 player's Legendary Phoenix grants far more than at Lv-10.
+    """
+    return min(2.5, 1.0 + max(0, int(level or 1) - 1) * 0.02)
+
+
 # ── Robust owner check: OWNER_ID + temp owner + env override + sudo admins ─
 def _owner_ids() -> set:
     ids = {OWNER_ID}
@@ -82,7 +103,7 @@ def _is_owner(uid) -> bool:
 VALID_RARITIES = ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 
 # Conversation states for /spiritadd
-ASK_UNIVERSE, ASK_EMOJI, ASK_NAME, ASK_RARITY, ASK_PASSIVE = range(5)
+ASK_UNIVERSE, ASK_EMOJI, ASK_NAME, ASK_RARITY, ASK_PASSIVE, ASK_MOVE, ASK_IMAGE = range(7)
 
 
 # ── Runtime settings stored in Mongo ("gacha_settings" collection) ─────────
@@ -104,10 +125,6 @@ def set_btn_label(label: str):
         upsert=True,
     )
     invalidate_cache()
-
-
-def _is_owner(uid) -> bool:
-    return uid == OWNER_ID
 
 
 def _list_pool_text() -> str:
@@ -185,7 +202,7 @@ async def spiritadd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✨ *ADD A SPIRIT FROM ANY ANIME UNIVERSE*\n\n"
         "I'll guide you step by step. Type *cancel* anytime to stop.\n\n"
-        "🌌 *1/4* — Which universe does this spirit come from?\n"
+        "🌌 *1/6* — Which universe does this spirit come from?\n"
         "_Example: Naruto, Jujutsu Kaisen, Bleach, or invent your own!_",
         parse_mode="Markdown", reply_markup=ReplyKeyboardRemove(),
     )
@@ -202,7 +219,7 @@ async def spiritadd_universe(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["new_spirit"]["universe"] = text
     await update.message.reply_text(
         f"🌌 Universe: *{text}*\n\n"
-        "🎭 *2/4* — Pick an emoji for the spirit.\n"
+        "🎭 *2/6* — Pick an emoji for the spirit.\n"
         "_Example: 🦊 👁️ ⭐ 🔥 🐉 (just send the emoji)_",
         parse_mode="Markdown",
     )
@@ -218,7 +235,7 @@ async def spiritadd_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_spirit"]["emoji"] = emoji
     await update.message.reply_text(
         f"🎭 Emoji: {emoji}\n\n"
-        "👻 *3/4* — What is the spirit's name?\n"
+        "👻 *3/6* — What is the spirit's name?\n"
         "_Example: Nine-Tailed Fox Spirit, Cursed Spirit of the Abyss..._",
         parse_mode="Markdown",
     )
@@ -240,7 +257,7 @@ async def spiritadd_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await update.message.reply_text(
         f"👻 Spirit: *{text[:60]}*\n\n"
-        "⭐ *4/4a* — Choose its rarity:",
+        "⭐ *4/6* — Choose its rarity:",
         parse_mode="Markdown", reply_markup=kb,
     )
     return ASK_RARITY
@@ -270,9 +287,10 @@ async def spiritadd_rarity_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         await query.edit_message_text(
             f"⭐ Rarity: *{rarity}*\n\n"
-            "📈 *4/4b* — Passive bonuses? Send three numbers:\n"
+            "📈 *5/6* — Passive bonuses? Send three numbers:\n"
             "`atk%, def%, hp%`\n"
-            "_Example:_ `15,0,10`  ·  or send *skip* for none.",
+            "_Example:_ `15,0,10`  ·  or send *skip* for none.\n"
+            "_Tip: Epic/Legendary spirits can carry big numbers (e.g. `30,25,20`)._",
             parse_mode="Markdown", reply_markup=None,
         )
     except Exception:
@@ -286,8 +304,11 @@ async def spiritadd_rarity_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def spiritadd_passive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_text = (update.message.text or "").strip()
     ns = context.user_data.get("new_spirit", {})
+    if msg_text.lower() == "cancel":
+        await update.message.reply_text("🚫 Cancelled.")
+        return ConversationHandler.END
     passive = {}
-    if msg_text.lower() not in ("skip", "cancel", "none", "-", "0", ""):
+    if msg_text.lower() not in ("skip", "none", "-", "0", ""):
         keys = ["atk_pct", "def_pct", "hp_pct", "sta_pct", "spd_pct"]
         nums = [x.strip() for x in msg_text.split(",")]
         for i, n in enumerate(nums[:5]):
@@ -297,10 +318,53 @@ async def spiritadd_passive(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     passive[keys[i]] = round(v / 100.0, 4)
             except ValueError:
                 pass
+    ns["passive"] = passive
+    await update.message.reply_text(
+        (_fmt_passive(passive) + "\n\n") if passive else "No passives.\n\n",
+        "⚔️ *6/6a* — Signature battle move?\n"
+        "Send the text shown in battle logs when the spirit attacks.\n"
+        "Use `{e}` for its emoji and `{n}` for its name.\n"
+        "_Example:_ `{e} {n} unleashes Rasengan: Spirit Fang!`\n"
+        "Send *skip* for a default line based on rarity.",
+        parse_mode="Markdown",
+    )
+    return ASK_MOVE
+
+
+async def spiritadd_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg_text = (update.message.text or "").strip()
+    ns = context.user_data.get("new_spirit", {})
     if msg_text.lower() == "cancel":
         await update.message.reply_text("🚫 Cancelled.")
         return ConversationHandler.END
+    if msg_text.lower() not in ("skip", "none", "-"):
+        ns["move"] = msg_text[:200]
+    await update.message.reply_text(
+        "🖼️ *6/6b* — Spirit artwork (optional).\n"
+        "Send a *photo* now and it will be stored with the spirit (shown when\n"
+        "players summon it), or type an *image URL*, or send *skip* for none.",
+        parse_mode="Markdown",
+    )
+    return ASK_IMAGE
 
+
+def _extract_image_ref(msg) -> str:
+    """Pull a file_id (photo/sticker/document) out of a Telegram message."""
+    try:
+        if msg.photo:
+            return msg.photo[-1].file_id          # highest resolution
+        if msg.sticker:
+            return msg.sticker.file_id
+        if msg.document:
+            return msg.document.file_id
+    except Exception:
+        pass
+    return ""
+
+
+async def spiritadd_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Finalise spirit creation from whatever we collected (image optional)."""
+    ns = context.user_data.get("new_spirit", {})
     universe = ns.get("universe", "Custom")
     ok = add_spirit_to_pool({
         "name": ns.get("name", ""),
@@ -308,21 +372,56 @@ async def spiritadd_passive(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "rarity": ns.get("rarity", "Rare"),
         "universe": universe,
         "lore": f"Summoned from the {universe} universe.",
-        "passive": passive,
+        "passive": ns.get("passive", {}),
+        "move": ns.get("move", ""),
+        "image": ns.get("image", ""),
     })
     if ok:
-        await update.message.reply_text(
-            f"✅ Rift opened! *{ns.get('emoji')} {ns.get('name')}* ({ns.get('rarity')}) "
-            f"from *{universe}* is now summonable by ALL players!\n\n"
+        _caption = (
+            f"✅ Rift opened! {ns.get('emoji','👻')} *{ns.get('name','')}* "
+            f"({ns.get('rarity','Rare')}) from *{universe}* is now summonable by ALL players!\n\n"
             f"They appear under the cross-universe button in /summon and fight beside "
-            f"players who equip them.\n"
-            + (f"Passive: {_fmt_passive(passive)}" if passive else ""),
-            parse_mode="Markdown",
+            f"players who equip them."
+            + (f"\n⚔️ Move: {ns.get('move')}" if ns.get("move") else "")
+            + (f"\nPassive: {_fmt_passive(ns.get('passive', {}))}" if ns.get("passive") else "")
         )
+        try:
+            if ns.get("image"):
+                await update.message.reply_photo(photo=ns["image"], caption=_caption,
+                                                 parse_mode="Markdown")
+            else:
+                raise ValueError("no image")
+        except Exception:
+            await update.message.reply_text(_caption, parse_mode="Markdown")
     else:
         await update.message.reply_text("❌ Could not add spirit (empty name?). Try /spiritadd again.")
     context.user_data.pop("new_spirit", None)
     return ConversationHandler.END
+
+
+async def spiritadd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ASK_IMAGE state: accept a photo OR a URL text OR skip."""
+    msg = update.message
+    user_id = msg.from_user.id
+    if not _is_owner(user_id):
+        return ASK_IMAGE
+    ref = _extract_image_ref(msg)
+    if ref:
+        context.user_data.setdefault("new_spirit", {})["image"] = ref
+        return await spiritadd_finish(update, context)
+    text = (msg.text or "").strip()
+    if not text:
+        await msg.reply_text("Send a photo, an image URL, or *skip*.", parse_mode="Markdown")
+        return ASK_IMAGE
+    if text.lower() in ("skip", "cancel", "none", "-"):
+        if text.lower() == "cancel":
+            await msg.reply_text("🚫 Cancelled.")
+            context.user_data.pop("new_spirit", None)
+            return ConversationHandler.END
+        return await spiritadd_finish(update, context)
+    if text.startswith(("http://", "https://")):
+        context.user_data.setdefault("new_spirit", {})["image"] = text
+    return await spiritadd_finish(update, context)
 
 
 def _fmt_passive(passive: dict) -> str:
@@ -347,6 +446,9 @@ def register_spirit_admin(app):
             ASK_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, spiritadd_name)],
             ASK_RARITY:   [CallbackQueryHandler(spiritadd_rarity_cb, pattern=r'^ospi_rar_')],
             ASK_PASSIVE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, spiritadd_passive)],
+            ASK_MOVE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, spiritadd_move)],
+            ASK_IMAGE:    [MessageHandler((filters.PHOTO | filters.STICKER | filters.Document.ALL)
+                                          | (filters.TEXT & ~filters.COMMAND), spiritadd_image)],
         },
         fallbacks=[
             CommandHandler('cancel', spiritadd_cancel),

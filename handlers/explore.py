@@ -640,22 +640,31 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         roll_exploration_event(boss=bool(enemy_template.get('is_boss'))),
     )
 
+    # ── Boss scaling: intentionally brutal — players NEED spirits to win ──
+    from handlers.gacha_admin import (
+        BOSS_HP_MULT, BOSS_ATK_MULT, BOSS_XP_MULT, BOSS_YEN_MULT,
+        BOSS_LEVEL_HP_K, BOSS_LEVEL_ATK_K,
+    )
+    if enemy.get('is_boss'):
+        lvl_hp_k, lvl_atk_k = BOSS_LEVEL_HP_K, BOSS_LEVEL_ATK_K
+    else:
+        lvl_hp_k, lvl_atk_k = 0.05, 0.03
     if enemy.get('yoriichi'):
         from config import _yoriichi_hp_for_level
         enemy['hp'] = _yoriichi_hp_for_level(level)
-        enemy['atk'] = int(enemy['atk'] * (1 + level * 0.04))
+        enemy['atk'] = int(enemy['atk'] * (1 + level * max(0.04, lvl_atk_k)))
     elif enemy.get('kokushibo'):
         enemy['hp'] = 2_000_000 + max(0, level - 80) * 15_000
-        enemy['atk'] = int(enemy['atk'] * (1 + level * 0.05))
+        enemy['atk'] = int(enemy['atk'] * (1 + level * max(0.05, lvl_atk_k)))
     else:
-        enemy['hp'] = int(enemy['hp'] * (1 + level * 0.05))
-        enemy['atk'] = int(enemy['atk'] * (1 + level * 0.03))
+        enemy['hp'] = int(enemy['hp'] * (1 + level * lvl_hp_k))
+        enemy['atk'] = int(enemy['atk'] * (1 + level * lvl_atk_k))
     if enemy.get('is_boss'):
         if not enemy.get('yoriichi') and not enemy.get('kokushibo'):
-            enemy['hp'] = int(enemy['hp'] * 3)
-        enemy['atk'] = int(enemy['atk'] * 1.5)
-        enemy['xp'] = int(enemy['xp'] * 3)
-        enemy['yen'] = int(enemy['yen'] * 3)
+            enemy['hp'] = int(enemy['hp'] * BOSS_HP_MULT)
+        enemy['atk'] = int(enemy['atk'] * BOSS_ATK_MULT)
+        enemy['xp'] = int(enemy['xp'] * BOSS_XP_MULT)
+        enemy['yen'] = int(enemy['yen'] * BOSS_YEN_MULT)
     else:
         enemy['xp'] = int(enemy['xp'] * 1.5)
         enemy['yen'] = int(enemy['yen'] * 1.5)
@@ -945,12 +954,17 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}*")
     log.append("💥 *" + (f'CRIT! {base_dmg:,} dmg*' if crit else f'{base_dmg:,} dmg*'))
-    # ── Spirit presence: equipped spirits react in battle ────────────────
+    # ── Spirit active moves: equipped spirits ATTACK in the battle log ────
     try:
-        from utils.spirits import spirit_battle_line
-        _sl = spirit_battle_line(user_id, "crit" if crit else "attack")
-        if _sl:
-            log.append(_sl)
+        from utils.spirits import spirit_move_line, spirit_battle_line
+        _mv = spirit_move_line(user_id, chance_mult=1.3 if state.get('is_boss') else 1.0)
+        if _mv:
+            _line, _frac = _mv
+            _sdmg = max(1, int(base_dmg * _frac))
+            new_enemy_hp = max(0, new_enemy_hp - _sdmg)
+            update_battle_enemy_hp(user_id, new_enemy_hp)
+            state = get_battle_state(user_id) or state
+            log.append(f"{_line} — {_sdmg:,} spirit damage!")
         if player['hp'] < player.get('max_hp', 1) * 0.30:
             _sl2 = spirit_battle_line(user_id, "low_hp", chance=0.5)
             if _sl2:
@@ -1033,13 +1047,16 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
-    # ── Spirit presence: a guardian spirit may ward off the blow ─────────
+    # ── Spirit guardians: equipped spirits ward off part of the blow ─────
     try:
-        from utils.spirits import spirit_battle_line
-        _dl = spirit_battle_line(user_id, "defend", chance=0.25)
-        if _dl:
-            enemy_dmg = max(1, int(enemy_dmg * 0.90))
-            log.append(_dl)
+        from utils.spirits import spirit_guard_reduction
+        _red, _gline = spirit_guard_reduction(user_id)
+        if _red >= 1.0:
+            enemy_dmg = 0
+            if _gline:
+                log.append(_gline)
+        elif _red > 0:
+            enemy_dmg = max(1, int(enemy_dmg * (1 - _red)))
     except Exception:
         pass
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
@@ -1396,6 +1413,17 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_sta = max(0, player['sta'] - actual_sta_cost)
     previous_enemy_hp = state['enemy_hp']
     new_enemy_hp = max(0, previous_enemy_hp - total_dmg)
+    # ── Spirit follow-up: spirits strike alongside techniques too ────────
+    try:
+        from utils.spirits import spirit_move_line
+        _mv = spirit_move_line(user_id, chance_mult=1.15)
+        if _mv:
+            _line, _frac = _mv
+            _sdmg = max(1, int(total_dmg * _frac))
+            new_enemy_hp = max(0, new_enemy_hp - _sdmg)
+            log.append(f"{_line} — {_sdmg:,} spirit damage!")
+    except Exception:
+        pass
     update_player(user_id, sta=new_sta)
     update_battle_enemy_hp(user_id, new_enemy_hp)
     _apply_boss_phase_transition(user_id, previous_enemy_hp, new_enemy_hp, state, log, context)
@@ -1468,13 +1496,16 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
-    # ── Spirit presence: a guardian spirit may ward off the blow ─────────
+    # ── Spirit guardians: equipped spirits ward off part of the blow ─────
     try:
-        from utils.spirits import spirit_battle_line
-        _dl = spirit_battle_line(user_id, "defend", chance=0.25)
-        if _dl:
-            enemy_dmg = max(1, int(enemy_dmg * 0.90))
-            log.append(_dl)
+        from utils.spirits import spirit_guard_reduction
+        _red, _gline = spirit_guard_reduction(user_id)
+        if _red >= 1.0:
+            enemy_dmg = 0
+            if _gline:
+                log.append(_gline)
+        elif _red > 0:
+            enemy_dmg = max(1, int(enemy_dmg * (1 - _red)))
     except Exception:
         pass
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
