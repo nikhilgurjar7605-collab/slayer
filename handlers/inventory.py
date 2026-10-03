@@ -36,6 +36,8 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     armor_inv = [i for i in inv if i["item_type"] == "armor"]
     materials = [i for i in inv if i["item_type"] == "material"]
 
+    shards = player.get("shards", 0) or 0
+
     lines = [
         f"=======================",
         f"=      🎒 𝙄𝙉𝙑𝙀𝙉𝙏𝙊𝙍𝙔           =",
@@ -43,6 +45,7 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"",
         f"𝙎𝙠𝙞𝙡𝙡 𝙋𝙩𝙨    : {player.get('skill_points', 0)} SP ",
         f"𝘽𝙖𝙡𝙖𝙣𝙘𝙚     : {player.get('yen', 0):,}¥",
+        f"𝙎𝙥𝙞𝙧𝙞𝙩 𝙎𝙝𝙖𝙧𝙙𝙨: {shards:,} 🔮  _(use /summon)_",
         f"",
         f"𝙀𝙌𝙐𝙄𝙋𝙋𝙀𝘿",
         f" |",
