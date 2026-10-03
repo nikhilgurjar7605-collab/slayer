@@ -699,6 +699,12 @@ def main():
             WAITING_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
             CHOOSING_FACTION:[CallbackQueryHandler(choose_faction, pattern='^faction_')],
             CHOOSING_STORY:  [CallbackQueryHandler(choose_story,   pattern='^story_')],
+            # PTB v22: timeout callbacks live in the ConversationHandler.TIMEOUT
+            # state instead of the removed TIMEOUT_GROUP handler group.
+            ConversationHandler.TIMEOUT: [
+                MessageHandler(filters.ALL, conv_timeout),
+                CallbackQueryHandler(conv_timeout),
+            ],
         },
         fallbacks=[
             CommandHandler('start', start),
@@ -710,9 +716,6 @@ def main():
         conversation_timeout=600,
     )
     app.add_handler(conv)
-
-    # Notify timed-out players so the creation flow doesn't die silently
-    app.add_handler(MessageHandler(filters.ALL, conv_timeout), group=ConversationHandler.TIMEOUT_GROUP)
 
     # ── Maintenance check — runs BEFORE everything else (group=-2) ───────
     app.add_handler(MessageHandler(filters.ALL, _global_maintenance_check), group=-2)
