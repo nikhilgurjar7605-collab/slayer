@@ -78,14 +78,19 @@ def _admin_gate(uid) -> bool:
 # "Hard, but beatable": bosses hit ~2x as hard and have a big HP pool, but
 # the multipliers are CAP-BOUNDED so late-game players don't get one-shot,
 # and rewards scale with the fight so beating them always feels worth it.
-BOSS_HP_MULT      = 7     # boss HP multiplier            (was 6)
-BOSS_ATK_MULT     = 2.8   # boss ATK multiplier           (was 2.2 — hits harder)
-BOSS_XP_MULT      = 5     # reward XP multiplier          (was 4 — risk pays more)
-BOSS_YEN_MULT     = 5     # reward Yen multiplier         (was 4)
-BOSS_LEVEL_HP_K   = 0.06  # +6% boss HP per player level  (was 0.10 — capped growth)
-BOSS_LEVEL_ATK_K  = 0.03  # +3%  boss ATK per player level (was 0.06 — no runaway scaling)
-BOSS_HP_CAP       = 60    # total HP growth cap: x60 base HP max
-BOSS_ATK_CAP      = 10    # total ATK growth cap: x10 base ATK max
+BOSS_HP_MULT      = 9     # boss HP multiplier            (was 7 — much bigger pool)
+BOSS_ATK_MULT     = 3.4   # boss ATK multiplier           (was 2.8 — hits way harder)
+BOSS_XP_MULT      = 6     # reward XP multiplier          (was 5 — risk pays more)
+BOSS_YEN_MULT     = 6     # reward Yen multiplier         (was 5)
+BOSS_LEVEL_HP_K   = 0.05  # +5% boss HP per player level
+BOSS_LEVEL_ATK_K  = 0.018 # +1.8% boss ATK per player level (HP carries difficulty)
+BOSS_HP_CAP       = 80    # total HP growth cap: x80 base HP max
+BOSS_ATK_CAP      = 6     # total ATK growth cap: x6 base ATK max
+# ── Boss-only def ignore: flat armor penetration so bosses stay dangerous
+# against fully-geared players (applied inside calc_enemy_dmg).
+BOSS_DEF_IGNORE   = 0.40  # bosses ignore 40% of all damage reduction
+BOSS_CRIT_CHANCE  = 0.15  # 15% chance a boss blow lands as a CRITICAL
+BOSS_CRIT_MULT    = 1.5   # critical hits deal 1.5x damage
 
 
 def spirit_level_multiplier(level: int) -> float:

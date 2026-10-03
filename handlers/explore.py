@@ -437,6 +437,45 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
         except Exception:
             pass
 
+    # ── Boss brutality: armor penetration + critical blows ────────────────
+    # Bosses shred through gear/skill/spirit mitigation (BOSS_DEF_IGNORE of
+    # every % reduction is nullified) and can land devastating crits.
+    # Guard/reflect/pressure effects applied after this call are unaffected.
+    if state.get('is_boss'):
+        try:
+            from handlers.gacha_admin import (
+                BOSS_DEF_IGNORE, BOSS_CRIT_CHANCE, BOSS_CRIT_MULT,
+            )
+        except Exception:
+            BOSS_DEF_IGNORE, BOSS_CRIT_CHANCE, BOSS_CRIT_MULT = 0.40, 0.15, 1.5
+        _mit = 1.0
+        if player.get('faction') == 'slayer':
+            _mit -= 0.10
+        if player.get('story_bonus') == 'def_bonus':
+            _mit -= 0.10
+        if owned_skills:
+            try:
+                _bo = get_active_skill_bonuses(
+                    owned_skills, user_id=user_id,
+                    used_once=(context.user_data.get(f'battle_ctx_{user_id}', {}).get('used_once_skills', [])
+                               if context and user_id else []),
+                ) if (context and user_id) else get_active_skill_bonuses(owned_skills)
+                _mit -= float(_bo.get('dmg_reduce', 0) or 0)
+            except Exception:
+                pass
+        _mit -= min(0.30, max(0, player.get('potential_tier', 0) or 0) * 0.03)
+        if user_id:
+            try:
+                from utils.database import get_spirit_bonuses
+                _mit -= float(get_spirit_bonuses(user_id).get('def_pct', 0) or 0)
+            except Exception:
+                pass
+        _mit = max(0.0, min(0.95, _mit))
+        # restore the portion of mitigation the boss ignores
+        dmg = int(dmg / max(1e-6, 1 - _mit * (1 - BOSS_DEF_IGNORE)))
+        if random.random() < BOSS_CRIT_CHANCE:
+            dmg = int(dmg * BOSS_CRIT_MULT)
+
     return dmg
 
 def _safe_get_skills(user_id):
@@ -1075,8 +1114,19 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reflected_enemy_hp = max(0, state_fresh.get('enemy_hp', 0) - reflect_dmg)
         set_battle_state(user_id, enemy_hp=reflected_enemy_hp)
         log.append(f"Ice Mirror! Reflected {reflect_dmg} damage back!")
-    if context.user_data.get('boss_enraged'):
-        enemy_dmg = int(enemy_dmg * context.user_data.get('boss_phase_attack_mult', 1.30))
+    if context.user_data.get('boss_enraged') or state_fresh.get('boss_phase', 1) >= 2:
+        _phase_mult = context.user_data.get('boss_phase_attack_mult')
+        if not _phase_mult:
+            try:
+                from utils.combat_updates import boss_phase_for
+                _, _, _phase_mult = boss_phase_for(
+                    int(state_fresh.get('enemy_hp', 0) or 0),
+                    int(state_fresh.get('enemy_max_hp', 1) or 1), True)
+            except Exception:
+                _phase_mult = 1.45
+        enemy_dmg = int(enemy_dmg * _phase_mult)
+        if state_fresh.get('is_boss'):
+            log.append("💢 The boss's phase strike lands with crushing force!")
     if pressure.get('is_chaos'):
         enemy_dmg = int(enemy_dmg * get_chaos_modifier())
     blind_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
@@ -1524,8 +1574,19 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reflected_enemy_hp = max(0, state_fresh.get('enemy_hp', 0) - reflect_dmg)
         set_battle_state(user_id, enemy_hp=reflected_enemy_hp)
         log.append(f"Ice Mirror! Reflected {reflect_dmg} damage back!")
-    if context.user_data.get('boss_enraged'):
-        enemy_dmg = int(enemy_dmg * context.user_data.get('boss_phase_attack_mult', 1.30))
+    if context.user_data.get('boss_enraged') or state_fresh.get('boss_phase', 1) >= 2:
+        _phase_mult = context.user_data.get('boss_phase_attack_mult')
+        if not _phase_mult:
+            try:
+                from utils.combat_updates import boss_phase_for
+                _, _, _phase_mult = boss_phase_for(
+                    int(state_fresh.get('enemy_hp', 0) or 0),
+                    int(state_fresh.get('enemy_max_hp', 1) or 1), True)
+            except Exception:
+                _phase_mult = 1.45
+        enemy_dmg = int(enemy_dmg * _phase_mult)
+        if state_fresh.get('is_boss'):
+            log.append("💢 The boss's phase strike lands with crushing force!")
     if pressure.get('is_chaos'):
         enemy_dmg = int(enemy_dmg * get_chaos_modifier())
     blind_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
