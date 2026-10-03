@@ -43,6 +43,9 @@ from config import (
 
 RARITY_ORDER = ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 
+# Fast lookup of the base roster by name (config defaults; no DB access).
+_SPIRIT_BY_NAME = {s["name"]: s for s in GACHA_SPIRITS}
+
 # Reveal cache: token -> {"user_id": int, "results": [spirit dict, ...], "pity_line": str}
 _pending_reveals = {}
 
@@ -53,7 +56,7 @@ def _spirit_by_name(name: str) -> dict | None:
         from utils.spirits import get_spirit_by_name
         return get_spirit_by_name(name)
     except Exception:
-        return next((s for s in GACHA_SPIRITS if s["name"] == name), None)
+        return _SPIRIT_BY_NAME.get(name)
 
 
 # ── Core pull logic (pure, testable) ───────────────────────────────────────
