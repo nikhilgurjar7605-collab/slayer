@@ -343,6 +343,8 @@ ADMIN_HELP_PAGES = {
         "  `/restore` — Import from JSON file\n\n"
         "✨ *Spirit Rift (Gacha Admin)*\n"
         "  `/spiritadd` — Guided flow: add a spirit from any anime universe\n"
+        "  `/spiritadd 🦊 Name | Legendary | 30,25,20` — FAST one-shot add\n"
+        "     (optional 4th part: image URL or Telegram file code)\n"
         "  `/spiritadd list` — Show every universe & spirit in the pool\n"
         "  `/spiritadd remove <Name>` — Remove a spirit from gacha\n"
         "  `/spiritadd label <text>` — Rename players' summon button\n"

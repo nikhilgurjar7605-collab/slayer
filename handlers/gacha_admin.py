@@ -13,6 +13,15 @@ Quick sub-forms of the same command:
   /spiritadd list                   → show every universe & spirit in the pool
   /spiritadd label <text>           → rename the players' cross-universe
                                        summon button (owner decides the text)
+
+FAST ONE-SHOT FORM (no guided steps at all):
+  /spiritadd <Emoji> <Name> | <Rarity> | <atk,def,hp> [| <image|url|#reuse>]
+        Example: /spiritadd 🦊 Moon Rabbit Spirit | Legendary | 30,25,20
+        • rarity defaults to Rare, passives default to skip/none
+        • trailing token may be an image URL, a Telegram file code, or
+          "#reuse" to copy artwork from an existing spirit with that name
+        • after every add the bot shows the stored FILE CODE — paste it back
+          into another /spiritadd, or send it during the image step
   /spiritadd remove <Name>          → remove ANY spirit from gacha
         (shortcut for /spiritremove; config defaults get blocked)
   /spiritremove <Name>              → remove/block any spirit from the pool
@@ -149,6 +158,232 @@ VALID_RARITIES = ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
 ASK_UNIVERSE, ASK_EMOJI, ASK_NAME, ASK_RARITY, ASK_PASSIVE, ASK_MOVE, ASK_IMAGE = range(7)
 
 
+# ── Shared helpers (used by BOTH the guided flow and the fast one-shot form) ─
+def _match_rarity(word: str):
+    """Case-insensitive rarity match; accepts short forms (leg → Legendary)."""
+    w = (word or "").strip().lower()
+    if not w:
+        return None
+    for r in VALID_RARITIES:
+        if r.lower() == w:
+            return r
+    for r in VALID_RARITIES:
+        if r.lower().startswith(w):
+            return r
+    return None
+
+
+def _parse_passive_text(text: str):
+    """Parse 'atk%, def%, hp%' with ANY separator (comma/space/slash/semicolon).
+
+    Returns (passive_dict, ok).  ok=False means the text contained tokens that
+    simply aren't numbers — callers should re-ask instead of silently skipping.
+    """
+    low = (text or "").strip().lower()
+    if low in ("skip", "none", "-", "no", "0", ""):
+        return {}, True
+    keys = ["atk_pct", "def_pct", "hp_pct", "sta_pct", "spd_pct"]
+    tokens = [t for t in re.split(r"[,\s;/]+", (text or "").strip()) if t]
+    vals = []
+    for t in tokens:
+        try:
+            vals.append(float(t))
+        except ValueError:
+            vals.append(None)
+    if not vals or any(v is None for v in vals):
+        return {}, False
+    passive = {}
+    for i, v in enumerate(vals[:5]):
+        if v:
+            passive[keys[i]] = round(v / 100.0, 4)
+    return passive, True
+
+
+def _is_file_code(tok: str) -> bool:
+    """Looks like a Telegram file code (file_id): long base64-ish token."""
+    tok = (tok or "").strip()
+    if len(tok) < 20 or " " in tok:
+        return False
+    core = tok.replace("-", "").replace("_", "")
+    return core.isalnum()
+
+
+def _resolve_image_token(token: str, name: str) -> str:
+    """Resolve an image spec given in one-shot args.
+
+    Accepts https URLs, raw Telegram file codes, '#reuse' (copy artwork from
+    the spirit being replaced), or '' (nothing).
+    """
+    tok = (token or "").strip()
+    if not tok:
+        return ""
+    if tok.startswith(("http://", "https://")):
+        return tok
+    if tok.lower() in ("#reuse", "#same", "reuse"):
+        try:
+            cur = find_pool_spirit(name)
+            if cur and cur.get("image"):
+                return cur["image"]
+        except Exception:
+            log.debug("#reuse lookup failed", exc_info=True)
+        return ""
+    if _is_file_code(tok):
+        return tok
+    return ""   # unknown trailing token → treat as no image
+
+
+def _short_file_code(image: str) -> str:
+    """Short display form of a stored file code (full code stays in DB)."""
+    img = (image or "").strip()
+    if not img or img.startswith(("http://", "https://")):
+        return img
+    if len(img) <= 32:
+        return img
+    return f"{img[:18]}…{img[-8:]}"
+
+
+async def _send_final(update: Update, ns: dict):
+    """Send the confirmation message to the admin — never raises."""
+    universe = ns.get("universe", "Custom")
+    _caption = (
+        f"✅ Rift opened! {ns.get('emoji','👻')} *{ns.get('name','')}* "
+        f"({ns.get('rarity','Rare')}) from *{universe}* is now summonable by ALL players!\n\n"
+        f"They appear under the cross-universe button in /summon and fight beside "
+        f"players who equip them."
+        + (f"\n⚔️ Move: {ns.get('move')}" if ns.get("move") else "")
+        + (f"\nPassive: {_fmt_passive(ns.get('passive', {}))}" if ns.get("passive") else "")
+    )
+    if ns.get("image") and not ns["image"].startswith(("http://", "https://")):
+        _caption += (f"\n\n🖼️ FILE CODE (paste into another /spiritadd or the image step):\n"
+                     f"`{ns['image']}`")
+    elif ns.get("image"):
+        _caption += f"\n\n🖼️ Image URL saved: {ns['image']}"
+    try:
+        if ns.get("image"):
+            await update.message.reply_photo(photo=ns["image"], caption=_caption,
+                                             parse_mode="Markdown")
+        else:
+            raise ValueError("no image")
+    except Exception:
+        try:
+            await update.message.reply_text(_caption, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(_caption.replace("*", ""))
+
+
+async def _commit_new_spirit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Persist whatever `new_spirit` collected, report back, clear state."""
+    ns = context.user_data.get("new_spirit") or {}
+    universe = ns.get("universe", "Custom")
+    ok = add_spirit_to_pool({
+        "name": ns.get("name", ""),
+        "emoji": ns.get("emoji", "👻"),
+        "rarity": ns.get("rarity", "Rare"),
+        "universe": universe,
+        "lore": f"Summoned from the {universe} universe.",
+        "passive": ns.get("passive", {}),
+        "move": ns.get("move", ""),
+        "image": ns.get("image", ""),
+    })
+    if not ok:
+        await update.message.reply_text(
+            "❌ Could not add spirit (empty name?). Try /spiritadd again.")
+    else:
+        # If this name was previously blocked (e.g. a config default the owner
+        # removed earlier), un-block it so the fresh spirit actually appears.
+        try:
+            unblock_spirit(ns.get("name", ""))
+        except Exception:
+            pass
+        await _send_final(update, ns)
+    context.user_data.pop("new_spirit", None)
+    return ConversationHandler.END
+
+
+async def _help_one_shot(msg):
+    """Usage blurb shown when a one-shot /spiritadd line couldn't be parsed."""
+    try:
+        await msg.reply_text(
+            "🤔 Couldn't parse that one-shot add. Format:\n"
+            "/spiritadd <Emoji> <Name> | <Rarity> | <atk,def,hp>\n"
+            "Example: /spiritadd 🦊 Moon Rabbit Spirit | Legendary | 30,25,20\n"
+            "Optional 4th part: image URL or Telegram file code.\n"
+            "Or just send /spiritadd with no arguments for the guided flow.",
+        )
+    except Exception:
+        log.debug("one-shot help reply failed", exc_info=True)
+
+
+async def _try_one_shot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fast path: /spiritadd <Emoji> <Name> | <Rarity> | <passives> [| <image>]
+
+    One single message adds a whole spirit — no guided steps needed.
+    Returns a ConversationHandler result, or None if the args don't look like
+    a one-shot spec (so we fall through to the guided flow).
+    """
+    args = list(context.args or [])
+    raw = " ".join(args).strip()
+    if "|" not in raw:
+        return None                       # plain /spiritadd → guided flow
+    # The leading emoji is a separate command arg; everything after it is the
+    # pipe-separated spec. Rebuild from args so the name itself can contain
+    # spaces without confusing the split.
+    head_extra = ""
+    if args and "|" in " ".join(args[1:]):
+        head_extra = args[0] + " "
+        raw = " ".join(args[1:]).strip()
+    parts = [p.strip() for p in raw.split("|")]
+    head = parts[0]
+    if not head:
+        return None
+    # Empty pipe-sections fall back to defaults (e.g. "... | | skip").
+    rarity = _match_rarity(parts[1]) if len(parts) > 1 and parts[1] else "Rare"
+    rarity = rarity or "Rare"
+    if len(parts) > 1 and parts[1] and _match_rarity(parts[1]) is None:
+        await _help_one_shot(update.message)
+        return ConversationHandler.END
+    passive = {}
+    if len(parts) > 2 and parts[2]:
+        passive, ok = _parse_passive_text(parts[2])
+        if not ok:
+            await _help_one_shot(update.message)
+            return ConversationHandler.END
+
+    # Head token split: leading emoji is the spirit's emoji, rest is the name.
+    if head_extra:
+        emoji, name = head_extra.split()[0], head
+    else:
+        m = re.match(r"^(\S+)\s+(.*)$", head, flags=re.S)
+        if m and len(m.group(1)) <= 8:
+            emoji, name = m.group(1), m.group(2).strip()
+        else:
+            emoji, name = "👻", head
+    if not name:
+        await _help_one_shot(update.message)
+        return ConversationHandler.END
+
+    universe = "Custom"
+    try:
+        existing = find_pool_spirit(name)
+        if existing and existing.get("universe"):
+            universe = existing["universe"]   # same spirit → keep its universe
+    except Exception:
+        pass
+
+    image = _resolve_image_token(parts[3] if len(parts) > 3 else "", name)
+
+    ns = {
+        "name": name[:60],
+        "emoji": emoji,
+        "rarity": rarity or "Rare",
+        "universe": universe,
+        "passive": passive,
+        "image": image,
+    }
+    context.user_data["new_spirit"] = ns
+    return await _commit_new_spirit(update, context)
+
+
 # ── Runtime settings stored in Mongo ("gacha_settings" collection) ─────────
 def get_btn_label() -> str:
     try:
@@ -195,6 +430,8 @@ def _list_pool_text() -> str:
     lines.extend([
         "📖 *HOW TO USE* — gacha admin commands:",
         "• `/spiritadd` → guided: asks Universe → Emoji → Name → Rarity → Passives",
+        "• *FAST:* `/spiritadd 🦊 Name | Legendary | 30,25,20` → adds in ONE message",
+        "   (optional 4th part: image URL or Telegram file code; #reuse keeps old art)",
         "• `/spiritadd list` → this pool view",
         "• `/spiritadd label <text>` → rename the players' summon button",
         "\u2022 `/spiritadd remove <Name>` \u2192 same as /spiritremove (shortcut)\n"
@@ -233,6 +470,12 @@ async def spiritadd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Usage: `/spiritadd label <button text>`", parse_mode="Markdown")
         return ConversationHandler.END
+
+    # ── FAST PATH — one-shot add, zero guided steps ────────────────────────
+    # /spiritadd 🦊 Moon Rabbit Spirit | Legendary | 30,25,20 [| url|filecode]
+    fast = await _try_one_shot(update, context)
+    if fast is not None:
+        return fast
 
     context.user_data["new_spirit"] = {}
     await update.message.reply_text(
@@ -429,32 +672,20 @@ async def spiritadd_passive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     msg = update.message
     msg_text = ((msg.text if msg else "") or "").strip()
-    ns = context.user_data.setdefault("new_spirit", {})
     low = msg_text.lower()
+    ns = context.user_data.setdefault("new_spirit", {})
     if low == "cancel":
         await msg.reply_text("🚫 Cancelled.")
         context.user_data.pop("new_spirit", None)
         return ConversationHandler.END
 
-    passive = {}
-    if low not in ("skip", "none", "-", "no", "0", ""):
-        keys = ["atk_pct", "def_pct", "hp_pct", "sta_pct", "spd_pct"]
-        tokens = [t for t in re.split(r"[,\s;/]+", msg_text) if t]
-        vals = []
-        for t in tokens:
-            try:
-                vals.append(float(t))
-            except ValueError:
-                vals.append(None)
-        if any(v is None for v in vals) or not vals:
-            await msg.reply_text(
-                "🤔 I couldn't read those numbers. Send three values like:\n"
-                "`15, 0, 10`  (ATK%, DEF%, HP%)  ·  or send *skip* for none.",
-                parse_mode="Markdown")
-            return ASK_PASSIVE
-        for i, v in enumerate(vals[:5]):
-            if v:
-                passive[keys[i]] = round(v / 100.0, 4)
+    passive, ok = _parse_passive_text(msg_text)
+    if not ok:
+        await msg.reply_text(
+            "🤔 I couldn't read those numbers. Send three values like:\n"
+            "`15, 0, 10`  (ATK%, DEF%, HP%)  ·  or send *skip* for none.",
+            parse_mode="Markdown")
+        return ASK_PASSIVE
 
     ns["passive"] = passive
     # Fallback reply if Markdown ever fails on this message (unbalanced chars).
@@ -498,13 +729,15 @@ async def spiritadd_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ns["move"] = msg_text[:200]
     _img_md = (
         "🖼️ *6/6b* — Spirit artwork (optional).\n"
-        "Send a *photo* now and it will be stored with the spirit (shown when\n"
-        "players summon it), or type an *image URL*, or send *skip* for none."
+        "Send a *photo*, paste an image *URL*, or send a Telegram *file code*\n"
+        "(the bot shows these after every add — reuse them for new spirits!).\n"
+        "Type *skip* for none."
     )
     _img_plain = (
         "🖼️ 6/6b — Spirit artwork (optional).\n"
-        "Send a photo now and it will be stored with the spirit (shown when\n"
-        "players summon it), or type an image URL, or send skip for none."
+        "Send a photo, paste an image URL, or send a Telegram file code\n"
+        "(the bot shows these after every add — reuse them for new spirits!).\n"
+        "Type skip for none."
     )
     try:
         try:
@@ -534,49 +767,11 @@ def _extract_image_ref(msg) -> str:
 
 async def spiritadd_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finalise spirit creation from whatever we collected (image optional)."""
-    ns = context.user_data.get("new_spirit", {})
-    universe = ns.get("universe", "Custom")
-    ok = add_spirit_to_pool({
-        "name": ns.get("name", ""),
-        "emoji": ns.get("emoji", "👻"),
-        "rarity": ns.get("rarity", "Rare"),
-        "universe": universe,
-        "lore": f"Summoned from the {universe} universe.",
-        "passive": ns.get("passive", {}),
-        "move": ns.get("move", ""),
-        "image": ns.get("image", ""),
-    })
-    if ok:
-        # If this name was previously blocked (e.g. a config default the owner
-        # removed earlier), un-block it so the fresh spirit actually appears.
-        try:
-            unblock_spirit(ns.get("name", ""))
-        except Exception:
-            pass
-        _caption = (
-            f"✅ Rift opened! {ns.get('emoji','👻')} *{ns.get('name','')}* "
-            f"({ns.get('rarity','Rare')}) from *{universe}* is now summonable by ALL players!\n\n"
-            f"They appear under the cross-universe button in /summon and fight beside "
-            f"players who equip them."
-            + (f"\n⚔️ Move: {ns.get('move')}" if ns.get("move") else "")
-            + (f"\nPassive: {_fmt_passive(ns.get('passive', {}))}" if ns.get("passive") else "")
-        )
-        try:
-            if ns.get("image"):
-                await update.message.reply_photo(photo=ns["image"], caption=_caption,
-                                                 parse_mode="Markdown")
-            else:
-                raise ValueError("no image")
-        except Exception:
-            await update.message.reply_text(_caption, parse_mode="Markdown")
-    else:
-        await update.message.reply_text("❌ Could not add spirit (empty name?). Try /spiritadd again.")
-    context.user_data.pop("new_spirit", None)
-    return ConversationHandler.END
+    return await _commit_new_spirit(update, context)
 
 
 async def spiritadd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ASK_IMAGE state: accept a photo OR a URL text OR skip."""
+    """ASK_IMAGE state: accept a photo OR a URL text OR a file code OR skip."""
     msg = update.message
     user_id = msg.from_user.id
     if not _admin_gate(user_id):
@@ -587,16 +782,32 @@ async def spiritadd_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await spiritadd_finish(update, context)
     text = (msg.text or "").strip()
     if not text:
-        await msg.reply_text("Send a photo, an image URL, or *skip*.", parse_mode="Markdown")
+        await msg.reply_text("Send a photo, an image URL / file code, or *skip*.",
+                             parse_mode="Markdown")
         return ASK_IMAGE
-    if text.lower() in ("skip", "cancel", "none", "-"):
-        if text.lower() == "cancel":
-            await msg.reply_text("🚫 Cancelled.")
-            context.user_data.pop("new_spirit", None)
-            return ConversationHandler.END
+    if text.lower() in ("cancel",):
+        await msg.reply_text("🚫 Cancelled.")
+        context.user_data.pop("new_spirit", None)
+        return ConversationHandler.END
+    if text.lower() in ("skip", "none", "-"):
         return await spiritadd_finish(update, context)
-    if text.startswith(("http://", "https://")):
-        context.user_data.setdefault("new_spirit", {})["image"] = text
+    # File codes can be very long — Telegram clips message text at 4096 chars.
+    # Reconstruct the full token(s) from entities when available.
+    toks = [text]
+    try:
+        ents = msg.entities or []
+        codes = [e for e in ents if e.type in ("code", "pre", "url")]
+        if codes:
+            last = codes[-1]
+            cand = (text[last.offset:] or "")[:4096]
+            if len(cand) >= 20 and _is_file_code(cand.replace("\n", "").strip()):
+                toks = [cand.replace("\n", "").strip()]
+    except Exception:
+        pass
+    chosen = next((t for t in toks
+                   if t.startswith(("http://", "https://")) or _is_file_code(t)), "")
+    if chosen:
+        context.user_data.setdefault("new_spirit", {})["image"] = chosen
     return await spiritadd_finish(update, context)
 
 
