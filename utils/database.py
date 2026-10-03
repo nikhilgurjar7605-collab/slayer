@@ -1325,11 +1325,24 @@ def add_spirit(user_id, spirit: dict) -> bool:
     return res.upserted_id is not None
 
 
-def set_spirit_equipped(user_id, name: str, equipped: bool):
-    col("spirits").update_one(
+def set_spirit_equipped(user_id, name: str, equipped: bool) -> bool:
+    """Equip/unequip a spirit. Enforces GACHA_MAX_EQUIPPED slots. Returns success."""
+    if equipped:
+        from config import GACHA_MAX_EQUIPPED
+        currently = col("spirits").count_documents(
+            {"user_id": user_id, "equipped": True}
+        )
+        already = col("spirits").count_documents(
+            {"user_id": user_id, "name": name, "equipped": True}
+        )
+        if not already and currently >= GACHA_MAX_EQUIPPED:
+            return False
+    res = col("spirits").update_one(
         {"user_id": user_id, "name": name},
         {"$set": {"equipped": bool(equipped)}},
     )
+    _player_cache.pop(str(user_id), None)  # bonuses are derived from spirits
+    return res.matched_count > 0
 
 
 def get_equipped_spirits(user_id) -> list:

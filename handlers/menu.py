@@ -16,7 +16,13 @@ log = logging.getLogger(__name__)
 
 
 async def _safe_edit(query, text, **kwargs):
-    """Edit a message safely, falling back to reply on failure."""
+    """Edit a message safely, falling back to reply on failure.
+
+    NOTE: we intentionally do NOT call query.answer() here. When this runs
+    for a *foreign* user tapping an old gacha/menu button, bot.py's global
+    callback_router has already answered with the ownership alert; answering
+    again would override it with a spinner and make the buttons look dead.
+    """
     try:
         await query.edit_message_text(text, **kwargs)
     except BadRequest as e:
@@ -61,6 +67,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_kb = ReplyKeyboardMarkup(
         [
             [KeyboardButton("/explore"), KeyboardButton("/Profile")],
+            [KeyboardButton("/summon"), KeyboardButton("/spirits")],
             [KeyboardButton("/Close")],
         ],
         resize_keyboard=True,
