@@ -28,6 +28,8 @@ def _normalize(doc: dict) -> dict:
     s.setdefault("rarity", "Common")
     s.setdefault("universe", "Custom")
     s.setdefault("lore", "")
+    s.setdefault("image", "")
+    s.setdefault("move", "")
     s.setdefault("passive", {})
     return s
 
@@ -81,6 +83,8 @@ def add_spirit_to_pool(spirit: dict) -> bool:
         "rarity": spirit.get("rarity", "Rare"),
         "universe": spirit.get("universe", "Custom"),
         "lore": spirit.get("lore", ""),
+        "image": spirit.get("image", ""),   # Telegram file_id or https URL
+        "move": spirit.get("move", ""),     # signature attack shown in battle logs
         "passive": spirit.get("passive", {}),
     }
     col("gacha_spirits").update_one(
@@ -90,10 +94,97 @@ def add_spirit_to_pool(spirit: dict) -> bool:
     return True
 
 
+def get_spirit_image(name: str) -> str | None:
+    """Return an owner-uploaded image (file_id or URL) for a spirit, if any."""
+    s = get_spirit_by_name(name)
+    if s and s.get("image"):
+        return s["image"]
+    return None
+
+
+# ── Spirit active moves (shown in battle logs) ─────────────────────────────
+_MOVE_FALLBACK = {
+    "Common":    "{e} *{n}* lashes out with a spectral strike!",
+    "Uncommon":  "{e} *{n}* lunges with a phantom fang!",
+    "Rare":      "{e} *{n}* unleashes a piercing spirit blast!",
+    "Epic":      "{e} *{n}* summons a devastating aura storm!",
+    "Legendary": "{e} *{n}* manifests its ultimate technique — reality trembles!",
+}
+
+_MOVE_CHANCE = {"Common": 0.18, "Uncommon": 0.22, "Rare": 0.26,
+                "Epic": 0.32, "Legendary": 0.40}
+
+
+def spirit_move_line(user_id, chance_mult: float = 1.0) -> tuple[str, float] | None:
+    """Roll one equipped spirit's signature move.
+
+    Returns (log_line, damage_fraction_of_player_hit) or None when no spirit
+    acts this turn. Stronger spirits (higher rarity + ATK passive) strike more
+    often and hit harder — this is what makes spirits matter against bosses.
+    """
+    try:
+        docs = get_equipped_spirits(user_id)
+    except Exception:
+        return None
+    if not docs:
+        return None
+    d = random.choice(docs)
+    rarity = d.get("rarity", "Common")
+    base_chance = _MOVE_CHANCE.get(rarity, 0.2)
+    atk_pct = float((d.get("passive") or {}).get("atk_pct", 0) or 0)
+    chance = min(0.55, (base_chance + atk_pct * 0.5) * chance_mult)
+    if random.random() > chance:
+        return None
+    move = d.get("move") or _MOVE_FALLBACK.get(rarity, _MOVE_FALLBACK["Common"])
+    line = move.format(e=d.get("emoji", "👻"), n=d.get("name", "Spirit"))
+    # Damage fraction of the player's own hit: Legendaries hit like a bonus ally.
+    dmg_frac = {"Common": 0.10, "Uncommon": 0.15, "Rare": 0.22,
+                "Epic": 0.32, "Legendary": 0.45}.get(rarity, 0.12) + atk_pct * 0.5
+    return line, round(min(0.75, dmg_frac), 3)
+
+
 def remove_spirit_from_pool(name: str) -> bool:
     res = col("gacha_spirits").delete_one({"name": name})
     invalidate_cache()
     return res.deleted_count > 0
+
+
+# ── Guardian protection: spirits absorb part of incoming boss damage ───────
+_GUARD_PCT = {"Common": 0.03, "Uncommon": 0.05, "Rare": 0.08,
+              "Epic": 0.12, "Legendary": 0.18}
+
+
+def spirit_guard_reduction(user_id) -> tuple[float, str | None]:
+    """Return (damage_reduction_fraction, optional log line).
+
+    Each equipped spirit shaves a slice off incoming enemy damage; strong
+    (Epic/Legendary) spirits can fully guard a blow occasionally. This is the
+    defensive half of why spirits matter against the now very-strong bosses.
+    """
+    try:
+        docs = get_equipped_spirits(user_id)
+    except Exception:
+        return 0.0, None
+    if not docs:
+        return 0.0, None
+    total = 0.0
+    best = None
+    for d in docs:
+        pct = _GUARD_PCT.get(d.get("rarity", "Common"), 0.03)
+        pct += float((d.get("passive") or {}).get("def_pct", 0) or 0) * 0.5
+        total += pct
+        if best is None or pct > best[0]:
+            best = (pct, d)
+    reduction = min(0.45, total)
+    # Chance for a full guard (spirit tanks the hit): scales with rarity
+    if best:
+        guard_chance = min(0.20, best[0] * 0.6)
+        if random.random() < guard_chance:
+            d = best[1]
+            line = (f"{d.get('emoji','👻')} *{d.get('name','Spirit')}* throws itself "
+                    f"in front of the blow — damage nullified!")
+            return 1.0, line
+    return reduction, None
 
 
 def get_universes() -> list:

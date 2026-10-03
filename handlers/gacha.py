@@ -413,7 +413,22 @@ async def gacha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("🎴 Summon Again", callback_data="gacha_back"),
             InlineKeyboardButton("👻 Equip Spirits", callback_data="gacha_my_spirits"),
         ]])
-        await query.edit_message_text(header + footer, reply_markup=kb, parse_mode="Markdown")
+        try:
+            await query.edit_message_text(header + footer, reply_markup=kb, parse_mode="Markdown")
+        except Exception:
+            pass
+        # ── Show owner-uploaded spirit artwork for single reveals ─────────
+        if len(results) == 1 and results[0].get("image"):
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat.id,
+                    photo=results[0]["image"],
+                    caption=header + footer,
+                    reply_markup=kb,
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
         await query.answer()
         # Server-wide hype for legendaries
         for s in results:

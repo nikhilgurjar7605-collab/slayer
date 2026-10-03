@@ -1753,30 +1753,30 @@ GACHA_RARITY_EMOJI = {
 # (all fractional; xp/yen/shard_bonus only apply while EQUIPPED in battle)
 GACHA_SPIRITS = [
     # ⚪ Common (60%)
-    {"name": "Tanuki Sprite",     "emoji": "🦝", "rarity": "Common",    "passive": {"atk_pct": 0.02}},
-    {"name": "Ember Wisp",        "emoji": "🔥", "rarity": "Common",    "passive": {"atk_pct": 0.03}},
-    {"name": "Pond Koi",          "emoji": "🐟", "rarity": "Common",    "passive": {"hp_pct": 0.03}},
-    {"name": "Paper Lantern Fox", "emoji": "🏮", "rarity": "Common",    "passive": {"sta_pct": 0.04}},
-    {"name": "Bamboo Sparrow",    "emoji": "🐦", "rarity": "Common",    "passive": {"spd_pct": 0.03}},
+    {"name": "Tanuki Sprite",     "emoji": "🦝", "rarity": "Common",    "passive": {"atk_pct": 0.05}},
+    {"name": "Ember Wisp",        "emoji": "🔥", "rarity": "Common",    "passive": {"atk_pct": 0.06}},
+    {"name": "Pond Koi",          "emoji": "🐟", "rarity": "Common",    "passive": {"hp_pct": 0.07}},
+    {"name": "Paper Lantern Fox", "emoji": "🏮", "rarity": "Common",    "passive": {"sta_pct": 0.08}},
+    {"name": "Bamboo Sparrow",    "emoji": "🐦", "rarity": "Common",    "passive": {"spd_pct": 0.06}},
     # 🟢 Uncommon (25%)
-    {"name": "Kitsune Cub",       "emoji": "🦊", "rarity": "Uncommon",  "passive": {"atk_pct": 0.04, "sta_pct": 0.04}},
-    {"name": "Mist Heron",        "emoji": "🕊️", "rarity": "Uncommon",  "passive": {"def_pct": 0.05}},
-    {"name": "River Turtle",      "emoji": "🐢", "rarity": "Uncommon",  "passive": {"hp_pct": 0.06}},
-    {"name": "Storm Firefly",     "emoji": "✨", "rarity": "Uncommon",  "passive": {"atk_pct": 0.06}},
+    {"name": "Kitsune Cub",       "emoji": "🦊", "rarity": "Uncommon",  "passive": {"atk_pct": 0.10, "sta_pct": 0.08}},
+    {"name": "Mist Heron",        "emoji": "🕊️", "rarity": "Uncommon",  "passive": {"def_pct": 0.12}},
+    {"name": "River Turtle",      "emoji": "🐢", "rarity": "Uncommon",  "passive": {"hp_pct": 0.14}},
+    {"name": "Storm Firefly",     "emoji": "✨", "rarity": "Uncommon",  "passive": {"atk_pct": 0.13}},
     # 🔵 Rare (10%)
-    {"name": "Young Dragon",      "emoji": "🐉", "rarity": "Rare",      "passive": {"atk_pct": 0.07, "def_pct": 0.04}},
-    {"name": "Snow Serpent",      "emoji": "❄️", "rarity": "Rare",      "passive": {"def_pct": 0.06, "hp_pct": 0.05}},
-    {"name": "Inari Messenger",   "emoji": "⛩️", "rarity": "Rare",      "passive": {"xp_pct": 0.10}},
-    {"name": "Moonlit Wolf",      "emoji": "🐺", "rarity": "Rare",      "passive": {"atk_pct": 0.09}},
+    {"name": "Young Dragon",      "emoji": "🐉", "rarity": "Rare",      "passive": {"atk_pct": 0.18, "def_pct": 0.10}},
+    {"name": "Snow Serpent",      "emoji": "❄️", "rarity": "Rare",      "passive": {"def_pct": 0.15, "hp_pct": 0.12}},
+    {"name": "Inari Messenger",   "emoji": "⛩️", "rarity": "Rare",      "passive": {"xp_pct": 0.15, "atk_pct": 0.12}},
+    {"name": "Moonlit Wolf",      "emoji": "🐺", "rarity": "Rare",      "passive": {"atk_pct": 0.22}},
     # 🟣 Epic (4%)
-    {"name": "Ronin Wraith",      "emoji": "👻", "rarity": "Epic",      "passive": {"atk_pct": 0.12, "sta_pct": 0.06}},
-    {"name": "Thunder Crow",      "emoji": "⚡", "rarity": "Epic",      "passive": {"atk_pct": 0.10, "spd_pct": 0.08}},
-    {"name": "Jade Guardian",     "emoji": "🗿", "rarity": "Epic",      "passive": {"def_pct": 0.12, "hp_pct": 0.08}},
-    {"name": "Shadow Panther",    "emoji": "🐆", "rarity": "Epic",      "passive": {"atk_pct": 0.14}},
+    {"name": "Ronin Wraith",      "emoji": "👻", "rarity": "Epic",      "passive": {"atk_pct": 0.30, "sta_pct": 0.12}},
+    {"name": "Thunder Crow",      "emoji": "⚡", "rarity": "Epic",      "passive": {"atk_pct": 0.26, "spd_pct": 0.15}},
+    {"name": "Jade Guardian",     "emoji": "🗿", "rarity": "Epic",      "passive": {"def_pct": 0.30, "hp_pct": 0.20}},
+    {"name": "Shadow Panther",    "emoji": "🐆", "rarity": "Epic",      "passive": {"atk_pct": 0.35}},
     # 🟡 Legendary (1%)
-    {"name": "Solar Phoenix",     "emoji": "🌞", "rarity": "Legendary", "passive": {"atk_pct": 0.15, "hp_pct": 0.10, "xp_pct": 0.15}},
-    {"name": "Nine-Tailed Kitsune","emoji": "🦊", "rarity": "Legendary", "passive": {"atk_pct": 0.12, "def_pct": 0.12, "yen_pct": 0.20}},
-    {"name": "Azure Dragon King", "emoji": "🐲", "rarity": "Legendary", "passive": {"atk_pct": 0.18, "sta_pct": 0.10}},
+    {"name": "Solar Phoenix",     "emoji": "🌞", "rarity": "Legendary", "passive": {"atk_pct": 0.45, "hp_pct": 0.25, "xp_pct": 0.20}},
+    {"name": "Nine-Tailed Kitsune","emoji": "🦊", "rarity": "Legendary", "passive": {"atk_pct": 0.40, "def_pct": 0.35, "yen_pct": 0.25}},
+    {"name": "Azure Dragon King", "emoji": "🐲", "rarity": "Legendary", "passive": {"atk_pct": 0.55, "sta_pct": 0.20}},
 ]
 
 # Give every default spirit its home universe (used by the battle UI & shrine).
