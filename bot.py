@@ -306,7 +306,9 @@ async def on_startup(app: Application):
     try:
         from telegram import BotCommand
         cmds = [
-            BotCommand("spiritadd", "Owner: add a spirit from any anime universe"),
+            BotCommand("spiritadd", "Admin: add a spirit from any anime universe"),
+            BotCommand("spiritremove", "Admin: remove/block a spirit from gacha"),
+            BotCommand("spiritunblock", "Admin: restore a removed spirit"),
             BotCommand("summon", "Summon spirits with shards"),
             BotCommand("spirits", "View & equip your spirits"),
             BotCommand("shards", "View your spirit shards"),

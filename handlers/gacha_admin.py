@@ -13,7 +13,10 @@ Quick sub-forms of the same command:
   /spiritadd list                   → show every universe & spirit in the pool
   /spiritadd label <text>           → rename the players' cross-universe
                                        summon button (owner decides the text)
-  /spiritadd remove <Name>          → delete a runtime-added spirit
+  /spiritadd remove <Name>          → remove ANY spirit from gacha
+        (shortcut for /spiritremove; config defaults get blocked)
+  /spiritremove <Name>              → remove/block any spirit from the pool
+  /spiritunblock <Name>             → restore a removed/blocked spirit
 
 The added spirits are stored in the "gacha_spirits" Mongo collection via
 utils.spirits, persist across restarts, and instantly become summonable by
@@ -183,7 +186,8 @@ def _list_pool_text() -> str:
         "• `/spiritadd` → guided: asks Universe → Emoji → Name → Rarity → Passives",
         "• `/spiritadd list` → this pool view",
         "• `/spiritadd label <text>` → rename the players' summon button",
-        "• `/spiritremove <Name>` → remove ANY spirit from gacha",
+        "\u2022 `/spiritadd remove <Name>` \u2192 same as /spiritremove (shortcut)\n"
+        "\u2022 `/spiritremove <Name>` \u2192 remove ANY spirit from gacha",
         "   (runtime spirits are deleted; config defaults get blocked)",
         "• `/spiritunblock <Name>` → put a removed/blocked spirit back in the pool",
     ])
@@ -592,7 +596,9 @@ def _fmt_passive(passive: dict) -> str:
 
 
 async def spiritadd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚫 Spirit creation cancelled.")
+    context.user_data.pop("new_spirit", None)   # drop half-collected data
+    if update.effective_message:
+        await update.effective_message.reply_text("🚫 Spirit creation cancelled.")
     return ConversationHandler.END
 
 
@@ -605,6 +611,20 @@ def _on_conv_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.message.reply_text("⌛ Spirit creation timed out. Start again with /spiritadd")
     except Exception:
         log.debug("conv timeout notice failed", exc_info=True)
+
+
+async def _fallback_spiritremove(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/spiritremove typed mid-conversation — run it and end the flow cleanly."""
+    await spiritadd_cancel(update, context)
+    await spiritremove_cmd(update, context)
+    return ConversationHandler.END
+
+
+async def _fallback_spiritunblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/spiritunblock typed mid-conversation — run it and end the flow cleanly."""
+    await spiritadd_cancel(update, context)
+    await spiritunblock_cmd(update, context)
+    return ConversationHandler.END
 
 
 def register_spirit_admin(app):
@@ -625,10 +645,12 @@ def register_spirit_admin(app):
         fallbacks=[
             CommandHandler('cancel', spiritadd_cancel),
             CommandHandler('spiritadd', spiritadd_start),
+            # Mid-flow admin commands: run them, end the conversation cleanly.
+            CommandHandler('spiritremove', _fallback_spiritremove),
+            CommandHandler('spiritunblock', _fallback_spiritunblock),
         ],
         per_chat=False, per_user=True,
         conversation_timeout=900,          # 15 min — enough to answer every step
-        additional_args={"keep_user_data": True},
     )
     # Priority group so the guided flow is never swallowed by global handlers.
     app.add_handler(conv, group=1)
