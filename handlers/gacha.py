@@ -104,6 +104,40 @@ def roll_boss_shards(enemy_name: str = "") -> int:
     return random.randint(2, 4)
 
 
+# ── Battle flavour: equipped spirits act like companions ───────────────────
+_SPIRIT_SHOUTS = {
+    "Common":    ["whispers encouragement", "glows faintly beside you"],
+    "Uncommon":  ["cries out with you", "flares at your side"],
+    "Rare":      ["roars alongside your strike", "surges around your blade"],
+    "Epic":      ["unleashes a spectral howl", "blazes beside you in battle"],
+    "Legendary": ["manifests in a burst of otherworldly light",
+                  "shatters the air with a divine war-cry"],
+}
+
+
+def spirit_battle_lines(user_id: int, action: str = "attack") -> list:
+    """Return 0..N short flavour lines showing equipped spirits fighting with
+    the player. Pure display helper — never raises (safe to call anywhere)."""
+    try:
+        equipped = get_equipped_spirits(user_id)
+    except Exception:
+        return []
+    lines = []
+    for s in equipped[:3]:
+        shouts = _SPIRIT_SHOUTS.get(s.get("rarity", "Common"), _SPIRIT_SHOUTS["Common"])
+        shout = random.choice(shouts)
+        em = s.get("emoji", "👻")
+        name = s.get("name", "Spirit")
+        uni = s.get("universe", "Demon Slayer")
+        if action == "attack":
+            lines.append(f"{em} *{name}* _(from {uni})_ {shout}!")
+        elif action == "defend":
+            lines.append(f"{em} *{name}* shields you with a spectral barrier!")
+        else:  # victory
+            lines.append(f"{em} *{name}* rejoices at your victory!")
+    return lines
+
+
 # ── Formatting helpers ─────────────────────────────────────────────────────
 def passive_text(spirit: dict) -> str:
     labels = {
@@ -121,7 +155,34 @@ def passive_text(spirit: dict) -> str:
 def result_line(idx: int, spirit: dict, is_new: bool) -> str:
     r = spirit["rarity"]
     tag = " 🆕" if is_new else ""
-    return f"{idx:>2}. {GACHA_RARITY_EMOJI[r]} {spirit['emoji']} *{spirit['name']}* _({r})_{tag}"
+    uni = f"  ·  _{spirit.get('universe', 'Demon Slayer')}_" if spirit.get("universe") else ""
+    return f"{idx:>2}. {GACHA_RARITY_EMOJI[r]} {spirit['emoji']} *{spirit['name']}* _({r})_{tag}{uni}"
+
+
+def spirit_card(spirit: dict, is_new: bool) -> str:
+    """Pretty single-spirit reveal card (used for 1x pulls)."""
+    r = spirit["rarity"]
+    em = GACHA_RARITY_EMOJI.get(r, "✨")
+    banner = {"Legendary": "🌟🔥🌟", "Epic": "💜✨💜"}.get(r, "✨")
+    lines = [
+        f"{banner} *SUMMON RESULT* {banner}",
+        "",
+        f"{em} {spirit['emoji']} *{spirit['name']}*",
+        f"🎴 Rarity: *{r}*   ·   🌌 Universe: _{spirit.get('universe', 'Demon Slayer')}_",
+        f"📜 Passive: {passive_text(spirit)}",
+    ]
+    if spirit.get("lore"):
+        lines.append(f"💬 _\"{spirit['lore']}\"_")
+    if is_new:
+        lines.append("🆕 *New spirit added to your shrine!*")
+    else:
+        lines.append("🔁 Duplicate — count increased (tap /spirits to see it).")
+    lines += [
+        "",
+        "_Your equipped spirits fight beside you in battle ⚔️_",
+        f"{banner}",
+    ]
+    return "\n".join(lines)
 
 
 def build_scroll_keyboard(token: str) -> InlineKeyboardMarkup:
@@ -258,14 +319,14 @@ async def gacha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if len(results) == 1:
             s = results[0]
-            best_line = result_line(1, s, True)
-            header = f"✨ *SUMMON RESULT* ✨\n\n{best_line}\n\n📜 Passive: {passive_text(s)}"
+            header = spirit_card(s, payload.get("new_count", 0) > 0)
         else:
             lines = "\n".join(result_line(i, s, False) for i, s in enumerate(results, 1))
             best = max(results, key=lambda x: RARITY_ORDER.index(x["rarity"]))
             header = (
                 f"✨ *TENFOLD SUMMON RESULTS* ✨\n\n{lines}\n\n"
-                f"🏆 Best pull: {GACHA_RARITY_EMOJI[best['rarity']]} *{best['name']}* — {passive_text(best)}\n"
+                f"🏆 Best pull: {GACHA_RARITY_EMOJI[best['rarity']]} {best['emoji']} *{best['name']}* "
+                f"_(from {best.get('universe', 'Demon Slayer')})_ — {passive_text(best)}\n"
                 f"🆕 New spirits: *{payload['new_count']}*"
             )
         footer = (
@@ -359,22 +420,36 @@ async def _render_spirits(query):
         return
     owned.sort(key=lambda d: (RARITY_ORDER.index(d.get("rarity", "Common")), d.get("name", "")))
     equipped = [d for d in owned if d.get("equipped")]
-    lines = []
+    player = get_player(user_id)
+    shards = (player.get("shards", 0) or 0) if player else 0
+
+    # Group by anime universe for a clean, readable shrine
+    universes: dict[str, list] = {}
     for d in owned:
-        slot = "✅" if d.get("equipped") else "▫️"
-        dup = f" ×{d.get('count', 1)}" if d.get("count", 1) > 1 else ""
-        lines.append(f"{slot} {GACHA_RARITY_EMOJI.get(d.get('rarity'), '')} {d.get('emoji')} *{d['name']}*{dup}")
+        universes.setdefault(d.get("universe") or "Demon Slayer", []).append(d)
+
+    lines = []
+    for uni, spirits in universes.items():
+        lines.append(f"🌌 *{uni}*")
+        for d in spirits:
+            slot = "✅" if d.get("equipped") else "▫️"
+            dup = f" ×{d.get('count', 1)}" if d.get("count", 1) > 1 else ""
+            rar_em = GACHA_RARITY_EMOJI.get(d.get("rarity"), "")
+            lines.append(f"  {slot} {rar_em} {d.get('emoji')} *{d['name']}*{dup}")
+        lines.append("")
     bonus_parts = []
     for d in equipped:
         p = passive_text(d)
         if p != "—":
             bonus_parts.append(f"{d.get('emoji')} {p}")
-    total_battle = "; ".join(bonus_parts) if bonus_parts else "None equipped"
+    total_battle = "\n     ".join(bonus_parts) if bonus_parts else "None equipped — your blades strike alone!"
     text = (
-        f"👻 *SPIRIT COLLECTION* — Equipped: {len(equipped)}/{GACHA_MAX_EQUIPPED}\n"
+        f"👻 *SPIRIT SHRINE COLLECTION*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚔️ Equipped: *{len(equipped)}/{GACHA_MAX_EQUIPPED}*   ·   🔮 Shards: *{shards}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n" + "\n".join(lines) +
-        f"\n\n⚔️ *Battle bonuses active:* {total_battle}\n"
-        f"_Tap a spirit below to equip/unequip it._"
+        f"\n⚔️ *Battle bonuses active:*\n     {total_battle}\n\n"
+        f"_Spirits fight beside you — tap one below to equip/unequip it._"
     )
     kb_rows = []
     for d in owned:

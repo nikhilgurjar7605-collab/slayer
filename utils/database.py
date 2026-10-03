@@ -25,6 +25,7 @@ _db     = None
 # LRU cache for frequently accessed data to reduce DB hits
 _stock_price_cache = {}
 _player_cache = {}
+_spirit_bonus_cache = {}   # user_id -> (bonuses dict, timestamp) — hot path for combat
 _CACHE_TTL_SECONDS = 30  # Cache expires after 30 seconds
 
 
@@ -445,7 +446,19 @@ def get_all_players():
 
 # ── Inventory ─────────────────────────────────────────────────────────────
 
+_inventory_cache = {}   # user_id -> (merged list, timestamp) — speeds up /inventory spam
+_INV_CACHE_TTL = 10     # seconds; every add/remove below invalidates instantly
+
+
+def _invalidate_inventory_cache(user_id):
+    _inventory_cache.pop(user_id, None)
+
+
 def get_inventory(user_id):
+    import time
+    cached = _inventory_cache.get(user_id)
+    if cached and time.time() - cached[1] < _INV_CACHE_TTL:
+        return [dict(i) for i in cached[0]]
     merged = {}
     for d in col("inventory").find({"user_id": user_id}):
         item_name = canonical_item_name(d.get("item_name", ""))
@@ -459,7 +472,9 @@ def get_inventory(user_id):
                 "quantity": 0,
             }
         merged[key]["quantity"] += int(d.get("quantity", 0) or 0)
-    return [v for v in merged.values() if v["quantity"] > 0]
+    result = [v for v in merged.values() if v["quantity"] > 0]
+    _inventory_cache[user_id] = (result, time.time())
+    return [dict(i) for i in result]
 
 
 def add_item(user_id, item_name, item_type, quantity=1):
@@ -472,6 +487,7 @@ def add_item(user_id, item_name, item_type, quantity=1):
          "$setOnInsert": {"user_id": user_id}},
         upsert=True
     )
+    _invalidate_inventory_cache(user_id)
 
 
 def remove_item(user_id, item_name, quantity=1):
@@ -489,6 +505,7 @@ def remove_item(user_id, item_name, quantity=1):
             {"_id": doc["_id"]},
             {"$inc": {"quantity": -quantity}}
         )
+    _invalidate_inventory_cache(user_id)
 
 
 
@@ -1341,7 +1358,7 @@ def add_spirit(user_id, spirit: dict) -> bool:
             {"user_id": user_id, "name": spirit["name"]},
             {"$set": meta},
         )
-    _player_cache.pop(str(user_id), None)  # derived bonuses may have changed
+    _invalidate_spirit_caches(user_id)  # derived bonuses may have changed
     return res.upserted_id is not None
 
 
@@ -1361,7 +1378,7 @@ def set_spirit_equipped(user_id, name: str, equipped: bool) -> bool:
         {"user_id": user_id, "name": name},
         {"$set": {"equipped": bool(equipped)}},
     )
-    _player_cache.pop(str(user_id), None)  # bonuses are derived from spirits
+    _invalidate_spirit_caches(user_id)  # bonuses are derived from spirits
     return res.matched_count > 0
 
 
@@ -1371,12 +1388,26 @@ def get_equipped_spirits(user_id) -> list:
     ))
 
 
+def _invalidate_spirit_caches(user_id):
+    """Drop derived spirit caches for a player (call after any spirit mutation)."""
+    _player_cache.pop(str(user_id), None)
+    _spirit_bonus_cache.pop(user_id, None)
+
+
 def get_spirit_bonuses(user_id) -> dict:
     """Combined fractional passives from all EQUIPPED spirits.
     Keys: atk_pct, def_pct, hp_pct, sta_pct, spd_pct, xp_pct, yen_pct, shard_bonus
+
+    Cached in-memory (TTL = _CACHE_TTL_SECONDS) because combat calls this on
+    every attack/defend turn — avoids a DB round-trip per turn for fast gameplay.
     """
+    import time
+    cached = _spirit_bonus_cache.get(user_id)
+    if cached and time.time() - cached[1] < _CACHE_TTL_SECONDS:
+        return cached[0]
     total = {}
     for s in get_equipped_spirits(user_id):
         for k, v in (s.get("passive") or {}).items():
             total[k] = total.get(k, 0) + float(v)
+    _spirit_bonus_cache[user_id] = (total, time.time())
     return total
