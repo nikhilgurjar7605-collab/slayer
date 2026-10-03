@@ -447,7 +447,7 @@ def register_spirit_admin(app):
             ASK_RARITY:   [CallbackQueryHandler(spiritadd_rarity_cb, pattern=r'^ospi_rar_')],
             ASK_PASSIVE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, spiritadd_passive)],
             ASK_MOVE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, spiritadd_move)],
-            ASK_IMAGE:    [MessageHandler((filters.PHOTO | filters.STICKER | filters.Document.ALL)
+            ASK_IMAGE:    [MessageHandler((filters.PHOTO | filters.Sticker.ALL | filters.Document.ALL)
                                           | (filters.TEXT & ~filters.COMMAND), spiritadd_image)],
         },
         fallbacks=[

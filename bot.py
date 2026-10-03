@@ -655,12 +655,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
     elif data.startswith('pt_'):                 await pt_callback(update, context)
     elif data.startswith('ownerhelp_'):          await ownerhelp_callback(update, context)
-    elif data.startswith('ospi_'):
-        # Owner spirit rift panel (/spiritsadmin). The ConversationHandler for
-        # the /spiritadd rarity step is registered in an earlier group and
-        # takes priority when that conversation is active.
-        from handlers.gacha_admin import spiritsadmin_callback
-        await spiritsadmin_callback(update, context)
+    elif data.startswith('ospi_') or data.startswith('gacha_') or data.startswith('spirit_equip_'):
+        # Should never be reached — these are matched by dedicated
+        # CallbackQueryHandlers registered before this router. Kept as a safe
+        # fallback so old on-screen buttons still work if handler order ever
+        # changes again.
+        if data.startswith('ospi_'):
+            from handlers.gacha_admin import spiritsadmin_callback
+            await spiritsadmin_callback(update, context)
+        else:
+            await gacha_callback(update, context)
     else:
         await query.answer("Unknown action.", show_alert=True)
 
@@ -1022,10 +1026,8 @@ def main():
         if handler:
             await handler(update, context)
 
-    app.add_handler(MessageHandler(
-        filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
-        reply_kb_handler
-    ), group=1)
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
+                                   reply_kb_handler), group=2)
 
     async def doc_restore_handler(update, context):
         """Handle JSON document uploads — trigger restore if caption says /restore or auto."""
@@ -1038,7 +1040,7 @@ def main():
         filters.Document.MimeType('application/json') & filters.ChatType.PRIVATE,
         doc_restore_handler
     ))
-    app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id))
+    app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Sticker.ALL) & filters.ChatType.PRIVATE, get_media_file_id), group=2)
     # ── group=1: these must never be swallowed by the ConvHandler fallback ──
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'), group=1)
     app.add_handler(CallbackQueryHandler(gifstore_page_callback, pattern=r'^gifstore_page_\d+$'), group=1)
@@ -1078,8 +1080,17 @@ def main():
     # ── Owner spirit rift admin — THE ONE command /spiritadd (guided flow).
     #    MUST be registered here; without this call the owner commands do nothing.
     register_spirit_admin(app)
+    # ── IMPORTANT: gacha / spirit callbacks MUST be registered BEFORE the
+    #    catch-all callback_router (group 0 handlers run in registration
+    #    order). Previously these ran after the router, so the router's
+    #    ownership check swallowed every gacha_/ospi_ button with
+    #    "These buttons are not yours." and nothing worked.
+    app.add_handler(CallbackQueryHandler(gacha_callback, pattern=r'^(gacha_|spirit_equip_)'))
+    # Owner spirit-rift panel callbacks (legacy panels + anything the guided
+    # /spiritadd ConversationHandler didn't consume in its rarity step).
+    from handlers.gacha_admin import spiritsadmin_callback as _spiritsadmin_cb
+    app.add_handler(CallbackQueryHandler(_spiritsadmin_cb, pattern=r'^ospi_'))
     app.add_handler(CallbackQueryHandler(callback_router))
-    app.add_handler(CallbackQueryHandler(gacha_callback, pattern=r'^(gacha_|spirit_equip_)'), group=1)
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
 
