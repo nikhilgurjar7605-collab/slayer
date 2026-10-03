@@ -1794,8 +1794,11 @@ GACHA_UNIVERSES = [
 ]
 
 # Label shown on the cross-universe button inside the summon shrine.
-# The owner can rename it with:  /ownergacha label <your own text here>
+# The owner can rename it live from the panel:  /spiritsadmin → 🏷️ Set Button Label
 GACHA_CROSS_BTN_LABEL = "🌌 Spirits of Other Universes"
+
+# The game's home universe — spirits from anything else count as "cross-universe".
+GACHA_HOME_UNIVERSE = "Demon Slayer"
 
 # Battle flavour lines — equipped spirits whisper/act during combat so battles
 # feel alive. {n} = spirit name, {e} = spirit emoji.

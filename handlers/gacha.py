@@ -34,6 +34,7 @@ from utils.database import (
     get_spirit_collection, set_spirit_equipped, get_equipped_spirits,
 )
 from utils.guards import dm_only
+from utils.spirits import get_all_spirits, cross_universe_spirits
 from config import (
     GACHA_COST_SINGLE, GACHA_COST_TEN, GACHA_FREE_STARTER_SHARDS,
     GACHA_PITY_EPIC, GACHA_PITY_LEGEND, GACHA_MAX_EQUIPPED,
@@ -41,10 +42,18 @@ from config import (
 )
 
 RARITY_ORDER = ["Common", "Uncommon", "Rare", "Epic", "Legendary"]
-_SPIRIT_BY_NAME = {s["name"]: s for s in GACHA_SPIRITS}
 
 # Reveal cache: token -> {"user_id": int, "results": [spirit dict, ...], "pity_line": str}
 _pending_reveals = {}
+
+
+def _spirit_by_name(name: str) -> dict | None:
+    """Lookup across config defaults AND owner-added runtime spirits."""
+    try:
+        from utils.spirits import get_spirit_by_name
+        return get_spirit_by_name(name)
+    except Exception:
+        return next((s for s in GACHA_SPIRITS if s["name"] == name), None)
 
 
 # ── Core pull logic (pure, testable) ───────────────────────────────────────
@@ -61,14 +70,17 @@ def roll_rarity(pity_after: int, rng=random) -> str:
     return rng.choices(rarities, weights=weights)[0]
 
 
-def pick_spirit(rarity: str, rng=random) -> dict:
-    pool = [s for s in GACHA_SPIRITS if s["rarity"] == rarity] or GACHA_SPIRITS
-    return rng.choice(pool)
+def pick_spirit(rarity: str, rng=random, pool_override=None) -> dict:
+    pool = pool_override if pool_override is not None else get_all_spirits()
+    same_r = [s for s in pool if s.get("rarity") == rarity]
+    return rng.choice(same_r or pool or GACHA_SPIRITS)
 
 
-def perform_pulls(count: int, pity: int, rng=random) -> tuple[list, int]:
+def perform_pulls(count: int, pity: int, rng=random, cross_pool=None) -> tuple[list, int]:
     """Roll `count` spirits starting from current pity counter.
-    Returns (list of spirit dicts, new pity counter)."""
+    Returns (list of spirit dicts, new pity counter).
+    cross_pool: when set (cross-universe summon), only spirits from that pool
+    are rolled; the rarity weights still apply."""
     results = []
     cur_pity = pity
     for _ in range(count):
@@ -76,7 +88,12 @@ def perform_pulls(count: int, pity: int, rng=random) -> tuple[list, int]:
         rarity = roll_rarity(cur_pity, rng=rng)
         if rarity == "Legendary":
             cur_pity = 0  # reset legendary pity on hit
-        results.append(pick_spirit(rarity, rng=rng))
+        if cross_pool is not None:
+            same_r = [s for s in cross_pool if s.get("rarity") == rarity]
+            fallback = [s for s in cross_pool if s.get("rarity") in ("Rare", "Epic")] or cross_pool
+            results.append(rng.choice(same_r or fallback))
+        else:
+            results.append(pick_spirit(rarity, rng=rng))
     return results, cur_pity
 
 
@@ -196,11 +213,18 @@ def build_main_keyboard(shards: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(f"🎴 1x Pull ({GACHA_COST_SINGLE} 🔮)", callback_data="gacha_pull_1"),
         InlineKeyboardButton(f"🎴 10x Pull ({GACHA_COST_TEN} 🔮)", callback_data="gacha_pull_10"),
     ]
-    return InlineKeyboardMarkup([
-        row,
-        [InlineKeyboardButton("📊 Drop Rates", callback_data="gacha_rates"),
-         InlineKeyboardButton("👻 My Spirits", callback_data="gacha_my_spirits")],
-    ])
+    rows = [row]
+    # Cross-universe rift button — label chosen by the owner (/spiritsadmin).
+    try:
+        from handlers.gacha_admin import get_btn_label
+        label = get_btn_label()
+    except Exception:
+        from config import GACHA_CROSS_BTN_LABEL
+        label = GACHA_CROSS_BTN_LABEL
+    rows.append([InlineKeyboardButton(label, callback_data="gacha_cross_toggle")])
+    rows.append([InlineKeyboardButton("📊 Drop Rates", callback_data="gacha_rates"),
+                 InlineKeyboardButton("👻 My Spirits", callback_data="gacha_my_spirits")])
+    return InlineKeyboardMarkup(rows)
 
 
 # ── /summon command ────────────────────────────────────────────────────────
@@ -248,11 +272,22 @@ async def summon(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Pull callbacks ─────────────────────────────────────────────────────────
-async def _do_pull(query, user_id: int, count: int):
+async def _do_pull(query, user_id: int, count: int, cross: bool = False):
     player = get_player(user_id)
     if not player:
         await query.answer("Character not found. Use /start.", show_alert=True)
         return
+
+    cross_pool = None
+    if cross:
+        cross_pool = cross_universe_spirits()
+        if not cross_pool:
+            await query.answer(
+                "🌌 The rift to other universes is still sealed!\n"
+                "No spirits from other anime are available yet.",
+                show_alert=True,
+            )
+            return
 
     cost = GACHA_COST_SINGLE if count == 1 else GACHA_COST_TEN
     shards = player.get("shards", 0) or 0
@@ -269,7 +304,7 @@ async def _do_pull(query, user_id: int, count: int):
         return
 
     pity = player.get("gacha_pity", 0) or 0
-    results, new_pity = perform_pulls(count, pity)
+    results, new_pity = perform_pulls(count, pity, cross_pool=cross_pool)
 
     # Persist results
     new_count = 0
@@ -284,10 +319,15 @@ async def _do_pull(query, user_id: int, count: int):
     _pending_reveals[token] = {"user_id": user_id, "results": results, "new_count": new_count}
 
     remaining = get_player(user_id).get("shards", 0) or 0
+    theme = "🌌 INTER-DIMENSIONAL RIFT SCROLL..." if cross else "🎴 *SEALED BLESSING SCROLL...*"
+    if cross:
+        flavour = "The rift between worlds tears open as foreign spirits answer your call..."
+    else:
+        flavour = f"The shrine maiden seals your {'scroll' if count == 1 else 'ten-fold blessing'}..."
     sealed = (
-        f"🎴 *SEALED BLESSING SCROLL...*\n\n"
+        f"{theme}\n\n"
         f"{'🕯️' * min(count, 10)}\n\n"
-        f"The shrine maiden seals your {'scroll' if count == 1 else 'ten-fold blessing'}...\n"
+        f"{flavour}\n"
         f"Cost: *{cost} 🔮*  ·  Remaining: *{remaining} 🔮*\n\n"
         f"_Tap below to reveal your spirits!_"
     )
@@ -305,6 +345,42 @@ async def gacha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data in ("gacha_pull_1", "gacha_pull_10"):
         await _do_pull(query, user_id, 1 if data.endswith("1") else 10)
+        return
+
+    if data == "gacha_cross_toggle":
+        try:
+            from handlers.gacha_admin import get_btn_label
+            label = get_btn_label()
+        except Exception:
+            from config import GACHA_CROSS_BTN_LABEL
+            label = GACHA_CROSS_BTN_LABEL
+        cross_pool = cross_universe_spirits()
+        universes = sorted({s.get("universe", "?") for s in cross_pool}) or ["— none yet —"]
+        text = (
+            f"🌌 *{label}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Tear open a rift beyond the Demon Slayer world and summon spirits\n"
+            f"from *other anime universes* to fight beside you!\n\n"
+            f"✨ Spirits in the rift: *{len(cross_pool)}*\n"
+            f"🌠 Universes open: _{', '.join(universes[:8])}_\n\n"
+            + (f"_The rift is still sealed — no foreign spirits available yet._"
+               if not cross_pool else
+               f"Same shard costs as normal summons. Pity counters are shared.")
+        )
+        if cross_pool:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"🌀 1x Rift Summon ({GACHA_COST_SINGLE} 🔮)", callback_data="gacha_cross_1"),
+                 InlineKeyboardButton(f"🌀 10x Rift Summon ({GACHA_COST_TEN} 🔮)", callback_data="gacha_cross_10")],
+                [InlineKeyboardButton("⬅️ Back to Shrine", callback_data="gacha_back")],
+            ])
+        else:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back to Shrine", callback_data="gacha_back")]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        await query.answer()
+        return
+
+    if data in ("gacha_cross_1", "gacha_cross_10"):
+        await _do_pull(query, user_id, 1 if data.endswith("1") else 10, cross=True)
         return
 
     if data.startswith("gacha_reveal_"):
@@ -361,14 +437,22 @@ async def gacha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "gacha_rates":
         rows = []
+        roster = get_all_spirits()
         for r in RARITY_ORDER:
-            n = sum(1 for s in GACHA_SPIRITS if s["rarity"] == r)
+            n = sum(1 for s in roster if s.get("rarity") == r)
             rows.append(f"{GACHA_RARITY_EMOJI[r]} *{r:9}* — {GACHA_RARITY_WEIGHTS[r]}%  _({n} spirits)_")
+        try:
+            from handlers.gacha_admin import get_btn_label
+            cross_label = get_btn_label()
+        except Exception:
+            cross_label = "🌌 Spirits of Other Universes"
         await query.edit_message_text(
             "📊 *SUMMON DROP RATES*\n━━━━━━━━━━━━━━━━━━\n"
             + "\n".join(rows)
             + f"\n\n🛡️ *Guarantees:* Epic every {GACHA_PITY_EPIC} pulls · "
               f"Legendary every {GACHA_PITY_LEGEND} pulls (counter resets on hit)"
+            + f"\n\n🌌 *{cross_label}:* tap the rift button in /summon to summon spirits "
+              f"from other anime universes (same rates, foreign pool only)."
             + "\n\n_Fair play: shards cannot be bought with ¥ or traded._",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="gacha_back")]]),
             parse_mode="Markdown",
@@ -383,7 +467,7 @@ async def gacha_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("spirit_equip_"):
         name = data[len("spirit_equip_"):]
-        spirit = _SPIRIT_BY_NAME.get(name)
+        spirit = _spirit_by_name(name)
         if not spirit:
             await query.answer("Unknown spirit.", show_alert=True)
             return
