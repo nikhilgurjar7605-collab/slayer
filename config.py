@@ -1778,3 +1778,39 @@ GACHA_SPIRITS = [
     {"name": "Nine-Tailed Kitsune","emoji": "🦊", "rarity": "Legendary", "passive": {"atk_pct": 0.12, "def_pct": 0.12, "yen_pct": 0.20}},
     {"name": "Azure Dragon King", "emoji": "🐲", "rarity": "Legendary", "passive": {"atk_pct": 0.18, "sta_pct": 0.10}},
 ]
+
+# Give every default spirit its home universe (used by the battle UI & shrine).
+for _s in GACHA_SPIRITS:
+    _s.setdefault("universe", "Demon Slayer")
+
+# ── Cross-Universe Spirit Summoning (owner admin panel: /ownerspirits) ──────
+# Universes the owner can open rifts from — the owner may create their own
+# custom universes too (any name they like), so this list is only a starter set.
+GACHA_UNIVERSES = [
+    "Naruto", "One Piece", "Dragon Ball", "Jujutsu Kaisen", "Bleach",
+    "Attack on Titan", "My Hero Academia", "Hunter x Hunter", "Fairy Tail",
+    "Tokyo Ghoul", "Chainsaw Man", "Spy x Family", "Pokemon", "Fate/Stay Night",
+    "Custom",
+]
+
+# Label shown on the cross-universe button inside the summon shrine.
+# The owner can rename it with:  /ownergacha label <your own text here>
+GACHA_CROSS_BTN_LABEL = "🌌 Spirits of Other Universes"
+
+# Battle flavour lines — equipped spirits whisper/act during combat so battles
+# feel alive. {n} = spirit name, {e} = spirit emoji.
+SPIRIT_BATTLE_LINES = {
+    "attack":   ["{e} *{n}* howls alongside your blade!",
+                 "{e} *{n}* surges forward with you!",
+                 "{e} *{n}* lends you its fierce power!"],
+    "technique":["{e} *{n}* channels its energy into your technique!",
+                 "{e} *{n}* guides your form — perfect strike!"],
+    "defend":   ["{e} *{n}* shields you from the blow!",
+                 "{e} *{n}* growls, standing between you and danger!"],
+    "crit":     ["{e} *{n}* shrieks — a devastating blow!",
+                 "{e} *{n}* eyes gleam as you find the opening!"],
+    "victory":  ["{e} *{n}* bows to you in triumph!",
+                 "{e} *{n}* fades back into the shrine, satisfied."],
+    "low_hp":   ["{e} *{n}* flickers weakly... hold on!",
+                 "{e} *{n}* wraps you in a faint protective glow."],
+}

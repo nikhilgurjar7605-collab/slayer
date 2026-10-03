@@ -188,10 +188,22 @@ def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_li
 
     turn_line = f"*Turn {turn}*" if turn is not None else ""
 
+    # ── Spirit presence: equipped spirits fight by your side ──────────────
+    spirit_block = ""
+    try:
+        from utils.spirits import equipped_spirit_names
+        _sp = equipped_spirit_names(player.get('user_id'))
+        if _sp:
+            _hp_ratio = (player.get('hp', 0) / max(1, player.get('max_hp', 1)))
+            _aura = " 🔥" if _hp_ratio > 0.6 else (" ✨" if _hp_ratio > 0.3 else " 🕯️")
+            spirit_block = f"\n👻 *Spirits:* {' · '.join(_sp)}{_aura}"
+    except Exception:
+        pass
+
     player_block = (
         f"{'『' + player['name'] + '』'}\n"
         f"HP : {player['hp']:,}/{player['max_hp']:,}  🌀 {player['sta']}/{player['max_sta']}\n"
-        f"`{player_hp_bar}`"
+        f"`{player_hp_bar}`{spirit_block}"
     )
 
     status_lines = status_summary(get_status_effects(player.get('user_id')))
@@ -808,6 +820,19 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             pet_lines = [f"🐾 *Pet:* {active_pet['name']} active"]
 
+    # ── Spirit presence line at battle start ───────────────────────────────
+    spirit_lines = []
+    try:
+        from utils.spirits import equipped_spirit_names, spirit_battle_line
+        _snames = equipped_spirit_names(user_id)
+        if _snames:
+            spirit_lines = [f"👻 *Spirits beside you:* {' · '.join(_snames)}"]
+            _wl = spirit_battle_line(user_id, "attack", chance=0.6)
+            if _wl:
+                spirit_lines.append(_wl)
+    except Exception:
+        pass
+
     pdisp = pressure_display(pressure, location)
     boss_line = f"\n☠️ *BOSS BATTLE!* HP x3 | ATK x1.5" if state.get('is_boss') else ""
     intro = f"⚔️ *BATTLE BEGINS!*{boss_line}\n{pdisp}"
@@ -819,6 +844,8 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
         intro += "\n" + "\n".join(skill_lines)
     if pet_lines:
         intro += "\n" + "\n".join(pet_lines)
+    if spirit_lines:
+        intro += "\n" + "\n".join(spirit_lines)
     intro += "\n\n"
 
     status_text = combat_status(player, state, ally, turn=1)
@@ -918,6 +945,18 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}*")
     log.append("💥 *" + (f'CRIT! {base_dmg:,} dmg*' if crit else f'{base_dmg:,} dmg*'))
+    # ── Spirit presence: equipped spirits react in battle ────────────────
+    try:
+        from utils.spirits import spirit_battle_line
+        _sl = spirit_battle_line(user_id, "crit" if crit else "attack")
+        if _sl:
+            log.append(_sl)
+        if player['hp'] < player.get('max_hp', 1) * 0.30:
+            _sl2 = spirit_battle_line(user_id, "low_hp", chance=0.5)
+            if _sl2:
+                log.append(_sl2)
+    except Exception:
+        pass
     if new_enemy_hp <= 0:
         await handle_victory(query, user_id, player, state, log, context)
         return
@@ -994,6 +1033,15 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
+    # ── Spirit presence: a guardian spirit may ward off the blow ─────────
+    try:
+        from utils.spirits import spirit_battle_line
+        _dl = spirit_battle_line(user_id, "defend", chance=0.25)
+        if _dl:
+            enemy_dmg = max(1, int(enemy_dmg * 0.90))
+            log.append(_dl)
+    except Exception:
+        pass
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
     context.user_data[f'battle_ctx_{user_id}'] = ctx
     if bonuses.get('def_pct'):
@@ -1253,6 +1301,14 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ally = get_active_ally(state)
     log = []
     log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
+    # ── Spirit presence: spirit empowers the technique ───────────────────
+    try:
+        from utils.spirits import spirit_battle_line
+        _tl = spirit_battle_line(user_id, "technique")
+        if _tl:
+            log.append(_tl)
+    except Exception:
+        pass
 
     form_image_doc = col("style_images").find_one({"style_name": form["name"]})
     if form_image_doc:
@@ -1412,6 +1468,15 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
+    # ── Spirit presence: a guardian spirit may ward off the blow ─────────
+    try:
+        from utils.spirits import spirit_battle_line
+        _dl = spirit_battle_line(user_id, "defend", chance=0.25)
+        if _dl:
+            enemy_dmg = max(1, int(enemy_dmg * 0.90))
+            log.append(_dl)
+    except Exception:
+        pass
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
     context.user_data[f'battle_ctx_{user_id}'] = ctx
     if bonuses.get('def_pct'):
@@ -1746,6 +1811,14 @@ async def goto_explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 async def handle_victory(query, user_id, player, state, log, context=None):
     log.append(f"💀 *{state['enemy_name']}* — DEFEATED!")
+    # ── Spirit presence: your spirits celebrate the victory ──────────────
+    try:
+        from utils.spirits import spirit_battle_line
+        _vl = spirit_battle_line(user_id, "victory", chance=0.6)
+        if _vl:
+            log.append(_vl)
+    except Exception:
+        pass
     xp_gain = state['prize_xp']
     yen_gain = state['prize_yen']
     reward_mult, reward_bonus_lines = reward_multiplier(
