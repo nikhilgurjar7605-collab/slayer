@@ -30,8 +30,8 @@ EXPLORATION_EVENTS = (
 )
 
 BOSS_PHASES = (
-    (0.70, 2, "ENRAGED", 1.35, "The boss roars and its attacks become stronger!"),
-    (0.35, 3, "DESPERATE", 1.70, "The boss enters a desperate final phase — every blow now crushes!"),
+    (0.70, 2, "ENRAGED", 1.45, "The boss roars and its attacks become stronger!"),
+    (0.35, 3, "DESPERATE", 1.85, "The boss enters a desperate final phase — every blow now crushes!"),
 )
 
 ENEMY_ACTIONS = {
