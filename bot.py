@@ -681,6 +681,37 @@ async def _end_conv_passthrough(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 
+async def _conv_stay_put(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Fallback used while the player is choosing a Path (faction) or Story.
+
+    Without these patterned fallbacks, the catch-all `_end_conv_passthrough`
+    below would match ANY callback press mid-flow — including stale/duplicate
+    taps on old buttons — and silently END the character-creation
+    conversation. The Path buttons would then appear "dead" for that session
+    (user had to /start again). Returning the current state keeps the flow
+    alive; genuinely unknown buttons are answered politely instead.
+    """
+    query = getattr(update, "callback_query", None)
+    if query:
+        try:
+            await query.answer("Finish picking your path first! 👆")
+        except Exception:
+            pass
+    return context.state
+
+
+async def _conv_stay_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Non-text update during WAITING_NAME — keep waiting for the name."""
+    msg = update.effective_message
+    if msg:
+        try:
+            await msg.reply_text("⚔️ Please type your character name to continue.")
+        except Exception:
+            pass
+    return WAITING_NAME
+
+
 def main():
     # Validate required environment variables before starting
     import sys
@@ -736,6 +767,13 @@ def main():
         },
         fallbacks=[
             CommandHandler('start', start),
+            # Keep the flow alive if a stale/duplicate faction/story button
+            # (or any other callback) is pressed mid-conversation — these
+            # patterned fallbacks run BEFORE the catch-all below.
+            CallbackQueryHandler(_conv_stay_put, pattern=r'^faction_'),
+            CallbackQueryHandler(_conv_stay_put, pattern=r'^story_'),
+            # Unknown callbacks: end the conversation so the global
+            # callback_router can handle them normally.
             CallbackQueryHandler(_end_conv_passthrough),
         ],
         per_chat=True,
