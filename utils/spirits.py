@@ -115,6 +115,18 @@ def spirits_in_universe(universe: str) -> list:
     return [s for s in get_all_spirits() if (s.get("universe") or "") == universe]
 
 
+def cross_universe_spirits() -> list:
+    """Spirits that are NOT from the game's home universe (Demon Slayer) —
+    i.e. everything the owner has added from other anime universes at runtime,
+    plus any config spirits tagged with another universe."""
+    try:
+        from config import GACHA_HOME_UNIVERSE
+    except Exception:
+        GACHA_HOME_UNIVERSE = "Demon Slayer"
+    return [s for s in get_all_spirits()
+            if (s.get("universe") or GACHA_HOME_UNIVERSE) != GACHA_HOME_UNIVERSE]
+
+
 # ── Battle presence ────────────────────────────────────────────────────────
 def equipped_spirit_names(user_id) -> list:
     """Short display entries for the combat header, e.g. ['🦊 Nine-Tailed Kitsune']."""

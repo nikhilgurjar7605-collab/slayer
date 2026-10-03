@@ -126,6 +126,7 @@ from handlers.pets import (
 )
 from handlers.lottery import lottery, lottery_play
 from handlers.gacha import summon, spirits_cmd, shards_cmd, gacha_callback
+from handlers.gacha_admin import register_spirit_admin, label_capture
 from handlers.slayermark import slayermark
 from handlers.gif_store import (
     addgifbanner, removegifbanner, listgifbanners, setmygifbanner,
@@ -639,6 +640,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
     elif data.startswith('pt_'):                 await pt_callback(update, context)
     elif data.startswith('ownerhelp_'):          await ownerhelp_callback(update, context)
+    elif data.startswith('ospi_'):
+        # Owner spirit rift panel (/spiritsadmin). The ConversationHandler for
+        # the /spiritadd rarity step is registered in an earlier group and
+        # takes priority when that conversation is active.
+        from handlers.gacha_admin import spiritsadmin_callback
+        await spiritsadmin_callback(update, context)
     else:
         await query.answer("Unknown action.", show_alert=True)
 
@@ -985,6 +992,12 @@ def main():
         app.add_handler(CommandHandler(cmd, handler))
 
     # ── Reply keyboard button handler ────────────────────────────────────
+    async def _owner_label_capture(update, context):
+        """Owner tapped 🏷️ Set Button Label in /spiritsadmin — next plain text
+        message becomes the cross-universe summon button label."""
+        if update.effective_user and update.effective_user.id == OWNER_ID:
+            await label_capture(update, context)
+
     async def reply_kb_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Route reply keyboard button presses to the right handler."""
         text = update.message.text.strip() if update.message and update.message.text else ""
@@ -1004,6 +1017,14 @@ def main():
         filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
         reply_kb_handler
     ), group=1)
+
+    # ── Owner: capture the new cross-universe button label (plain text after
+    #    tapping 🏷️ Set Button Label in /spiritsadmin). Must run BEFORE the
+    #    generic reply-keyboard handler above (group=0 default). ────────────
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND,
+        _owner_label_capture
+    ))
 
     async def doc_restore_handler(update, context):
         """Handle JSON document uploads — trigger restore if caption says /restore or auto."""
