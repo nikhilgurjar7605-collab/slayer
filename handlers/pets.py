@@ -16,13 +16,15 @@ Wild encounter callbacks: pet_catch_<uid>, pet_flee_<uid>
 """
 import random
 import json
+import time
 from datetime import date
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from utils.database import (
-    get_player, update_player, col, add_item, append_battle_log
+    get_player, update_player, col, add_item, append_battle_log,
+    remove_item, _invalidate_inventory_cache,
 )
 from utils.guards import owner_only_button, no_button_spam
 
@@ -35,11 +37,29 @@ from config import (
 
 # Catching tools (name, catch bonus)
 CATCHING_TOOLS = [
-    ("Sacred Chain",  0.40),   # best â€” +40% catch rate
+    ("Sacred Chain",  0.40),   # best — +40% catch rate
     ("Demon Lure",    0.25),   # +25%
     ("Spirit Orb",    0.15),   # +15%
-    ("Pet Trap",      0.00),   # basic â€” no bonus
+    ("Pet Trap",      0.00),   # basic — no bonus
 ]
+
+# How long a wild encounter stays catchable (seconds). After this the pet
+# escapes on its own — but only when the user actually taps the old button.
+WILD_PET_TTL_SECONDS = 180
+
+
+def _consume_tool(user_id: int, tool_doc: dict):
+    """Consume exactly one catching tool and refresh the inventory cache so
+    /inventory and the shop always show the correct quantity."""
+    if not tool_doc:
+        return
+    if tool_doc.get("quantity", 0) <= 1:
+        col("inventory").delete_one({"_id": tool_doc["_id"]})
+    else:
+        col("inventory").update_one({"_id": tool_doc["_id"]}, {"$inc": {"quantity": -1}})
+    # Without this the 10-second inventory cache would still report the old
+    # quantity right after a catch attempt.
+    _invalidate_inventory_cache(user_id)
 
 # ══════════════════════════════════════════════════════════════════════════
 # DATABASE HELPERS
@@ -278,6 +298,9 @@ async def trigger_wild_encounter(update_or_query, user_id: int, context, pet_nam
 
     context.user_data[f"wild_pet_{user_id}"] = pet_name
     context.user_data[f"wild_pet_active_{user_id}"] = True
+    # Record when the encounter started so stale Catch buttons (pressed after
+    # a restart or minutes later) don't confuse the user with "already escaped".
+    context.user_data[f"wild_pet_ts_{user_id}"] = time.time()
 
     # Get zone display name
     from config import TRAVEL_ZONES
@@ -335,7 +358,9 @@ def _build_tool_buttons(user_id: int, base_rate: float):
         )
         if doc and doc.get("quantity", 0) > 0:
             tool_key = tool_name.replace(" ", "_")
-            label = f"{tool_name}"
+            qty = doc.get("quantity", 1)
+            rate = int(min(0.95, base_rate + bonus) * 100)
+            label = f"{tool_name} ×{qty} ({rate}%)"
             tool_buttons.append(InlineKeyboardButton(label, callback_data=f"pet_catch_{user_id}_{tool_key}"))
 
     rows = []
@@ -347,47 +372,103 @@ def _build_tool_buttons(user_id: int, base_rate: float):
     return InlineKeyboardMarkup(rows), bool(tool_buttons)
 
 
+def _clear_wild_pet(context, user_id: int):
+    """Remove all wild-encounter state for a user."""
+    context.user_data.pop(f"wild_pet_{user_id}", None)
+    context.user_data.pop(f"wild_pet_active_{user_id}", None)
+    context.user_data.pop(f"wild_pet_ts_{user_id}", None)
+
+
 @no_button_spam
 async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle catch attempt button."""
+    """Handle catch attempt button.
+
+    Bug fixes:
+    • Stale encounters (bot restart / pressed much later) no longer show a
+      dead "already escaped" message — the user gets helpful guidance instead.
+    • Tool buttons now show quantity and real catch %, so users understand
+      why a catch failed instead of thinking the system is broken.
+    • A failed catch keeps the encounter open (with fresh tool buttons) as
+      long as the user still owns tools — previously the pet was lost forever
+      after one unlucky roll.
+    • Consumed tools now invalidate the inventory cache immediately.
+    """
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     pet_name = context.user_data.get(f"wild_pet_{user_id}")
 
+    # ── No active encounter: stale / expired button ──────────────────────────
     if not pet_name:
-        await _edit_wild_pet_message(query, "❌ The pet already escaped!")
+        await _edit_wild_pet_message(
+            query,
+            "💨 *That wild pet is gone.*\n\n"
+            "This encounter expired (or the bot restarted since then).\n"
+            "Use /explore to find a new wild pet!",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Encounter TTL — the pet slips away if left untouched for too long.
+    started = context.user_data.get(f"wild_pet_ts_{user_id}") or 0
+    if time.time() - started > WILD_PET_TTL_SECONDS:
+        _clear_wild_pet(context, user_id)
+        await _edit_wild_pet_message(
+            query,
+            f"💨 *{pet_name} slipped away while you were busy!*\n"
+            "Use /explore to find another one.",
+            parse_mode="Markdown",
+        )
         return
 
     player = get_player(user_id)
     if not player:
         return
 
-    # Catching tools — best available is auto-selected
-    CATCHING_TOOLS = [
-        ("Sacred Chain",  0.40),   # best — +40% catch rate
-        ("Demon Lure",    0.25),   # +25%
-        ("Spirit Orb",    0.15),   # +15%
-        ("Pet Trap",      0.00),   # basic — no bonus
-    ]
+    data = PETS.get(pet_name)
+    if not data:
+        # Corrupted state (pet no longer exists in config) — clean up.
+        _clear_wild_pet(context, user_id)
+        await _edit_wild_pet_message(query, "❌ Something went wrong with this encounter. Try /explore again!")
+        return
 
+    base_rate = data.get("catch_rate", 0.5)
+
+    # ── Step 1: plain "Catch" press → show tool selection ────────────────
     tool_key = None
     prefix = f"pet_catch_{user_id}_"
     if query.data.startswith(prefix):
         tool_key = query.data[len(prefix):]
     elif query.data == f"pet_catch_{user_id}":
-        kb, has_tools = _build_tool_buttons(user_id, PETS[pet_name]["catch_rate"])
+        kb, has_tools = _build_tool_buttons(user_id, base_rate)
         if not has_tools:
             await _edit_wild_pet_message(
                 query,
-                "❌ You don't have any catching tools.\nBuy one from the shop before trying again."
+                "❌ You don't have any catching tools!\n\n"
+                "Buy one from /shop:\n"
+                "🪤 Pet Trap — 500¥ (basic)\n"
+                "🔵 Spirit Orb — 1,500¥ (+15% catch)\n"
+                "🔴 Demon Lure — 3,000¥ (+25% catch)\n"
+                "⛓️ Sacred Chain — 8,000¥ (+40% catch)",
             )
-            context.user_data.pop(f"wild_pet_{user_id}", None)
-            context.user_data.pop(f"wild_pet_active_{user_id}", None)
+            # Keep the encounter alive — the user can buy a tool and retry.
+            kb_retry = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🪤 Catch", callback_data=f"pet_catch_{user_id}"),
+                InlineKeyboardButton("🏃 Flee", callback_data=f"pet_flee_{user_id}"),
+            ]])
+            try:
+                await query.message.reply_text(
+                    f"🌿 *{pet_name}* is still nearby — tap Catch once you have a tool!",
+                    parse_mode="Markdown",
+                    reply_markup=kb_retry,
+                )
+            except Exception as e:
+                log.error("[EXCEPTION] %s", e)
             return
         await _edit_wild_pet_message(query, "Choose a catching tool:", reply_markup=kb)
         return
 
+    # ── Step 2: resolve which tool to use ───────────────────────────────────
     tool_map = {name.replace(" ", "_"): (name, bonus) for name, bonus in CATCHING_TOOLS}
 
     trap_used = None
@@ -395,18 +476,51 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if tool_key:
         selected = tool_map.get(tool_key)
         if not selected:
-            await _edit_wild_pet_message(query, "âŒ Invalid catching tool selected.")
-            return
-        tool_name, bonus = selected
-        doc = col("inventory").find_one(
-            {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
-        )
-        if not doc or doc.get("quantity", 0) <= 0:
-            await _edit_wild_pet_message(query, f"âŒ You no longer have *{tool_name}*.", parse_mode="Markdown")
-            return
-        trap_used = (tool_name, bonus, doc)
-        catch_bonus = bonus
+            # Unknown/legacy tool key — fall back to best available tool
+            # instead of killing the encounter outright.
+            tool_key = None
+        else:
+            tool_name, bonus = selected
+            doc = col("inventory").find_one(
+                {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
+            )
+            if doc and doc.get("quantity", 0) > 0:
+                trap_used = (tool_name, bonus, doc)
+                catch_bonus = bonus
+            else:
+                # Out of that specific tool — let the user pick another one
+                # rather than losing the pet.
+                kb, has_tools = _build_tool_buttons(user_id, base_rate)
+                if has_tools:
+                    await _edit_wild_pet_message(
+                        query,
+                        f"⚠️ You're out of *{tool_name}*!\nPick another tool:",
+                        parse_mode="Markdown",
+                        reply_markup=kb,
+                    )
+                else:
+                    await _edit_wild_pet_message(
+                        query,
+                        f"⚠️ You're out of *{tool_name}* and have no other tools.\n"
+                        f"Buy more from /shop — {pet_name} is waiting… (use /catch)",
+                        parse_mode="Markdown",
+                    )
+                    kb_retry = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🪤 Catch", callback_data=f"pet_catch_{user_id}"),
+                        InlineKeyboardButton("🏃 Flee", callback_data=f"pet_flee_{user_id}"),
+                    ]])
+                    try:
+                        await query.message.reply_text(
+                            f"🌿 *{pet_name}* is still nearby!",
+                            parse_mode="Markdown",
+                            reply_markup=kb_retry,
+                        )
+                    except Exception as e:
+                        log.error("[EXCEPTION] %s", e)
+                return
+
     if trap_used is None:
+        # Auto-select the best tool the user owns.
         for tool_name, bonus in CATCHING_TOOLS:
             doc = col("inventory").find_one(
                 {"user_id": user_id, "item_name": {"$regex": f"^{tool_name}$", "$options": "i"}}
@@ -425,22 +539,16 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"🔵 Spirit Orb — 1,500¥ (+15% catch)\n"
             f"🔴 Demon Lure — 3,000¥ (+25% catch)\n"
             f"⛓️ Sacred Chain — 8,000¥ (+40% catch)\n\n"
-            f"_{pet_name} escaped..._",
+            f"_{pet_name} waits patiently — use /catch after buying a tool._",
             parse_mode="Markdown"
         )
-        context.user_data.pop(f"wild_pet_{user_id}", None)
-        context.user_data.pop(f"wild_pet_active_{user_id}", None)
         return
 
     tool_name, catch_bonus, trap_doc = trap_used
-    # Consume one of the tool
-    if trap_doc["quantity"] <= 1:
-        col("inventory").delete_one({"_id": trap_doc["_id"]})
-    else:
-        col("inventory").update_one({"_id": trap_doc["_id"]}, {"$inc": {"quantity": -1}})
+    # Consume one of the tool (and refresh the inventory cache)
+    _consume_tool(user_id, trap_doc)
 
-    data = PETS[pet_name]
-    final_catch_rate = min(0.95, data["catch_rate"] + catch_bonus)
+    final_catch_rate = min(0.95, base_rate + catch_bonus)
     caught = random.random() < final_catch_rate
 
     if caught:
@@ -449,10 +557,10 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if is_new:
             msg = (
                 f"🎉 *CAUGHT!*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"{data['emoji']}  *{pet_name}*  {rarity_e}\n"
                 f"_{data['desc']}_\n\n"
-                f"🛠️ Used: *{tool_name}*\n"
+                f"🛠️ Used: *{tool_name}*  ({int(final_catch_rate * 100)}% chance)\n"
                 f"✅ Added to your stable!\n"
                 f"Use `/pet {pet_name}` to activate it."
             )
@@ -463,16 +571,49 @@ async def pet_catch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"💠 *+20 Bond XP* added to your existing pet!\n"
                 f"🛠️ Used: *{tool_name}*"
             )
+        _clear_wild_pet(context, user_id)
+        await _edit_wild_pet_message(query, msg, parse_mode="Markdown")
+        return
+
+    # ── Catch failed — the pet is NOT necessarily gone. Give the user a
+    #    fresh chance while they still hold tools (this was the main bug:
+    #    one unlucky roll permanently killed the encounter). ─────────────
+    has_remaining = False
+    for t_name, _b in CATCHING_TOOLS:
+        d = col("inventory").find_one(
+            {"user_id": user_id, "item_name": {"$regex": f"^{t_name}$", "$options": "i"}}
+        )
+        if d and d.get("quantity", 0) > 0:
+            has_remaining = True
+            break
+
+    if has_remaining:
+        # Refresh timestamp so the user gets a fair window per attempt.
+        context.user_data[f"wild_pet_ts_{user_id}"] = time.time()
+        msg = (
+            f"💨 *{pet_name} broke free!*\n"
+            f"The {tool_name} snapped shut but it was too quick "
+            f"({int(final_catch_rate * 100)}% chance).\n"
+            f"🌿 It's still nearby — try again!\n"
+            f"_(Better tools = higher chance!)_"
+        )
+        await _edit_wild_pet_message(query, msg, parse_mode="Markdown")
+        try:
+            await query.message.reply_text(
+                f"🌿 *{pet_name}* is still nearby — choose a tool:",
+                parse_mode="Markdown",
+                reply_markup=_build_tool_buttons(user_id, base_rate)[0],
+            )
+        except Exception as e:
+            log.error("[EXCEPTION] %s", e)
     else:
         msg = (
             f"💨 *{pet_name} escaped!*\n"
             f"The {tool_name} snapped shut but it was too quick.\n"
-            f"_(Try a better tool for higher chance!)_"
+            f"😕 You're out of catching tools — buy more from /shop!"
         )
-
-    context.user_data.pop(f"wild_pet_{user_id}", None)
-    context.user_data.pop(f"wild_pet_active_{user_id}", None)
-    await _edit_wild_pet_message(query, msg, parse_mode="Markdown")
+        _clear_wild_pet(context, user_id)
+        await _edit_wild_pet_message(query, msg, parse_mode="Markdown")
 
 
 async def pet_flee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -480,10 +621,18 @@ async def pet_flee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    pet_name = context.user_data.pop(f"wild_pet_{user_id}", None)
-    context.user_data.pop(f"wild_pet_active_{user_id}", None)
+    pet_name = context.user_data.get(f"wild_pet_{user_id}")
+    _clear_wild_pet(context, user_id)
     name = pet_name or "The wild pet"
-    await _edit_wild_pet_message(query, f"🏃 You fled from {name}.")
+    if not pet_name:
+        # Stale flee button from an old/finished encounter.
+        await _edit_wild_pet_message(
+            query,
+            "\U0001f33f That encounter is already over.\nUse /explore to find a new wild pet!",
+            parse_mode="Markdown",
+        )
+        return
+    await _edit_wild_pet_message(query, f"\U0001f3c3 You fled from {name}.")
 
 
 # ── Hatch callback (from "Hatch Now" button after egg drop) ──────────────
@@ -1188,7 +1337,13 @@ async def catch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     user_id = update.effective_user.id
     active_wild = context.user_data.get(f"wild_pet_{user_id}")
-    
+
+    # Expired encounter — clean up state so the user isn't stuck on a ghost.
+    if active_wild:
+        started = context.user_data.get(f"wild_pet_ts_{user_id}") or 0
+        if time.time() - started > WILD_PET_TTL_SECONDS:
+            _clear_wild_pet(context, user_id)
+            active_wild = None
     if active_wild:
         # There's actually an active wild encounter — show tool selection
         from config import PETS, PET_RARITY_EMOJI
@@ -1210,7 +1365,7 @@ async def catch(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             qty = doc.get("quantity", 0) if doc else 0
             if qty > 0:
-                rate = int((data.get("catch_rate", 0.5) + bonus) * 100)
+                rate = int(min(0.95, data.get("catch_rate", 0.5) + bonus) * 100)
                 label = f"{emoji} {tool_name} ×{qty}  ({rate}% catch)"
                 tool_buttons.append([InlineKeyboardButton(label, callback_data=f"pet_catch_{user_id}_{tool_name.replace(' ','_')}")])
         
