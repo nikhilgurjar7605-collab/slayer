@@ -176,6 +176,15 @@ def format_hp_bar_poke(current: int, maximum: int, length: int = 10) -> str:
     filled = int(length * percent)
     return "█" * filled + "░" * (length - filled)
 
+# ── Telegram HTML helpers (bold / quote blocks, like the skill tree UI) ──
+def _esc_html(s) -> str:
+    """Escape text for Telegram HTML parse mode."""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def _quote(*lines: str) -> str:
+    """Wrap lines in a Telegram <blockquote> (quote form)."""
+    return "<blockquote>" + "\n".join(lines) + "</blockquote>"
+
 def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_lines: List[str] = None, turn: int = None) -> str:
     enemy_hp_bar  = format_hp_bar_poke(state['enemy_hp'], state['enemy_max_hp'])
     player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
@@ -725,9 +734,9 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     zone = next((z for z in TRAVEL_ZONES if z['id'] == location), TRAVEL_ZONES[0])
-    boss_tag = "  ⚠️ *BOSS*" if enemy.get('is_boss') else ""
     active_pet = get_active_pet(user_id)
     preview = encounter_preview(enemy, level)
+    player_level = get_level(player['xp'])
 
     # ── Gacha: rare shard find while exploring (non-boss encounters) ──────
     _shard_found = 0
@@ -738,24 +747,84 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             _shard_found = 0
 
-    enemy_hp_bar  = format_hp_bar_poke(enemy['hp'], enemy['hp'])
-    player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
-    player_level  = get_level(player['xp'])
+    # ── Pet companion block (Kasugai Crow style line) ────────────────────
+    crow_block = ""
+    if active_pet:
+        try:
+            from config import PETS as _PETS_CFG
+            _pd = _PETS_CFG.get(active_pet['name'], {})
+            _pemoji = _pd.get('emoji', '🐾')
+            _pxp = int(active_pet.get('xp', 0) or 0)
+            _pyen = int(active_pet.get('bonus_yen', 0) or 0)
+            _pet_line = f"{_pemoji} {_esc_html(active_pet['name'])}: Active"
+            _tail = []
+            if _pxp:
+                _tail.append(f"⭐ {_pxp:,} XP")
+            if _pyen:
+                _tail.append(f"💰 {_pyen:,}¥")
+            if _tail:
+                _pet_line += "  //  " + " • ".join(_tail)
+            crow_block = _quote(_pet_line)
+        except Exception:
+            crow_block = _quote(f"🐾 {_esc_html(active_pet['name'])}: Active")
 
-    encounter_text = (
-        f"*{enemy['name'].upper()}*{boss_tag}\n"
-        f"{preview['event_label']} — {preview['event_description']}\n"
-        f"Threat: *{preview['threat']}* | Recommended level: *{preview['recommended_level']}*\n"
-        f"HP : {enemy['hp']:,}/{enemy['hp']:,}\n"
-        f"`{enemy_hp_bar}`\n\n"
-        f"─────────────────────\n"
-        f"『{player['name']}』\n"
-        f"Level : {player_level}  |  HP : {player['hp']:,}/{player['max_hp']:,}\n"
-        f"`{player_hp_bar}`"
-        f"{chr(10) + '🐾 ' + active_pet['name'] + ' active' if active_pet else ''}\n\n"
-        f"⭐ `{enemy['xp']:,}` XP  💰 `{enemy['yen']:,}`¥"
-        f"{chr(10) + '🔮 You found a Spirit Shard while exploring! (+1)' if _shard_found else ''}"
-    )
+    # ── Rare shard find line ──────────────────────────────────────────────
+    shard_block = ""
+    if _shard_found:
+        shard_block = f"\n<blockquote>🔮 Spirit Shard found while exploring! <b>+{_shard_found}</b></blockquote>"
+
+    # ── Elite / Boss tag after the enemy name ────────────────────────────
+    kind_tag = ""
+    if enemy.get('is_boss'):
+        kind_tag = "  ⚠️ <b>BOSS</b>"
+    elif enemy.get('is_elite'):
+        kind_tag = "  🟠 <b>ELITE</b>"
+
+    # ── Encounter header (HTML, Telegram quote-style UI) ─────────────────
+    event_head = preview['event_label'] or "🌲 WILD ENCOUNTER"
+    event_desc = preview['event_description'] or "The area is quiet..."
+    threat_word = preview['threat']
+    threat_icon = {"HIGH": "🔴", "MODERATE": "🟠"}.get(threat_word, "⚠️")
+    lines = [
+        f"<b>{_esc_html(event_head)}  //  {_esc_html(event_desc)}</b>",
+        f"{threat_icon} Threat: <b>{threat_word}</b>  •  Rec. Lv. {preview['recommended_level']}",
+        "╌" * 26,
+        "",
+    ]
+
+    # ── Enemy card ────────────────────────────────────────────────────────
+    ebar = format_hp_bar_poke(enemy['hp'], enemy['hp'], length=20)
+    elv  = max(1, int(enemy['hp'] / 35))
+    lines += [
+        f"⦿ <b>{_esc_html(enemy['name'].upper())}</b>{kind_tag}",
+        f"   Lv. {elv}  │  ❤️ {enemy['hp']:,}/{enemy['hp']:,}",
+        f"<code>{ebar}</code>",
+        "",
+    ]
+
+    # ── Player card ───────────────────────────────────────────────────────
+    phpr = format_hp_bar_poke(player['hp'], player['max_hp'], length=20)
+    lines += [
+        "╌" * 26,
+        "",
+        f"⦿ <b>『{_esc_html(player['name'])}』</b>",
+        f"   Lv. {player_level}  │  ❤️ {player['hp']:,}/{player['max_hp']:,}  │  ⚡ {player['sta']}/{player['max_sta']}",
+        f"<code>{phpr}</code>",
+        "",
+    ]
+
+    # ── Rewards + pet status ──────────────────────────────────────────────
+    _xp_s  = f"{enemy['xp']:,}"
+    _yen_s = f"{enemy['yen']:,}"
+    lines.append(_quote(
+        f"⭐ {_esc_html(_xp_s)} XP  •  💰 {_esc_html(_yen_s)}¥"
+    ))
+    if crow_block:
+        lines.append(crow_block + shard_block)
+    elif shard_block:
+        lines.append(shard_block.lstrip("\n"))
+
+    encounter_text = "\n".join(lines)
 
     if is_callback:
         await edit_photo_caption(
@@ -763,7 +832,8 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=encounter_text,
             image_category="enemies",
             image_key=enemy['name'],
-            reply_markup=build_encounter_keyboard()
+            reply_markup=build_encounter_keyboard(),
+            parse_mode='HTML'
         )
     else:
         await send_photo_message(
@@ -771,7 +841,8 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=encounter_text,
             image_category="enemies",
             image_key=enemy['name'],
-            reply_markup=build_encounter_keyboard()
+            reply_markup=build_encounter_keyboard(),
+            parse_mode='HTML'
         )
 
 # ─────────────────────────────────────────────────────────────────────────
