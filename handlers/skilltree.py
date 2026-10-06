@@ -169,9 +169,64 @@ def _bonus_label(k: str, v) -> str:
     return labels.get(k, f"{k}: +{v}")
 
 
-def _build_page(owned: list, page: int, category_filter: str = "all") -> tuple:
+# ── Compact UI helpers ────────────────────────────────────────────────────
+_NAME_W = 16          # column width for skill names
+_SEP    = "─" * 24
+
+_BONUS_ICONS = {
+    "atk_pct": "⚔", "def_pct": "🛡", "tech_pct": "🌀", "dmg_reduce": "🛡",
+    "crit_bonus": "🎯", "dodge_bonus": "💨", "low_hp_dmg": "⚔",
+    "executioner": "💥", "finish_pct": "💥", "second_wind": "❤️",
+    "last_stand": "❤️", "null_status": "🛡", "multi_art": "🌀",
+    "hp_on_kill": "❤️", "regen_pct": "❤️", "regen_hp": "❤️",
+    "counter_chance": "⚔", "xp_pct": "📈", "yen_pct": "💰",
+    "drop_pct": "🎁", "sta_reduce": "⚡", "combo_pct": "⚔",
+    "first_strike": "💨", "max_hp": "❤️", "max_sta": "⚡",
+    "battle_hp_boost": "❤️",
+}
+
+
+def _short_effect(k: str, v) -> str:
+    """Compact one-line effect label for the skill tree card UI."""
+    icons = _BONUS_ICONS
+    if k == "dmg_reduce":     return f"🛡 DMG −{int(v*100)}%"
+    if k == "atk_pct":        return f"⚔ ATK {'+' if v>=0 else '−'}{abs(int(v*100))}%"
+    if k == "def_pct":        return f"🛡 DEF {'+' if v>=0 else '−'}{abs(int(v*100))}%"
+    if k == "tech_pct":       return f"🌀 TECH {'+' if v>=0 else '−'}{abs(int(v*100))}%"
+    if k == "crit_bonus":     return f"🎯 CRIT {'+' if v>=0 else '−'}{abs(int(v*100))}%"
+    if k == "dodge_bonus":    return f"💨 DODGE {'+' if v>=0 else '−'}{abs(int(v*100))}%"
+    if k == "low_hp_dmg":     return f"⚔ ATK +{int(v*100)}% <40%"
+    if k == "executioner":    return f"💥 DMG +{int(v*100)}% <20%"
+    if k == "finish_pct":     return f"💥 DMG +{int(v*100)}% <20%"
+    if k == "second_wind":    return "❤️ Survive Fatal Hit"
+    if k == "last_stand":     return "❤️ Last Stand"
+    if k == "null_status":    return "🛡 Status Immune"
+    if k == "multi_art":      return "🌀 Multi-Art"
+    if k == "hp_on_kill":     return f"❤️ +{int(v*100)}% HP/Kill"
+    if k == "regen_pct":      return f"❤️ +{int(v*100)}% HP/turn"
+    if k == "regen_hp":       return f"❤️ +{int(v)} HP/turn"
+    if k == "counter_chance": return f"⚔ {int(v*100)}% Counter"
+    if k == "xp_pct":         return f"📈 XP +{int(v*100)}%"
+    if k == "yen_pct":        return f"💰 Yen +{int(v*100)}%"
+    if k == "drop_pct":       return f"🎁 Drops +{int(v*100)}%"
+    if k == "sta_reduce":     return f"⚡ STA −{int(v)} cost"   # positive = cost reduction
+    if k == "combo_pct":      return f"⚔ Combo +{int(v*100)}%"
+    if k == "first_strike":   return f"💨 First Hit +{int(v*100)}%"
+    if k == "max_hp":         return f"❤️ HP {'+' if v>=0 else '−'}{abs(int(v))}"
+    if k == "max_sta":        return f"⚡ STA {'+' if v>=0 else '−'}{abs(int(v))}"
+    if k == "battle_hp_boost":return f"❤️ +{int(v)} HP start"
+    sign = "+" if (isinstance(v, (int, float)) and v >= 0) else ""
+    return f"{icons.get(k, '⭐')} {k} {sign}{v}"
+
+
+def _build_page(owned: list, page: int, sp: int = 0,
+                category_filter: str = "all") -> tuple:
     """
-    Build the text and keyboard for a skill tree page.
+    Build the card-style skill tree page (compact UI).
+    Each skill is rendered as:
+        🟢 Name              N SP     (affordable / owned)
+        🔒 Name              N SP     (not enough SP)
+           ✨ effect lines   (+ extra requirement hints)
     Returns (text, InlineKeyboardMarkup, total_pages)
     """
     flat = _all_skills_flat()
@@ -185,59 +240,83 @@ def _build_page(owned: list, page: int, category_filter: str = "all") -> tuple:
     page_skills = flat[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
     lines = [
-        "╔══════════════════════╗",
-        "      🌳 𝙎𝙆𝙄𝙇𝙇 𝙏𝙍𝙀𝙀",
-        "╚══════════════════════╝\n",
-        f"📄 Page *{page+1}/{total_pages}*  |  Skills: *{len(flat)}*  |  Category: *{category_filter.title()}*\n",
-        "━━━━━━━━━━━━━━━━━━━━━\n",
+        "⚔️ SKILL TREE",
+        f"💠 {sp} SP  •  🧠 {len(owned)}/{TOTAL_SKILL_COUNT}",
+        _SEP,
+        "",
     ]
 
     buy_buttons = []
     for skill in page_skills:
-        icon     = _cat_icon(skill["category"])
-        owned_   = skill["name"] in owned
-        status   = "✅" if owned_ else f"💠 {skill['sp_cost']} SP"
-        once_tag = "  🔔 _(once/battle)_" if skill.get("type") == "once_per_battle" else ""
-        pos_bonus = {k:v for k,v in skill["bonus"].items() if not isinstance(v,(int,float)) or v >= 0}
-        neg_bonus = {k:v for k,v in skill["bonus"].items() if isinstance(v,(int,float)) and v < 0}
-        pos_str = " | ".join(_bonus_label(k,v) for k,v in pos_bonus.items())
-        neg_str = ("  ⚠️ " + " | ".join(_bonus_label(k,v) for k,v in neg_bonus.items())) if neg_bonus else ""
-        lines.append(
-            f"{icon} *{skill['name']}*  [{status}]{once_tag}\n"
-            f"   _{skill['description']}_\n"
-            f"   `{pos_str}`{neg_str}"
-        )
+        name     = skill["name"]
+        cost     = skill["sp_cost"]
+        owned_   = name in owned
+        can_buy  = sp >= cost
+
+        if owned_:
+            badge = "✅"
+        elif can_buy:
+            badge = "🟢"
+        else:
+            badge = "🔒"
+
+        title = f"{badge} {name:<{_NAME_W}} {cost} SP"
+        lines.append(title.rstrip())
+
+        # Effect lines (positive first, then backlash with ⚠)
+        pos_bonus = {k: v for k, v in skill["bonus"].items()
+                     if not isinstance(v, (int, float)) or v >= 0}
+        neg_bonus = {k: v for k, v in skill["bonus"].items()
+                     if isinstance(v, (int, float)) and v < 0}
+        eff_lines = [_short_effect(k, v) for k, v in pos_bonus.items()]
+        hint_parts = ["⚠ " + _short_effect(k, v) for k, v in neg_bonus.items()]
+        if skill.get("type") == "once_per_battle":
+            hint_parts.insert(0, "🔔 Once/battle")
+        if not owned_ and not can_buy:
+            hint_parts.insert(0, f"🔸 +{cost - sp} SP required")
+
+        # Compact cards (reference UI): title + up to 2 effect lines.
+        if len(hint_parts) >= 2:
+            shown = eff_lines[:1]
+            if len(eff_lines) > 1:
+                shown[-1] += " · +"
+        else:
+            shown = eff_lines[:2]
+            if hint_parts and len(eff_lines) > 2:
+                shown[-1] += " · +"
+        for e in shown:
+            lines.append(f"   {e}")
+        if hint_parts:
+            joined = " · ".join(hint_parts)
+            if len(joined) > 36:                       # keep hint line tidy
+                joined = " · ".join(hint_parts[:1])
+            lines.append("   " + joined)
+        lines.append("")
+
         if not owned_:
+            afford = "" if can_buy else " 🔒"
             buy_buttons.append([InlineKeyboardButton(
-                f"💠 Buy — {skill['name']} ({skill['sp_cost']} SP)",
-                callback_data=f"skillbuy_{skill['name'].replace(' ','_')}"
+                f"💠 {name} — {cost} SP{afford}",
+                callback_data=f"skillbuy_{name.replace(' ', '_')}"
             )])
 
-    lines.append("\n━━━━━━━━━━━━━━━━━━━━━")
+    footer = f"─────── {page + 1} / {total_pages} ───────"
+    lines.append(footer)
 
-    # Navigation row
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"skillpage_{page-1}_{category_filter}"))
-    if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"skillpage_{page+1}_{category_filter}"))
+    # Navigation row (buttons mirror the ◀ PREV · NEXT ▶ footer)
+    prev_btn = InlineKeyboardButton("◀ PREV",
+        callback_data=f"skillpage_{page-1}_{category_filter}" if page > 0 else None)
+    next_btn = InlineKeyboardButton("NEXT ▶",
+        callback_data=f"skillpage_{page+1}_{category_filter}" if page < total_pages - 1 else None)
+    if page == 0:
+        prev_btn = InlineKeyboardButton("•", callback_data="skillnoop")
+    if page == total_pages - 1:
+        next_btn = InlineKeyboardButton("•", callback_data="skillnoop")
+    nav = [prev_btn,
+           InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="skillnoop"),
+           next_btn]
 
-    # Category filter row
-    cats = [
-        ("All","all"), ("⚔️","Combat"), ("🌀","Technique"),
-        ("🛡️","Survival"), ("💎","Elite"), ("👹","Demon Path"),
-        ("🗡️","Slayer Path"), ("💰","Utility"), ("✨","Passive"),
-        ("🌟","Legendary"), ("☠️","Forbidden")
-    ]
-    cat_row = [
-        InlineKeyboardButton(f"{'✓' if (c=='all' and category_filter=='all') or category_filter==c else ''}{emoji}",
-                             callback_data=f"skillpage_0_{c}")
-        for emoji, c in cats
-    ]
-
-    buttons = buy_buttons.copy()
-    if nav: buttons.append(nav)
-    buttons.append(cat_row)
+    buttons = buy_buttons + [nav]
     buttons.append([InlineKeyboardButton("📊 My Skills", callback_data="skillpage_mine")])
 
     return "\n".join(lines), InlineKeyboardMarkup(buttons), total_pages
@@ -255,17 +334,13 @@ async def skilltree(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     owned   = get_player_skills(user_id)
     sp      = player.get("skill_points", 0)
-    bonuses = get_active_skill_bonuses(owned)
 
-    text, kb, total_pages = _build_page(owned, 0)
-    header = (
-        f"💠 *Skill Points:* {sp} SP  |  ✅ *Owned:* {len(owned)}\n\n"
-    )
+    text, kb, total_pages = _build_page(owned, 0, sp)
 
     if update.callback_query:
-        await _safe_edit(update.callback_query, header + text, parse_mode="Markdown", reply_markup=kb)
+        await _safe_edit(update.callback_query, text, reply_markup=kb)
     else:
-        await update.message.reply_text(header + text, parse_mode="Markdown", reply_markup=kb)
+        await update.message.reply_text(text, reply_markup=kb)
 
 
 # ── Skill page callback (pagination + category filter) ────────────────────
@@ -273,7 +348,10 @@ async def skilltree_page_callback(update: Update, context: ContextTypes.DEFAULT_
     query   = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    data    = query.data  # skillpage_N_category  or  skillpage_mine
+    data    = query.data  # skillnoop | skillpage_N_category | skillpage_mine
+
+    if data == "skillnoop":
+        return  # decorative nav slot (• / page counter) — nothing to do
 
     if data == "skillpage_mine":
         await _show_my_skills(query, user_id)
@@ -290,10 +368,9 @@ async def skilltree_page_callback(update: Update, context: ContextTypes.DEFAULT_
 
     owned   = get_player_skills(user_id)
     sp      = player.get("skill_points", 0)
-    text, kb, _ = _build_page(owned, page, category)
-    header  = f"💠 *Skill Points:* {sp} SP  |  ✅ *Owned:* {len(owned)}\n\n"
+    text, kb, _ = _build_page(owned, page, sp, category)
 
-    await _safe_edit(query, header + text, parse_mode="Markdown", reply_markup=kb)
+    await _safe_edit(query, text, reply_markup=kb)
 
 
 async def _show_my_skills(query, user_id: int):
