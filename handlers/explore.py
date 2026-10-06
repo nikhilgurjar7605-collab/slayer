@@ -176,6 +176,32 @@ def format_hp_bar_poke(current: int, maximum: int, length: int = 10) -> str:
     filled = int(length * percent)
     return "█" * filled + "░" * (length - filled)
 
+# Display-width helpers (emoji count as 2 columns) so label/value rows align
+_EMOJI_WIDE = set('🟢🔒🛡⚔🎯💨❤️❤️⚡🧠💠🐾🌲⚠️🔸💥👻🌀☠️🧪⭐')
+
+def _disp_width(s: str) -> int:
+    import unicodedata
+    w = 0
+    for ch in s:
+        if ord(ch) > 0x2600 or unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def _pad_row(label: str, value: str, total: int = 24) -> str:
+    pad = max(2, total - _disp_width(label) - _disp_width(value))
+    return f"{label}{' ' * pad}{value}"
+
+def _encounter_unit_card(name: str, level: int, hp: int, max_hp: int, bar_len: int = 20) -> str:
+    """One combatant card: ⦿ NAME / Lv │ ❤ x/y / full-width HP bar."""
+    bar = format_hp_bar_poke(hp, max_hp, bar_len).ljust(bar_len)
+    return (
+        f"⦿ {name}\n"
+        f"   Lv. {level}  │  ❤️ {hp:,}/{max_hp:,}\n"
+        f"   {bar}"
+    )
+
 def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_lines: List[str] = None, turn: int = None) -> str:
     enemy_hp_bar  = format_hp_bar_poke(state['enemy_hp'], state['enemy_max_hp'])
     player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
@@ -738,24 +764,37 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             _shard_found = 0
 
-    enemy_hp_bar  = format_hp_bar_poke(enemy['hp'], enemy['hp'])
-    player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
     player_level  = get_level(player['xp'])
 
-    encounter_text = (
-        f"*{enemy['name'].upper()}*{boss_tag}\n"
-        f"{preview['event_label']} — {preview['event_description']}\n"
-        f"Threat: *{preview['threat']}* | Recommended level: *{preview['recommended_level']}*\n"
-        f"HP : {enemy['hp']:,}/{enemy['hp']:,}\n"
-        f"`{enemy_hp_bar}`\n\n"
-        f"─────────────────────\n"
-        f"『{player['name']}』\n"
-        f"Level : {player_level}  |  HP : {player['hp']:,}/{player['max_hp']:,}\n"
-        f"`{player_hp_bar}`"
-        f"{chr(10) + '🐾 ' + active_pet['name'] + ' active' if active_pet else ''}\n\n"
-        f"⭐ `{enemy['xp']:,}` XP  💰 `{enemy['yen']:,}`¥"
-        f"{chr(10) + '🔮 You found a Spirit Shard while exploring! (+1)' if _shard_found else ''}"
-    )
+    # ── New compact card-style encounter UI ───────────────────────────────
+    SEP = "⎯" * 37
+    threat_icon = {'HIGH': '🔴', 'MODERATE': '🟡'}.get(preview['threat'], '⚪')
+    event_desc = preview.get('event_description') or "The area is quiet..."
+
+    footer = (f"🐾 {active_pet['name']}: Active" if active_pet
+              else preview['event_label'])
+    footer += f"  //  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥"
+
+    lines = [
+        f"🌲 *WILD ENCOUNTER*  //  {event_desc}",
+        f"{threat_icon} Threat: *{preview['threat']}*  •  Rec. Lv. {preview['recommended_level']}",
+        SEP,
+        "",
+        _encounter_unit_card(enemy['name'].upper(), preview['recommended_level'],
+                             enemy['hp'], enemy['hp']),
+        "",
+        _encounter_unit_card(f"『{player['name']}』", player_level,
+                             player['hp'], player['max_hp']),
+        "",
+        SEP,
+        footer,
+    ]
+    if boss_tag:
+        lines.insert(2, f"☠️ *BOSS ENCOUNTER*  •  {enemy['name'].upper()}{boss_tag}")
+    if _shard_found:
+        lines.append("🔮 You found a Spirit Shard while exploring! (+1)")
+
+    encounter_text = "\n".join(lines)
 
     if is_callback:
         await edit_photo_caption(
