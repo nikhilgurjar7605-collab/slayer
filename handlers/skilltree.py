@@ -7,7 +7,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from utils.database import get_player, update_player, col, track_sp_spent
 from utils.guards import dm_only
-from config import SKILLS
+try:  # full skill data lives in config.SKILLS (falls back to the lightweight copy in utils.database)
+    from config import SKILLS
+except Exception:
+    from utils.database import SKILLS
 
 PAGE_SIZE = 10  # skills shown per page
 VALID_SKILL_NAMES = {skill["name"] for skills in SKILLS.values() for skill in skills}
@@ -136,7 +139,46 @@ def _cat_icon(cat: str) -> str:
     }.get(cat, "⭐")
 
 
-def _bonus_label(k: str, v) -> str:
+# Bonus keys that only apply under a condition — shown with a "<40%"-style tag
+_CONDITIONAL_KEYS = {"low_hp_dmg": "<40%", "executioner": "<20%", "finish_pct": None}
+
+
+def _bonus_label(k: str, v, compact: bool = False) -> str:
+    """Human-readable bonus label. compact=True uses emoji prefixes (🛡 DMG −10%)."""
+    pct = int(round(abs(v) * 100))
+    sign = "+" if v >= 0 else "−"
+    if compact:
+        labels = {
+            "atk_pct":        f"⚔ ATK {sign}{pct}%",
+            "def_pct":        f"🛡 DEF {sign}{pct}%",
+            "tech_pct":       f"🌀 TECH +{pct}%",
+            "dmg_reduce":     f"🛡 DMG −{pct}%",
+            "crit_bonus":     f"🎯 CRIT {sign}{pct}%",
+            "dodge_bonus":    f"💨 DODGE {sign}{pct}%",
+            "low_hp_dmg":     f"⚔ ATK +{pct}% <40%",
+            "executioner":    f"💥 DMG +{pct}% <20%",
+            "finish_pct":     f"💥 Kill Blow +{pct}%",
+            "second_wind":    "❤️ Survive Fatal Hit",
+            "last_stand":     "🔥 Last Stand",
+            "null_status":    "🚫 Status Immune",
+            "multi_art":      "🌀 Multi-Art Unlocked",
+            "hp_on_kill":     f"❤️ +{pct}% HP on Kill",
+            "regen_pct":      f"❤️ +{pct}% HP/turn",
+            "regen_hp":       f"❤️ +{int(v)} HP/turn",
+            "counter_chance": f"🗡 {pct}% Counter",
+            "xp_pct":         f"⭐ XP +{pct}%",
+            "yen_pct":        f"💰 Yen +{pct}%",
+            "drop_pct":       f"🎁 Drops +{pct}%",
+            "sta_reduce":     f"⚡ STA −{int(v)} cost",
+            "combo_pct":      f"🔗 Combo +{pct}%",
+            "first_strike":   f"💨 First Hit +{pct}%",
+            "max_hp":         f"❤️ HP {sign}{int(v)}",
+            "max_sta":        f"⚡ STA {sign}{int(v)}",
+            "battle_hp_boost": f"❤️ +{int(v)} HP/battle",
+        }
+        if isinstance(v, bool):
+            return labels.get(k, k)
+        return labels.get(k, f"{k} {sign}{v}")
     labels = {
         "atk_pct":        f"+{int(v*100)}% ATK",
         "def_pct":        f"{'+' if v>=0 else ''}{int(v*100)}% DEF",
@@ -163,15 +205,44 @@ def _bonus_label(k: str, v) -> str:
         "first_strike":   f"+{int(v*100)}% First Hit",
         "max_hp":         f"+{int(v)} Max HP",
         "max_sta":        f"+{int(v)} Max STA",
+        "battle_hp_boost": f"+{int(v)} HP at battle start",
     }
     if isinstance(v, bool):
         return labels.get(k, k)
     return labels.get(k, f"{k}: +{v}")
 
 
-def _build_page(owned: list, page: int, category_filter: str = "all") -> tuple:
+def _esc(s: str) -> str:
+    """Escape text for Telegram HTML parse mode."""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _compact_effect_lines(skill: dict) -> list:
+    """One short emoji line per effect, Telegram style: '⚔ ATK +20% <40%' / '⚠ DEF −5%'."""
+    lines = []
+    bonus = skill["bonus"]
+    # Group regen_pct + battle_hp_boost into one combined line (e.g. Devour Soul)
+    if "regen_pct" in bonus and "battle_hp_boost" in bonus:
+        r, b = bonus["regen_pct"], bonus["battle_hp_boost"]
+        lines.append(f"❤️ +{int(r*100)}% HP/turn · +{int(b)} HP")
+        bonus = {k: v for k, v in bonus.items() if k not in ("regen_pct", "battle_hp_boost")}
+    for k, v in bonus.items():
+        label = _bonus_label(k, v, compact=True)
+        if isinstance(v, (int, float)) and v < 0:
+            # Avoid double minus: "⚠ ⚡ STA −5" not "⚠ ⚡ STA −-5"
+            label = label.replace("−", "").lstrip()
+            lines.append(f"⚠ {label}")
+        else:
+            lines.append(label)
+    return lines
+
+
+def _build_page(owned: list, page: int, category_filter: str = "all", sp: int = 0) -> tuple:
     """
-    Build the text and keyboard for a skill tree page.
+    Build the text and keyboard for a skill tree page — compact Telegram-style UI:
+        ⚔️ Iron Body          5 SP
+           🛡 DMG −10%
+    Locked skills (not enough SP) show 🔒 + how much more SP is needed.
     Returns (text, InlineKeyboardMarkup, total_pages)
     """
     flat = _all_skills_flat()
@@ -184,60 +255,69 @@ def _build_page(owned: list, page: int, category_filter: str = "all") -> tuple:
     page        = max(0, min(page, total_pages - 1))
     page_skills = flat[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
+    cat_title = "Skill Tree" if category_filter == "all" else category_filter
     lines = [
-        "╔══════════════════════╗",
-        "      🌳 𝙎𝙆𝙄𝙇𝙇 𝙏𝙍𝙀𝙀",
-        "╚══════════════════════╝\n",
-        f"📄 Page *{page+1}/{total_pages}*  |  Skills: *{len(flat)}*  |  Category: *{category_filter.title()}*\n",
-        "━━━━━━━━━━━━━━━━━━━━━\n",
+        "⚔️ SKILL TREE",
+        f"💠 {sp} SP  •  🧠 {len(owned)}/{TOTAL_SKILL_COUNT}",
+        "─" * 20,
+        "",
     ]
 
     buy_buttons = []
     for skill in page_skills:
-        icon     = _cat_icon(skill["category"])
-        owned_   = skill["name"] in owned
-        status   = "✅" if owned_ else f"💠 {skill['sp_cost']} SP"
-        once_tag = "  🔔 _(once/battle)_" if skill.get("type") == "once_per_battle" else ""
-        pos_bonus = {k:v for k,v in skill["bonus"].items() if not isinstance(v,(int,float)) or v >= 0}
-        neg_bonus = {k:v for k,v in skill["bonus"].items() if isinstance(v,(int,float)) and v < 0}
-        pos_str = " | ".join(_bonus_label(k,v) for k,v in pos_bonus.items())
-        neg_str = ("  ⚠️ " + " | ".join(_bonus_label(k,v) for k,v in neg_bonus.items())) if neg_bonus else ""
-        lines.append(
-            f"{icon} *{skill['name']}*  [{status}]{once_tag}\n"
-            f"   _{skill['description']}_\n"
-            f"   `{pos_str}`{neg_str}"
-        )
+        name     = skill["name"]
+        cost     = skill["sp_cost"]
+        owned_   = name in owned
+        affordable = sp >= cost
+        status   = "✅ OWNED" if owned_ else ("🟢" if affordable else "🔒")
+        once_tag = "  🔔" if skill.get("type") == "once_per_battle" else ""
+
+        # Header row: name padded left, cost on the right (Telegram-like alignment)
+        left = f"{status} {name}"
+        lines.append(f"<b>{_esc(left)}</b>{' ' * max(3, 20 - len(left))}<code>{cost} SP</code>{once_tag}")
+
+        # Effect lines
+        for eff in _compact_effect_lines(skill):
+            lines.append(f"   {_esc(eff)}")
+
+        # Locked → tell the player exactly what's missing
+        if not owned_ and not affordable:
+            lines.append(f"   🔸 +{cost - sp} SP required")
+        lines.append("")
+
         if not owned_:
             buy_buttons.append([InlineKeyboardButton(
-                f"💠 Buy — {skill['name']} ({skill['sp_cost']} SP)",
-                callback_data=f"skillbuy_{skill['name'].replace(' ','_')}"
+                f"💠 Buy {name} — {cost} SP" + ("" if affordable else " (🔒)"),
+                callback_data=f"skillbuy_{name.replace(' ', '_')}"
             )])
 
-    lines.append("\n━━━━━━━━━━━━━━━━━━━━━")
+    # Navigation footer + buttons
+    lines.append("─" * 19)
+    lines.append(f"{page + 1} / {total_pages}")
 
-    # Navigation row
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"skillpage_{page-1}_{category_filter}"))
-    if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"skillpage_{page+1}_{category_filter}"))
+    nav = [InlineKeyboardButton("◀ PREV", callback_data=f"skillpage_{max(0, page-1)}_{category_filter}")]
+    nav.append(InlineKeyboardButton("NEXT ▶", callback_data=f"skillpage_{min(total_pages-1, page+1)}_{category_filter}"))
 
-    # Category filter row
+    # Category filter rows (6 per row)
     cats = [
-        ("All","all"), ("⚔️","Combat"), ("🌀","Technique"),
-        ("🛡️","Survival"), ("💎","Elite"), ("👹","Demon Path"),
-        ("🗡️","Slayer Path"), ("💰","Utility"), ("✨","Passive"),
-        ("🌟","Legendary"), ("☠️","Forbidden")
+        ("All", "all"), ("⚔️ Combat", "Combat"), ("🌀 Tech", "Technique"),
+        ("🛡️ Surv", "Survival"), ("💎 Elite", "Elite"), ("👹 Demon", "Demon Path"),
+        ("🗡️ Slayer", "Slayer Path"), ("💰 Util", "Utility"), ("✨ Passive", "Passive"),
+        ("🌟 Legend", "Legendary"), ("☠️ Forbid", "Forbidden"),
     ]
-    cat_row = [
-        InlineKeyboardButton(f"{'✓' if (c=='all' and category_filter=='all') or category_filter==c else ''}{emoji}",
-                             callback_data=f"skillpage_0_{c}")
-        for emoji, c in cats
-    ]
+    cat_rows = []
+    row = []
+    for label, c in cats:
+        prefix = "✓ " if ((c == "all" and category_filter == "all") or category_filter == c) else ""
+        row.append(InlineKeyboardButton(f"{prefix}{label}", callback_data=f"skillpage_0_{c}"))
+        if len(row) == 3:
+            cat_rows.append(row); row = []
+    if row:
+        cat_rows.append(row)
 
     buttons = buy_buttons.copy()
-    if nav: buttons.append(nav)
-    buttons.append(cat_row)
+    buttons.append(nav)
+    buttons.extend(cat_rows)
     buttons.append([InlineKeyboardButton("📊 My Skills", callback_data="skillpage_mine")])
 
     return "\n".join(lines), InlineKeyboardMarkup(buttons), total_pages
@@ -255,17 +335,13 @@ async def skilltree(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     owned   = get_player_skills(user_id)
     sp      = player.get("skill_points", 0)
-    bonuses = get_active_skill_bonuses(owned)
 
-    text, kb, total_pages = _build_page(owned, 0)
-    header = (
-        f"💠 *Skill Points:* {sp} SP  |  ✅ *Owned:* {len(owned)}\n\n"
-    )
+    text, kb, total_pages = _build_page(owned, 0, sp=sp)
 
     if update.callback_query:
-        await _safe_edit(update.callback_query, header + text, parse_mode="Markdown", reply_markup=kb)
+        await _safe_edit(update.callback_query, text, parse_mode="HTML", reply_markup=kb)
     else:
-        await update.message.reply_text(header + text, parse_mode="Markdown", reply_markup=kb)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 # ── Skill page callback (pagination + category filter) ────────────────────
@@ -290,10 +366,9 @@ async def skilltree_page_callback(update: Update, context: ContextTypes.DEFAULT_
 
     owned   = get_player_skills(user_id)
     sp      = player.get("skill_points", 0)
-    text, kb, _ = _build_page(owned, page, category)
-    header  = f"💠 *Skill Points:* {sp} SP  |  ✅ *Owned:* {len(owned)}\n\n"
+    text, kb, _ = _build_page(owned, page, category, sp=sp)
 
-    await _safe_edit(query, header + text, parse_mode="Markdown", reply_markup=kb)
+    await _safe_edit(query, text, parse_mode="HTML", reply_markup=kb)
 
 
 async def _show_my_skills(query, user_id: int):
@@ -305,15 +380,15 @@ async def _show_my_skills(query, user_id: int):
 
     if not owned:
         text = (
-            "🌳 *YOUR SKILLS*\n\n"
-            "_You haven't bought any skills yet!_\n\n"
-            "💡 Use `/skilltree` to browse and buy skills.\n"
-            f"💠 You have *{sp} SP* to spend."
+            "🌳 <b>YOUR SKILLS</b>\n\n"
+            "<i>You haven't bought any skills yet!</i>\n\n"
+            "💡 Use <code>/skilltree</code> to browse and buy skills.\n"
+            f"💠 You have <b>{sp} SP</b> to spend."
         )
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🌳 Browse Skills", callback_data="skillpage_0_all")
         ]])
-        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=kb)
+        await _safe_edit(query, text, parse_mode="HTML", reply_markup=kb)
         return
 
     # Group owned skills by category
@@ -324,26 +399,25 @@ async def _show_my_skills(query, user_id: int):
             by_cat.setdefault(s["category"], []).append(s["name"])
 
     lines = [
-        "╔══════════════════════╗",
-        "   🌳 𝙈𝙔 𝙎𝙆𝙄𝙇𝙇𝙎",
-        f"╚══════════════════════╝\n",
-        f"✅ *Owned:* {len(owned)} skills  |  💠 *SP left:* {sp}\n",
+        "🌳 MY SKILLS",
+        "─" * 20,
+        f"✅ <b>Owned:</b> {len(owned)} skills  |  💠 <b>SP left:</b> {sp}\n",
         "━━━━━━━━━━━━━━━━━━━━━",
     ]
     for cat, names in by_cat.items():
-        lines.append(f"\n{_cat_icon(cat)} *{cat}*")
+        lines.append(f"\n{_cat_icon(cat)} <b>{cat}</b>")
         for n in names:
             lines.append(f"  ✅ {n}")
 
     lines.append("\n━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("📊 *Active Bonuses:*")
+    lines.append("<b>📊 Active Bonuses:</b>")
     for k, v in bonuses.items():
         lines.append(f"  ╰➤ {_bonus_label(k, v)}")
 
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("◀️ Back to Skill Tree", callback_data="skillpage_0_all")
     ]])
-    await _safe_edit(query, "\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+    await _safe_edit(query, "\n".join(lines), parse_mode="HTML", reply_markup=kb)
 
 
 # ── Buy skill (callback) ───────────────────────────────────────────────────
@@ -361,8 +435,8 @@ async def skillbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not context.args:
         await update.message.reply_text(
-            "Usage: `/skillbuy [skill name]`\n\nUse `/skilltree` to browse skills.",
-            parse_mode="Markdown"
+            "Usage: <code>/skillbuy [skill name]</code>\n\nUse <code>/skilltree</code> to browse skills.",
+            parse_mode="HTML"
         )
         return
     name = " ".join(context.args)
@@ -382,11 +456,11 @@ async def _buy_skill(msg, user_id: int, name: str, query=None):
         # Partial match
         skill = next((s for s in flat if name.lower() in s["name"].lower()), None)
     if not skill:
-        txt = f"❌ Skill *{name}* not found.\nUse `/skilltree` to see all skills."
+        txt = f"❌ Skill <b>{_esc(name)}</b> not found.\nUse <code>/skilltree</code> to see all skills."
         if query:
             await query.answer(f"❌ Skill '{name}' not found!", show_alert=True)
         else:
-            await msg.reply_text(txt, parse_mode="Markdown")
+            await msg.reply_text(txt, parse_mode="HTML")
         return
 
     owned = get_player_skills(user_id)
@@ -394,20 +468,20 @@ async def _buy_skill(msg, user_id: int, name: str, query=None):
         if query:
             await query.answer(f"✅ Already own {skill['name']}!", show_alert=True)
         else:
-            await msg.reply_text(f"✅ You already own *{skill['name']}*!", parse_mode="Markdown")
+            await msg.reply_text(f"✅ You already own <b>{_esc(skill['name'])}</b>!", parse_mode="HTML")
         return
 
     sp = player.get("skill_points", 0)
     if sp < skill["sp_cost"]:
         txt = (
-            f"❌ *Not enough SP!*\n\n"
-            f"Need: *{skill['sp_cost']} SP*\nYou have: *{sp} SP*\n\n"
-            f"_Earn SP by leveling up or winning duels._"
+            f"❌ <b>Not enough SP!</b>\n\n"
+            f"Need: <b>{skill['sp_cost']} SP</b>\nYou have: <b>{sp} SP</b>\n\n"
+            f"<i>Earn SP by leveling up or winning duels.</i>"
         )
         if query:
             await query.answer(f"Need {skill['sp_cost']} SP, you have {sp}!", show_alert=True)
         else:
-            await msg.reply_text(txt, parse_mode="Markdown")
+            await msg.reply_text(txt, parse_mode="HTML")
         return
 
     # Purchase — save to MongoDB skill_tree
@@ -430,47 +504,47 @@ async def _buy_skill(msg, user_id: int, name: str, query=None):
         for k, v in skill["bonus"].items()
     )
     result = (
-        f"✅ *SKILL PURCHASED!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{_cat_icon(skill['category'])} *{skill['name']}*\n"
-        f"_{skill['description']}_\n\n"
-        f"📊 *Bonuses applied:*\n{bonus_lines}\n\n"
-        f"💠 SP remaining: *{sp - skill['sp_cost']}*"
+        f"✅ <b>SKILL PURCHASED!</b>\n"
+        f"{'─' * 20}\n"
+        f"{_cat_icon(skill['category'])} <b>{_esc(skill['name'])}</b>  <code>{skill['sp_cost']} SP</code>\n"
+        f"<i>{_esc(skill['description'])}</i>\n\n"
+        f"<b>📊 Bonuses applied:</b>\n{bonus_lines}\n\n"
+        f"💠 SP remaining: <b>{sp - skill['sp_cost']}</b>"
     )
 
     if query:
         # Refresh the skill tree page after purchase
         await query.answer(f"✅ {skill['name']} purchased!")
-        await _safe_edit(query, result, parse_mode="Markdown",
+        await _safe_edit(query, result, parse_mode="HTML",
                          reply_markup=InlineKeyboardMarkup([[
                              InlineKeyboardButton("◀️ Back to Skill Tree", callback_data="skillpage_0_all")
                          ]]))
     else:
-        await msg.reply_text(result, parse_mode="Markdown")
+        await msg.reply_text(result, parse_mode="HTML")
 
 
 # ── /skilllist ────────────────────────────────────────────────────────────
 async def skilllist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quick text list of all skills — use /skilltree for interactive browser."""
-    lines = [f"🌳 *ALL {TOTAL_SKILL_COUNT} SKILLS*\n━━━━━━━━━━━━━━━━━━━━━\n"]
+    lines = [f"🌳 <b>ALL {TOTAL_SKILL_COUNT} SKILLS</b>\n{'─' * 20}\n"]
     for cat, skills in SKILLS.items():
         icon = _cat_icon(cat)
-        lines.append(f"{icon} *{cat.upper()}* ({len(skills)} skills)")
+        lines.append(f"{icon} <b>{cat.upper()}</b> ({len(skills)} skills)")
         for s in skills:
-            lines.append(f"  ╰➤ *{s['name']}* ({s['sp_cost']} SP) — _{s['description']}_")
+            lines.append(f"  ╰➤ <b>{_esc(s['name'])}</b> ({s['sp_cost']} SP) — <i>{_esc(s['description'])}</i>")
         lines.append("")
-    lines.append("💡 `/skilltree` — Interactive browser with Buy buttons\n`/skillbuy [name]` — Buy directly")
+    lines.append("💡 <code>/skilltree</code> — Interactive browser with Buy buttons\n<code>/skillbuy [name]</code> — Buy directly")
     # Split into chunks to avoid 4096 char limit
     text = "\n".join(lines)
     chunks = [text[i:i+3800] for i in range(0, len(text), 3800)]
     for chunk in chunks:
-        await update.message.reply_text(chunk, parse_mode="Markdown")
+        await update.message.reply_text(chunk, parse_mode="HTML")
 
 
 # ── /skillinfo ────────────────────────────────────────────────────────────
 async def skillinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: `/skillinfo [skill name]`", parse_mode="Markdown")
+        await update.message.reply_text("Usage: <code>/skillinfo [skill name]</code>", parse_mode="HTML")
         return
     name  = " ".join(context.args)
     flat  = _all_skills_flat()
@@ -478,32 +552,27 @@ async def skillinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not skill:
         skill = next((s for s in flat if name.lower() in s["name"].lower()), None)
     if not skill:
-        await update.message.reply_text(f"❌ Skill *{name}* not found.", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Skill <b>{_esc(name)}</b> not found.", parse_mode="HTML")
         return
 
-    bonus_lines = "\n".join(f"  ╰➤ {_bonus_label(k,v)}" for k, v in skill["bonus"].items())
     user_id = update.effective_user.id
     owned   = get_player_skills(user_id)
-    status  = "✅ *OWNED*" if skill["name"] in owned else f"💠 *{skill['sp_cost']} SP*"
+    status  = "✅ OWNED" if skill["name"] in owned else f"💠 {skill['sp_cost']} SP"
 
-    once_line = "\n🔔 *Once per battle* — fires once then locks until next fight" if skill.get("type") == "once_per_battle" else ""
-    backlash = {k: v for k, v in skill["bonus"].items() if isinstance(v, (int,float)) and v < 0}
-    backlash_line = ""
-    if backlash:
-        bl_parts = " | ".join(_bonus_label(k, v) for k, v in backlash.items())
-        backlash_line = f"\n⚠️ *Backlash:* {bl_parts}"
+    lines = [
+        "⚔️ SKILL TREE",
+        f"{_cat_icon(skill['category'])} <b>{_esc(skill['name'])}</b>" + " " * max(3, 20 - len(skill['name'])) + f"<code>{skill['sp_cost']} SP</code>",
+        f"   🏷 {_esc(skill['category'])}  •  {status}",
+    ]
+    if skill.get("type") == "once_per_battle":
+        lines.append("   🔔 Once per battle")
+    lines.append("─" * 20)
+    for eff in _compact_effect_lines(skill):
+        lines.append(f"   {_esc(eff)}")
+    lines.append("")
+    lines.append(f"<i>{_esc(skill['description'])}</i>")
 
-    await update.message.reply_text(
-        f"{_cat_icon(skill['category'])} *{skill['name']}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏷️ Category: *{skill['category']}*\n"
-        f"💠 Cost: *{skill['sp_cost']} SP*  |  {status}"
-        f"{once_line}\n\n"
-        f"📖 _{skill['description']}_\n\n"
-        f"📊 *Bonuses:*\n{bonus_lines}"
-        f"{backlash_line}",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # ── /skills — show player's owned skills + active bonuses ─────────────────
@@ -529,31 +598,31 @@ def _build_my_skills_page(user_id: int, cat_filter: str = "all") -> tuple:
         show_cats = [(cat, skills) for cat, skills in by_cat.items() if cat == cat_filter]
 
     # Build text
-    lines = [f"🌳 *MY SKILLS* ({len(owned)} owned)  💠 *{sp} SP*",
-             "━━━━━━━━━━━━━━━━━━━━━"]
+    lines = [f"🌳 <b>MY SKILLS</b> ({len(owned)} owned)  💠 <b>{sp} SP</b>",
+             "─" * 20]
 
     for cat, cat_skills in show_cats:
-        lines.append(f"\n{_cat_icon(cat)} *{cat}*")
+        lines.append(f"\n{_cat_icon(cat)} <b>{cat}</b>")
         for s in cat_skills:
             status = "🔴" if s["name"] in deacted else "✅"
             once   = " _(once/battle)_" if s.get("type") == "once_per_battle" else ""
             lines.append(f"  {status} {s['name']}{once}")
 
     if not show_cats:
-        lines.append("\n_No skills in this category._")
+        lines.append("\n<i>No skills in this category.</i>")
 
     # Bonuses summary - show more buffs with "More" button if needed
     active_names = [s for s in owned if s not in deacted]
     bonuses = get_active_skill_bonuses(active_names)
     if bonuses:
-        lines.append("\n━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("📊 *Active Bonuses:*")
+        lines.append("\n" + "─" * 20)
+        lines.append("<b>📊 Active Bonuses:</b>")
         bonus_limit = 15  # show up to 15 bonuses
         bonus_items = list(bonuses.items())
         for k, v in bonus_items[:bonus_limit]:
             lines.append(f"  ╰➤ {_bonus_label(k, v)}")
         if len(bonuses) > bonus_limit:
-            lines.append(f"  ╰➤ _...+{len(bonuses)-bonus_limit} more_")
+            lines.append(f"  ╰➤ <i>...+{len(bonuses)-bonus_limit} more</i>")
             # Add a button to view all bonuses
 
     # Build keyboard — category tabs
@@ -603,15 +672,15 @@ async def skills(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not owned:
         await update.message.reply_text(
-            "🌳 *Your Skills*\n\n_No skills owned yet._\n\n"
-            f"💠 You have *{sp} SP* available.\n"
-            "Use `/skilltree` to browse and buy skills.",
-            parse_mode="Markdown"
+            "🌳 <b>Your Skills</b>\n\n<i>No skills owned yet.</i>\n\n"
+            f"💠 You have <b>{sp} SP</b> available.\n"
+            "Use <code>/skilltree</code> to browse and buy skills.",
+            parse_mode="HTML"
         )
         return
 
     text, kb = _build_my_skills_page(user_id, "all")
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 
 async def myskills_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -628,25 +697,25 @@ async def myskills_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active  = [s for s in owned if s not in deacted]
         inactive = [s for s in owned if s in deacted]
         lines = [
-            "⚙️ *SKILL MANAGER*",
-            "━━━━━━━━━━━━━━━━━━━━━",
-            f"✅ Active: *{len(active)}*  🔴 Deactivated: *{len(inactive)}*\n",
+            "⚙️ <b>SKILL MANAGER</b>",
+            "─" * 20,
+            f"✅ Active: <b>{len(active)}</b>  🔴 Deactivated: <b>{len(inactive)}</b>\n",
         ]
         if inactive:
-            lines.append("*Deactivated:*")
+            lines.append("<b>Deactivated:</b>")
             for s in inactive:
                 lines.append(f"  🔴 {s}")
         lines += [
             "",
-            "━━━━━━━━━━━━━━━━━━━━━",
-            "💡 `/deactivate [name]` or `/deactivateall`",
-            "💡 `/reactivate [name]` or `/reactivateall`",
+            "─" * 20,
+            "💡 <code>/deactivate [name]</code> or <code>/deactivateall</code>",
+            "💡 <code>/reactivate [name]</code> or <code>/reactivateall</code>",
         ]
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Back", callback_data="myskills_all")
         ]])
         try:
-            await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+            await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=kb)
         except Exception:
             pass
         return
@@ -659,25 +728,25 @@ async def myskills_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bonuses = get_active_skill_bonuses(active_names)
         
         lines = [
-            "📊 *ALL ACTIVE BONUSES*",
-            "━━━━━━━━━━━━━━━━━━━━━",
-            f"_Total: {len(bonuses)} active buffs_\n",
+            "📊 <b>ALL ACTIVE BONUSES</b>",
+            "─" * 20,
+            f"<i>Total: {len(bonuses)} active buffs</i>\n",
         ]
         
         if bonuses:
             for k, v in sorted(bonuses.items()):
                 lines.append(f"  ╰➤ {_bonus_label(k, v)}")
         else:
-            lines.append("_No active bonuses._")
+            lines.append("<i>No active bonuses.</i>")
         
-        lines.append("\n━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("_From your equipped items and learned skills_")
+        lines.append("\n" + "─" * 20)
+        lines.append("<i>From your equipped items and learned skills</i>")
         
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Back to Skills", callback_data="myskills_all")
         ]])
         try:
-            await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+            await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=kb)
         except Exception:
             pass
         return
@@ -685,7 +754,7 @@ async def myskills_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cat_filter = data[len("myskills_"):] if data.startswith("myskills_") else "all"
     text, kb   = _build_my_skills_page(user_id, cat_filter)
     try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:
         pass
 
@@ -695,97 +764,6 @@ async def skilltree_owned(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await skills(update, context)
 
 
-
-async def skillinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /skillinfo [name]  — detailed view of any skill
-    Shows: SP cost, type, bonuses, backlash, description, category
-    """
-    user_id = update.effective_user.id
-
-    if not context.args:
-        await update.message.reply_text(
-            "🔍 *SKILL INFO*\n\n"
-            "Usage: `/skillinfo [skill name]`\n\n"
-            "Examples:\n"
-            "  `/skillinfo iron body`\n"
-            "  `/skillinfo berserker`\n"
-            "  `/skillinfo crimson reaper`\n\n"
-            f"Use `/skilltree` to browse all {TOTAL_SKILL_COUNT} skills.",
-            parse_mode='Markdown'
-        )
-        return
-
-    query_str = ' '.join(context.args).strip().lower()
-    flat      = _all_skills_flat()
-
-    # Exact match first, then partial
-    match = next((s for s in flat if s['name'].lower() == query_str), None)
-    if not match:
-        match = next((s for s in flat if query_str in s['name'].lower()), None)
-    if not match:
-        # Suggest closest
-        suggestions = [s['name'] for s in flat if any(w in s['name'].lower() for w in query_str.split())]
-        sugg_text = '\n'.join(f"  • {n}" for n in suggestions[:5]) if suggestions else "_No similar skills found._"
-        await update.message.reply_text(
-            f"❌ Skill *{query_str}* not found.\n\n"
-            f"Did you mean:\n{sugg_text}\n\n"
-            f"Use `/skilltree` to browse all skills.",
-            parse_mode='Markdown'
-        )
-        return
-
-    skill    = match
-    cat_icon = _cat_icon(skill['category'])
-    sp       = skill['sp_cost']
-    stype    = skill.get('type', 'passive')
-    desc     = skill.get('description', '')
-    bonus    = skill.get('bonus', {})
-
-    # Separate positive vs negative (backlash) bonuses
-    pos_bonuses = {k: v for k, v in bonus.items() if not (isinstance(v, (int,float)) and v < 0)}
-    neg_bonuses = {k: v for k, v in bonus.items() if isinstance(v, (int,float)) and v < 0}
-
-    type_label = "⚡ *One-time use per battle*" if stype == 'once_per_battle' else "♾️ *Passive — always active*"
-
-    # Check if player owns it
-    owned_skills = get_player_skills(user_id)
-    deactivated  = _get_deactivated(user_id)
-    owned  = skill['name'] in owned_skills
-    active = owned and skill['name'] not in deactivated
-    status_line = ""
-    if owned:
-        status_line = "\n✅ *You own this skill*" + (" _(active)_" if active else " _(deactivated)_")
-
-    lines = [
-        f"╔══════════════════════════╗",
-        f"   🔍 𝙎𝙆𝙄𝙇𝙇 𝙄𝙉𝙁𝙊",
-        f"╚══════════════════════════╝\n",
-        f"{cat_icon} *{skill['name']}*",
-        f"📂 Category: *{skill['category']}*",
-        f"💠 SP Cost: *{sp} SP*",
-        f"🔧 Type: {type_label}{status_line}\n",
-        f"📖 _{desc}_\n",
-        f"━━━━━━━━━━━━━━━━━━━━━",
-    ]
-
-    if pos_bonuses:
-        lines.append("✅ *Bonuses:*")
-        for k, v in pos_bonuses.items():
-            lines.append(f"   ╰➤ {_bonus_label(k, v)}")
-
-    if neg_bonuses:
-        lines.append("⚠️ *Backlash:*")
-        for k, v in neg_bonuses.items():
-            lines.append(f"   ╰➤ {_bonus_label(k, v)}")
-
-    lines.append("━━━━━━━━━━━━━━━━━━━━━")
-    if not owned:
-        lines.append(f"💡 Use `/skillbuy {skill['name']}` to purchase")
-    elif not active:
-        lines.append(f"💡 Use `/reactivate {skill['name']}` to enable")
-
-    await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
 
 # ── /deactivate — toggle a skill off without losing it ─────────────────────
 async def deactivateskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -813,28 +791,28 @@ async def deactivateskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         inactive_list = [s for s in owned if s in deactive]
 
         lines = [
-            "⚙️ *SKILL MANAGER*",
-            "━━━━━━━━━━━━━━━━━━━━━",
-            f"✅ *Active:* {len(active_list)} skills",
-            f"🔴 *Deactivated:* {len(inactive_list)} skills",
+            "⚙️ <b>SKILL MANAGER</b>",
+            "─" * 20,
+            f"✅ <b>Active:</b> {len(active_list)} skills",
+            f"🔴 <b>Deactivated:</b> {len(inactive_list)} skills",
             "",
         ]
         if active_list:
-            lines.append("*Active skills:*")
+            lines.append("<b>Active skills:</b>")
             for s in active_list[:15]:
                 lines.append(f"  ✅ {s}")
         if inactive_list:
-            lines.append("\n*Deactivated skills:*")
+            lines.append("\n<b>Deactivated skills:</b>")
             for s in inactive_list:
                 lines.append(f"  🔴 {s}")
 
         lines += [
             "",
-            "━━━━━━━━━━━━━━━━━━━━━",
-            "💡 `/deactivate [skill name]` — deactivate",
-            "💡 `/reactivate [skill name]` — re-enable",
+            "─" * 20,
+            "💡 <code>/deactivate [skill name]</code> — deactivate",
+            "💡 <code>/reactivate [skill name]</code> — re-enable",
         ]
-        await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
+        await update.message.reply_text('\n'.join(lines), parse_mode='HTML')
         return
 
     skill_name = ' '.join(context.args).strip()
@@ -845,27 +823,27 @@ async def deactivateskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match = next((s for s in owned if skill_name.lower() in s.lower()), None)
     if not match:
         await update.message.reply_text(
-            f"❌ *{skill_name}* not found in your skills.\n\n"
-            f"Use `/deactivate` to see your full skill list.",
-            parse_mode='Markdown'
+            f"❌ <b>{_esc(skill_name)}</b> not found in your skills.\n\n"
+            f"Use <code>/deactivate</code> to see your full skill list.",
+            parse_mode='HTML'
         )
         return
 
     if match in deactive:
         await update.message.reply_text(
-            f"❌ *{match}* is already deactivated.\n"
-            f"Use `/reactivate {match}` to re-enable it.",
-            parse_mode='Markdown'
+            f"❌ <b>{_esc(match)}</b> is already deactivated.\n"
+            f"Use <code>/reactivate {match}</code> to re-enable it.",
+            parse_mode='HTML'
         )
         return
 
     deactive.append(match)
     _save_deactivated(user_id, deactive)
     await update.message.reply_text(
-        f"🔴 *{match}* deactivated.\n\n"
-        f"_Its bonuses will no longer apply in battle._\n"
-        f"Use `/reactivate {match}` to turn it back on.",
-        parse_mode='Markdown'
+        f"🔴 <b>{_esc(match)}</b> deactivated.\n\n"
+        f"<i>Its bonuses will no longer apply in battle.</i>\n"
+        f"Use <code>/reactivate {match}</code> to turn it back on.",
+        parse_mode='HTML'
     )
 
 
@@ -879,10 +857,10 @@ async def reactivateskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "💡 Usage: `/reactivate [skill name]`\n\n"
-            "Use `/deactivate` to see your deactivated skills.\n"
-            "Or: `/reactivateall` to enable everything at once.",
-            parse_mode='Markdown'
+            "💡 Usage: <code>/reactivate [skill name]</code>\n\n"
+            "Use <code>/deactivate</code> to see your deactivated skills.\n"
+            "Or: <code>/reactivateall</code> to enable everything at once.",
+            parse_mode='HTML'
         )
         return
 
@@ -894,18 +872,18 @@ async def reactivateskill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match = next((s for s in deactive if skill_name.lower() in s.lower()), None)
     if not match:
         await update.message.reply_text(
-            f"❌ *{skill_name}* is not deactivated.\n\n"
-            f"Use `/deactivate` to see your deactivated skills.",
-            parse_mode='Markdown'
+            f"❌ <b>{_esc(skill_name)}</b> is not deactivated.\n\n"
+            f"Use <code>/deactivate</code> to see your deactivated skills.",
+            parse_mode='HTML'
         )
         return
 
     deactive.remove(match)
     _save_deactivated(user_id, deactive)
     await update.message.reply_text(
-        f"✅ *{match}* reactivated!\n\n"
-        f"_Its bonuses will apply in battle again._",
-        parse_mode='Markdown'
+        f"✅ <b>{_esc(match)}</b> reactivated!\n\n"
+        f"<i>Its bonuses will apply in battle again.</i>",
+        parse_mode='HTML'
     )
 
 
@@ -924,10 +902,10 @@ async def deactivateall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _save_deactivated(user_id, list(owned))
     await update.message.reply_text(
-        f"🔴 *All {len(owned)} skills deactivated.*\n\n"
-        f"_No skill bonuses will apply in battle._\n"
-        f"Use `/reactivateall` to re-enable everything.",
-        parse_mode='Markdown'
+        f"🔴 <b>All {len(owned)} skills deactivated.</b>\n\n"
+        f"<i>No skill bonuses will apply in battle.</i>\n"
+        f"Use <code>/reactivateall</code> to re-enable everything.",
+        parse_mode='HTML'
     )
 
 
@@ -947,9 +925,9 @@ async def reactivateall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = len(deactive)
     _save_deactivated(user_id, [])
     await update.message.reply_text(
-        f"✅ *{count} skill(s) reactivated!*\n\n"
-        f"_All your skill bonuses are now active in battle._",
-        parse_mode='Markdown'
+        f"✅ <b>{count} skill(s) reactivated!</b>\n\n"
+        f"<i>All your skill bonuses are now active in battle.</i>",
+        parse_mode='HTML'
     )
 
 
