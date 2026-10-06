@@ -262,6 +262,70 @@ def build_encounter_keyboard():
     ])
 
 # ─────────────────────────────────────────────────────────────────────────
+#  WILD ENCOUNTER CARD UI
+#  🌲 header • threat banner • ⦿ combatant blocks • separator footer
+# ─────────────────────────────────────────────────────────────────────────
+ENC_DIV   = "╌" * 30          # major divider (header / footer)
+ENC_DIV_S = "╌" * 24          # minor divider (between combatants)
+ENC_BAR   = "█" * 20          # full health bar
+
+
+def _enc_bar(current: int, maximum: int, length: int = 20) -> str:
+    """Solid block HP bar that depletes left-to-right."""
+    if maximum <= 0:
+        return "░" * length
+    filled = max(0, min(length, int(length * current / maximum)))
+    return "█" * filled + "░" * (length - filled)
+
+
+def _threat_emoji(threat: str) -> str:
+    t = str(threat).upper()
+    if "HIGH" in t or "BOSS" in t or "ELITE" in t:
+        return "🔴"
+    if "MODERATE" in t or "MEDIUM" in t:
+        return "🟠"
+    if "LOW" in t:
+        return "🟢"
+    return "⚪"
+
+
+def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
+                          active_pet: Optional[Dict] = None,
+                          shard_found: int = 0) -> str:
+    """Render the compact wild-encounter card shown on /explore."""
+    enemy_level  = max(1, int(preview.get('recommended_level', 1) or 1))
+    player_level = get_level(player['xp'])
+    threat       = preview['threat']
+    event_label  = preview['event_label'] or "🌲 WILD ENCOUNTER"
+    event_desc   = preview['event_description'] or "The area is quiet..."
+
+    lines = [
+        f"{event_label}  //  {event_desc}",
+        f"⚠️ Threat: {threat}  •  Rec. Lv. {enemy_level}",
+        ENC_DIV,
+        f"⦿ {enemy['name'].upper()}"
+        + ("  ☠️" if enemy.get('is_boss') else ""),
+        f"   Lv. {enemy_level}  │  ❤️ {enemy['hp']:,}/{enemy['hp']:,}",
+        f"   {_enc_bar(enemy['hp'], enemy['hp'])}",
+        ENC_DIV_S,
+        f"⦿ 『{player['name']}』",
+        f"   Lv. {player_level}  │  ❤️ {player['hp']:,}/{player['max_hp']:,}",
+        f"   {_enc_bar(player['hp'], player['max_hp'])}",
+        ENC_DIV,
+    ]
+
+    # ── Footer: active pet status + reward preview ───────────────────────
+    if active_pet:
+        pet_emoji = PETS.get(active_pet['name'], {}).get('emoji', '🐾')
+        pet_line = f"{pet_emoji} {active_pet['name']}: Active"
+    else:
+        pet_line = "🐾 No pet active"
+    lines.append(f"{pet_line}  //  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥")
+    if shard_found:
+        lines.append("🔮 You found a Spirit Shard while exploring! (+1)")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────────────────────────────────────
 #  YOUR EXISTING HELPER FUNCTIONS (unchanged)
 # ─────────────────────────────────────────────────────────────────────────
 def is_in_battle(user_id) -> bool:
@@ -725,7 +789,6 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     zone = next((z for z in TRAVEL_ZONES if z['id'] == location), TRAVEL_ZONES[0])
-    boss_tag = "  ⚠️ *BOSS*" if enemy.get('is_boss') else ""
     active_pet = get_active_pet(user_id)
     preview = encounter_preview(enemy, level)
 
@@ -738,23 +801,11 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             _shard_found = 0
 
-    enemy_hp_bar  = format_hp_bar_poke(enemy['hp'], enemy['hp'])
-    player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
-    player_level  = get_level(player['xp'])
-
-    encounter_text = (
-        f"*{enemy['name'].upper()}*{boss_tag}\n"
-        f"{preview['event_label']} — {preview['event_description']}\n"
-        f"Threat: *{preview['threat']}* | Recommended level: *{preview['recommended_level']}*\n"
-        f"HP : {enemy['hp']:,}/{enemy['hp']:,}\n"
-        f"`{enemy_hp_bar}`\n\n"
-        f"─────────────────────\n"
-        f"『{player['name']}』\n"
-        f"Level : {player_level}  |  HP : {player['hp']:,}/{player['max_hp']:,}\n"
-        f"`{player_hp_bar}`"
-        f"{chr(10) + '🐾 ' + active_pet['name'] + ' active' if active_pet else ''}\n\n"
-        f"⭐ `{enemy['xp']:,}` XP  💰 `{enemy['yen']:,}`¥"
-        f"{chr(10) + '🔮 You found a Spirit Shard while exploring! (+1)' if _shard_found else ''}"
+    # ── New card-style encounter UI (🌲 header, ⦿ blocks, ╌ dividers) ────
+    encounter_text = format_wild_encounter(
+        enemy, player, preview,
+        active_pet=active_pet,
+        shard_found=_shard_found,
     )
 
     if is_callback:
@@ -763,7 +814,8 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=encounter_text,
             image_category="enemies",
             image_key=enemy['name'],
-            reply_markup=build_encounter_keyboard()
+            reply_markup=build_encounter_keyboard(),
+            parse_mode=None
         )
     else:
         await send_photo_message(
@@ -771,7 +823,8 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=encounter_text,
             image_category="enemies",
             image_key=enemy['name'],
-            reply_markup=build_encounter_keyboard()
+            reply_markup=build_encounter_keyboard(),
+            parse_mode=None
         )
 
 # ─────────────────────────────────────────────────────────────────────────
