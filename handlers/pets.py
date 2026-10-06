@@ -24,7 +24,7 @@ from telegram.ext import ContextTypes
 
 from utils.database import (
     get_player, update_player, col, add_item, append_battle_log,
-    remove_item, _invalidate_inventory_cache,
+    _invalidate_inventory_cache,
 )
 from utils.guards import owner_only_button, no_button_spam
 
