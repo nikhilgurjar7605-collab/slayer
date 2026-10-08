@@ -122,6 +122,23 @@ def init_db():
     db.duels.create_index("target_id")
     db.market_listings.create_index("status")
     db.market_listings.create_index("seller_id")
+
+    # ── Night Market (player marketplace + bounties) — separate from stock market ──
+    db.nm_escrow.create_index([("user_id", 1), ("item_name", 1)], unique=True)
+    db.night_market_listings.create_index("listing_id", unique=True)
+    db.night_market_listings.create_index([("status", 1), ("expires_at", 1)])
+    db.night_market_listings.create_index([("status", 1), ("unit_price", 1)])
+    db.night_market_listings.create_index("seller_id")
+    db.night_market_bounties.create_index("bounty_id", unique=True)
+    db.night_market_bounties.create_index([("status", 1), ("expires_at", 1)])
+    db.night_market_bounties.create_index([("target_id", 1), ("status", 1)])
+    db.night_market_bounties.create_index("creator_id")
+    db.night_market_bounties.create_index("hunter_id")
+    db.nm_counters.create_index("_id", unique=True)
+    db.nm_ledger.create_index([("player_id", 1), ("created_at", -1)])
+    db.nm_ledger.create_index("reference_id")
+    db.nm_audit.create_index([("action", 1), ("created_at", -1)])
+    db.nm_config.create_index("_id", unique=True)
     db.bank_accounts.create_index("user_id", unique=True)
     db.bank_giveaways.create_index("status")
     db.bank_giveaways.create_index("ends_at")
@@ -1096,6 +1113,205 @@ def was_referred(user_id):
 def get_referrer(user_id):
     doc = col("referrals").find_one({"referred_id": user_id})
     return doc["referrer_id"] if doc else None
+
+
+# ── Night Market primitives (marketplace + bounties) ─────────────────────
+# These are the ONLY sanctioned way to move yen / inventory in market flows:
+# every mutation is a single atomic MongoDB update with guard conditions, so
+# disconnected read-modify-write races (double buys, double spends) cannot
+# happen.  The legacy /market and stock-market systems are untouched.
+
+def _nm_atomic_player_update(user_id, filters, inc=None, set_fields=None):
+    """Atomically $inc/$set fields on a player doc, guarded by `filters`.
+
+    Filters are merged onto {"user_id": user_id}; e.g. {"yen": {"$gte": n}}
+    makes the debit fail outright when the balance is insufficient.
+    Returns True when exactly one document was modified.
+    """
+    query = {"user_id": int(user_id)}
+    for k, v in (filters or {}).items():
+        if k == "user_id":
+            continue
+        if k in query:  # conflicting guard keys -> invalid request
+            raise ValueError(f"conflicting filter key: {k}")
+        query[k] = v
+    update = {}
+    if inc:
+        update["$inc"] = {k: int(v) for k, v in inc.items()}
+    if set_fields:
+        update["$set"] = dict(set_fields)
+    if not update:
+        return False
+    res = col("players").update_one(query, update)
+    ok = res.modified_count > 0
+    if ok:
+        _player_cache.pop(str(int(user_id)), None)
+    return ok
+
+
+def atomic_debit_yen(user_id, amount) -> bool:
+    """Deduct yen only if balance >= amount. Atomic (single guarded $inc)."""
+    amount = int(amount)
+    if amount <= 0:
+        return True
+    return _nm_atomic_player_update(user_id, {"yen": {"$gte": amount}}, inc={"yen": -amount})
+
+
+def atomic_credit_yen(user_id, amount) -> bool:
+    """Add yen atomically. Refuses to push the balance negative."""
+    amount = int(amount)
+    if amount == 0:
+        return True
+    filters = {}
+    if amount < 0:
+        filters["yen"] = {"$gte": -amount}
+    return _nm_atomic_player_update(user_id, filters, inc={"yen": amount})
+
+
+def escrow_locked_quantity(user_id, item_name) -> int:
+    """Total quantity of an item currently locked in Night Market escrow."""
+    total = 0
+    for d in col("nm_escrow").find({"user_id": int(user_id), "item_name": canonical_item_name(item_name)}):
+        total += int(d.get("quantity", 0) or 0)
+    return total
+
+
+def get_available_inventory(user_id):
+    """Inventory list minus quantities held in escrow (usable counts only)."""
+    out = []
+    for it in get_inventory(user_id):
+        locked = escrow_locked_quantity(user_id, it["item_name"])
+        avail = max(0, int(it.get("quantity", 0)) - locked)
+        if avail > 0:
+            row = dict(it)
+            row["quantity"] = avail
+            out.append(row)
+    return out
+
+
+def atomic_escrow_lock(user_id, item_name, item_type, qty) -> bool:
+    """Move `qty` of an item into escrow IF the usable (unlocked) inventory
+    actually covers it. Single guarded update — prevents selling escrowed
+    items twice under any race condition."""
+    name = canonical_item_name(item_name)
+    qty = int(qty)
+    if qty <= 0:
+        return False
+    inv = col("inventory").find_one({"user_id": int(user_id),
+                                     "item_name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+    have = int(inv.get("quantity", 0)) if inv else 0
+    locked = escrow_locked_quantity(user_id, name)
+    if have - locked < qty:
+        return False
+    pattern = f"^{re.escape(name)}$"
+    res = col("inventory").update_one(
+        {"user_id": int(user_id), "item_name": {"$regex": pattern, "$options": "i"},
+         "quantity": {"$gte": qty + locked}},
+        {"$inc": {"quantity": -qty},
+         "$set": {"item_name": name, "item_type": item_type},
+         "$setOnInsert": {"user_id": int(user_id)}},
+        upsert=True)
+    if res.modified_count == 0:
+        _invalidate_inventory_cache(user_id)
+        return False
+    col("nm_escrow").update_one({"user_id": int(user_id), "item_name": name},
+                                {"$inc": {"quantity": qty}, "$set": {"item_type": item_type}},
+                                upsert=True)
+    _invalidate_inventory_cache(user_id)
+    return True
+
+
+def atomic_escrow_release(user_id, item_name, qty) -> bool:
+    """Return `qty` from escrow back to usable inventory. Never releases more
+    than is locked (atomic conditional decrement)."""
+    name = canonical_item_name(item_name)
+    qty = int(qty)
+    if qty <= 0:
+        return True
+    res = col("nm_escrow").update_one({"user_id": int(user_id), "item_name": name,
+                                      "quantity": {"$gte": qty}},
+                                      {"$inc": {"quantity": -qty}})
+    if res.modified_count == 0:
+        return False
+    itype = col("nm_escrow").find_one({"user_id": int(user_id), "item_name": name},
+                                      {"item_type": 1}) or {}
+    add_item(user_id, name, itype.get("item_type", "item"), qty)
+    return True
+
+
+def atomic_transfer_escrow(from_id, to_id, item_name, qty) -> bool:
+    """Atomically move escrowed goods to a buyer's usable inventory.
+    Step 1 decrements escrow only if enough is locked (the race gate);
+    step 2 credits inventory; on failure of step 2 the lock is restored."""
+    name = canonical_item_name(item_name)
+    qty = int(qty)
+    if qty <= 0:
+        return False
+    res = col("nm_escrow").update_one({"user_id": int(from_id), "item_name": name,
+                                      "quantity": {"$gte": qty}},
+                                      {"$inc": {"quantity": -qty}})
+    if res.modified_count == 0:
+        return False
+    try:
+        itype = col("nm_escrow").find_one({"user_id": int(from_id), "item_name": name},
+                                          {"item_type": 1}) or {}
+        add_item(to_id, name, itype.get("item_type", "item"), qty)
+    except Exception as e:
+        log.error("[NM] escrow transfer rollback failed: %s", e)
+        col("nm_escrow").update_one({"user_id": int(from_id), "item_name": name},
+                                    {"$inc": {"quantity": qty}}, upsert=True)
+        return False
+    return True
+
+
+def nm_next_id(counter_key: str) -> int:
+    """Monotonic public id generator (#MK48291 style numbering)."""
+    from pymongo import ReturnDocument
+    doc = col("nm_counters").find_one_and_update(
+        {"_id": counter_key}, {"$inc": {"seq": 1}}, upsert=True,
+        return_document=ReturnDocument.AFTER)
+    return int((doc or {}).get("seq", 1))
+
+
+def nm_log_ledger(player_id, entry_type, amount, reference_type, reference_id, metadata=None):
+    """Permanent transaction record (signed amount: -debit / +credit)."""
+    col("nm_ledger").insert_one({
+        "player_id": int(player_id), "type": entry_type, "amount": int(amount),
+        "reference_type": reference_type, "reference_id": str(reference_id),
+        "metadata": metadata or {}, "created_at": datetime.now(),
+    })
+
+
+def nm_audit(action, actor_id, details=None):
+    """Audit trail for disputes/exploit hunting."""
+    col("nm_audit").insert_one({
+        "action": action, "actor_id": int(actor_id) if actor_id is not None else None,
+        "details": details or {}, "created_at": datetime.now(),
+    })
+
+
+def nm_get_config() -> dict:
+    """Night Market economy settings (DB-configurable, cached 30s)."""
+    import time as _t
+    cached = _nm_config_cache.get("cfg")
+    if cached and _t.time() - cached[1] < 30:
+        return cached[0]
+    doc = col("nm_config").find_one({"_id": "config"}) or {}
+    cfg = {k: v for k, v in doc.items() if k != "_id"}
+    _nm_config_cache["cfg"] = (cfg, _t.time())
+    return cfg
+
+
+_nm_config_cache = {}
+
+
+def nm_set_config(**kwargs):
+    col("nm_config").update_one({"_id": "config"}, {"$set": kwargs}, upsert=True)
+    _nm_config_cache.clear()
+
+
+def nm_get_banner() -> str:
+    return nm_get_config().get("banner_file_id", "")
 
 
 # ── Compatibility shims ───────────────────────────────────────────────────
