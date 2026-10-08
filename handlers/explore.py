@@ -169,78 +169,62 @@ async def edit_photo_caption(
 # ─────────────────────────────────────────────────────────────────────────
 #  UI FORMATTING FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────
-def format_hp_bar_poke(current: int, maximum: int, length: int = 10) -> str:
+def format_emoji_bar(current: int, maximum: int, color_emoji: str, bg_emoji: str = "⬛", length: int = 10) -> str:
     if maximum <= 0:
-        return "░" * length
+        return bg_emoji * length
     percent = max(0.0, min(1.0, current / maximum))
     filled = int(length * percent)
-    return "█" * filled + "░" * (length - filled)
+    return f"[{color_emoji * filled}{bg_emoji * (length - filled)}]"
 
 def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_lines: List[str] = None, turn: int = None) -> str:
-    enemy_hp_bar  = format_hp_bar_poke(state['enemy_hp'], state['enemy_max_hp'])
-    player_hp_bar = format_hp_bar_poke(player['hp'], player['max_hp'])
+    enemy_hp_bar  = format_emoji_bar(state['enemy_hp'], state['enemy_max_hp'], "🟥")
+    player_hp_bar = format_emoji_bar(player['hp'], player['max_hp'], "🟩")
+    player_sta_bar = format_emoji_bar(player['sta'], player['max_sta'], "🟦")
 
-    enemy_block = (
-        f"☠️ *{state['enemy_name']}*\n"
-        f"HP : {state['enemy_hp']:,}/{state['enemy_max_hp']:,}\n"
-        f"`{enemy_hp_bar}`"
-    )
+    boss_icon = " ☠️" if state.get('is_boss') else ""
+    turn_line = f"  (Turn {turn})" if turn is not None else ""
 
-    turn_line = f"*Turn {turn}*" if turn is not None else ""
+    parts = []
+    parts.append("╭──────────────────────────╮")
+    parts.append(f"│ 👹 *{state['enemy_name']}*{boss_icon}{turn_line}")
+    parts.append(f"│ ❤️ {state['enemy_hp']:,}/{state['enemy_max_hp']:,} {enemy_hp_bar}")
 
-    # ── Spirit presence: equipped spirits fight by your side ──────────────
-    spirit_block = ""
+    if state.get('is_boss'):
+        parts.append(f"│ └─ Phase {state.get('boss_phase', 1)}: {state.get('boss_phase_name', 'NORMAL')}")
+
+    parts.append("├──────────────────────────┤")
+    parts.append(f"│ 🗡️ *『{player['name']}』*")
+    parts.append(f"│ ❤️ {player['hp']:,}/{player['max_hp']:,} {player_hp_bar}")
+    parts.append(f"│ 🌀 {player['sta']}/{player['max_sta']} {player_sta_bar}")
+
+    if ally and state.get('active_ally_id') and state.get('ally_hp') is not None:
+        ally_hp_bar = format_emoji_bar(state['ally_hp'], state['ally_max_hp'], "🟩")
+        parts.append("├──────────────────────────┤")
+        parts.append(f"│ 👥 *{ally['name']}*")
+        parts.append(f"│ ❤️ {state['ally_hp']:,}/{state['ally_max_hp']:,} {ally_hp_bar}")
+
+    # ── Spirit presence ──────────────
     try:
         from utils.spirits import equipped_spirit_names
         _sp = equipped_spirit_names(player.get('user_id'))
         if _sp:
             _hp_ratio = (player.get('hp', 0) / max(1, player.get('max_hp', 1)))
             _aura = " 🔥" if _hp_ratio > 0.6 else (" ✨" if _hp_ratio > 0.3 else " 🕯️")
-            spirit_block = f"\n👻 *Spirits:* {' · '.join(_sp)}{_aura}"
+            parts.append(f"│ 👻 Spirits: {' · '.join(_sp)}{_aura}")
     except Exception:
         pass
 
-    player_block = (
-        f"{'『' + player['name'] + '』'}\n"
-        f"HP : {player['hp']:,}/{player['max_hp']:,}  🌀 {player['sta']}/{player['max_sta']}\n"
-        f"`{player_hp_bar}`{spirit_block}"
-    )
-
     status_lines = status_summary(get_status_effects(player.get('user_id')))
-    status_block = f"\n🧪 *Effects:* {' | '.join(status_lines[:5])}" if status_lines else ""
-    phase_block = ""
-    if state.get('is_boss'):
-        phase_block = f"\n☠️ Phase {state.get('boss_phase', 1)}: {state.get('boss_phase_name', 'NORMAL')}"
+    if status_lines:
+        parts.append(f"│ 🧪 Effects: {' | '.join(status_lines[:5])}")
 
-    ally_block = ""
-    if ally and state.get('active_ally_id') and state.get('ally_hp') is not None:
-        ally_hp_bar = format_hp_bar_poke(state['ally_hp'], state['ally_max_hp'])
-        ally_block = (
-            f"\n👥 *{ally['name']}*\n"
-            f"HP : {state['ally_hp']:,}/{state['ally_max_hp']:,}\n"
-            f"`{ally_hp_bar}`"
-        )
+    parts.append("╰──────────────────────────╯")
 
-    log_section = ""
     if log_lines:
         clean = [l for l in log_lines if "━━━" not in str(l) and "────" not in str(l)][-5:]
         if clean:
-            log_section = "\n".join(f"› {l}" for l in clean) + "\n\n"
-
-    parts = []
-    if log_section:
-        parts.append(log_section)
-    parts.append(enemy_block)
-    parts.append("─" * 20)
-    if turn_line:
-        parts.append(turn_line)
-    parts.append(player_block)
-    if phase_block:
-        parts.append(phase_block)
-    if status_block:
-        parts.append(status_block)
-    if ally_block:
-        parts.append(ally_block)
+            log_section = "\n".join(f"> {l}" for l in clean)
+            parts.append(log_section)
 
     return "\n".join(parts)
 
@@ -296,22 +280,22 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     enemy_level  = max(1, int(preview.get('recommended_level', 1) or 1))
     player_level = get_level(player['xp'])
     threat       = preview['threat']
-    event_label  = preview['event_label'] or "🌲 WILD ENCOUNTER"
+    event_label  = preview['event_label'] or "🌲 *WILD ENCOUNTER*"
     event_desc   = preview['event_description'] or "The area is quiet..."
+    boss_icon    = " ☠️" if enemy.get('is_boss') else ""
 
     lines = [
-        f"{event_label}  //  {event_desc}",
+        f"{event_label} // {event_desc}",
         f"⚠️ Threat: {threat}  •  Rec. Lv. {enemy_level}",
-        ENC_DIV,
-        f"⦿ {enemy['name'].upper()}"
-        + ("  ☠️" if enemy.get('is_boss') else ""),
-        f"   Lv. {enemy_level}  │  ❤️ {enemy['hp']:,}/{enemy['hp']:,}",
-        f"   {_enc_bar(enemy['hp'], enemy['hp'])}",
-        ENC_DIV_S,
-        f"⦿ 『{player['name']}』",
-        f"   Lv. {player_level}  │  ❤️ {player['hp']:,}/{player['max_hp']:,}",
-        f"   {_enc_bar(player['hp'], player['max_hp'])}",
-        ENC_DIV,
+        "",
+        "╭──────────────────────────╮",
+        f"│ 👹 *{enemy['name'].upper()}*{boss_icon}",
+        f"│ └─ Lvl: {enemy_level}  |  ❤️ {enemy['hp']:,}/{enemy['hp']:,}",
+        "├──────────────────────────┤",
+        f"│ 🗡️ *『{player['name']}』*",
+        f"│ └─ Lvl: {player_level}  |  ❤️ {player['hp']:,}/{player['max_hp']:,}",
+        "╰──────────────────────────╯",
+        ""
     ]
 
     # ── Footer: active pet status + reward preview ───────────────────────
@@ -844,13 +828,14 @@ async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
     threat_line = 'HIGH' if state.get('is_boss') else ('MODERATE' if state.get('is_elite') else 'NORMAL')
     text = (
         f"🏆 *REWARD PREVIEW*\n\n"
-        f"{state['enemy_emoji']} *{state['enemy_name']}*\n"
-        f"{event_line} | Threat: *{threat_line}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⭐ XP:    +{state['prize_xp']}\n"
-        f"💰 Yen:   +{state['prize_yen']}¥\n"
-        f"🎁 Drops: {drops_text}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        f"╭──────────────────────────╮\n"
+        f"│ {state['enemy_emoji']} *{state['enemy_name']}*\n"
+        f"│ └─ Threat: {threat_line}\n"
+        f"├──────────────────────────┤\n"
+        f"│ ⭐ XP:    +{state['prize_xp']:,}\n"
+        f"│ 💰 Yen:   +{state['prize_yen']:,}¥\n"
+        f"│ 🎁 Drops: {drops_text}\n"
+        f"╰──────────────────────────╯"
     )
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
