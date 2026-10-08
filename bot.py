@@ -236,6 +236,8 @@ from handlers.forge import forge_command, forge_callback
 from handlers.pettrade import pettrade, petoffer, petaccept, pt_callback
 from handlers.direct_fetch import sword_command, armour_command
 from handlers.enemydex import slayerdex, demondex
+from handlers.image_checker import checkimages
+from handlers.bulk_spirits import bulkaddspirits
 
 from handlers.meditate import meditate, meditate_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
@@ -946,6 +948,8 @@ def main():
         ('giveyen',         giveyen),
         ('giveitem',        giveitem),
         ('resetplayer',     resetplayer),
+        ('checkimages',     checkimages),
+        ('bulkaddspirits',  bulkaddspirits),
         ('givesp',          user_givesp),   # ALL players — gives from own SP
         ('adminsp',         admin_givesp),  # admin only — grants SP freely
         ('check',           check),
