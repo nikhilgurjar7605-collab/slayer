@@ -174,57 +174,68 @@ def format_emoji_bar(current: int, maximum: int, color_emoji: str, bg_emoji: str
         return bg_emoji * length
     percent = max(0.0, min(1.0, current / maximum))
     filled = int(length * percent)
-    return f"[{color_emoji * filled}{bg_emoji * (length - filled)}]"
+    return f"{color_emoji * filled}{bg_emoji * (length - filled)}"
 
 def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_lines: List[str] = None, turn: int = None) -> str:
     enemy_hp_bar  = format_emoji_bar(state['enemy_hp'], state['enemy_max_hp'], "🟥")
     player_hp_bar = format_emoji_bar(player['hp'], player['max_hp'], "🟩")
     player_sta_bar = format_emoji_bar(player['sta'], player['max_sta'], "🟦")
 
-    boss_icon = " ☠️" if state.get('is_boss') else ""
-    turn_line = f"  (Turn {turn})" if turn is not None else ""
-
     parts = []
-    parts.append("╭──────────────────────────╮")
-    parts.append(f"│ 👹 *{state['enemy_name']}*{boss_icon}{turn_line}")
-    parts.append(f"│ ❤️ {state['enemy_hp']:,}/{state['enemy_max_hp']:,} {enemy_hp_bar}")
 
-    if state.get('is_boss'):
-        parts.append(f"│ └─ Phase {state.get('boss_phase', 1)}: {state.get('boss_phase_name', 'NORMAL')}")
+    # Combat Log
+    if log_lines:
+        clean = [l for l in log_lines if "━━━" not in str(l) and "────" not in str(l)][-5:]
+        if clean:
+            log_section = "\n".join(f"› {l}" for l in clean)
+            parts.append(log_section)
 
-    parts.append("├──────────────────────────┤")
-    parts.append(f"│ 🗡️ *『{player['name']}』*")
-    parts.append(f"│ ❤️ {player['hp']:,}/{player['max_hp']:,} {player_hp_bar}")
-    parts.append(f"│ 🌀 {player['sta']}/{player['max_sta']} {player_sta_bar}")
+    parts.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
+    # Player Stats
+    parts.append(f"『{player['name']}』")
+    parts.append(f"Lv{get_level(player['xp'])} • HP: {player['hp']:,}|{player['max_hp']:,}")
+    parts.append(f"🌀 STA: {player['sta']}|{player['max_sta']}")
+    parts.append(player_hp_bar)
+    parts.append(player_sta_bar)
+
+    # Ally Stats
     if ally and state.get('active_ally_id') and state.get('ally_hp') is not None:
         ally_hp_bar = format_emoji_bar(state['ally_hp'], state['ally_max_hp'], "🟩")
-        parts.append("├──────────────────────────┤")
-        parts.append(f"│ 👥 *{ally['name']}*")
-        parts.append(f"│ ❤️ {state['ally_hp']:,}/{state['ally_max_hp']:,} {ally_hp_bar}")
+        parts.append(f"\n👥 {ally['name']}")
+        parts.append(f"HP: {state['ally_hp']:,}|{state['ally_max_hp']:,}")
+        parts.append(ally_hp_bar)
 
-    # ── Spirit presence ──────────────
+    # Spirit & Status Effects
     try:
         from utils.spirits import equipped_spirit_names
         _sp = equipped_spirit_names(player.get('user_id'))
         if _sp:
-            _hp_ratio = (player.get('hp', 0) / max(1, player.get('max_hp', 1)))
-            _aura = " 🔥" if _hp_ratio > 0.6 else (" ✨" if _hp_ratio > 0.3 else " 🕯️")
-            parts.append(f"│ 👻 Spirits: {' · '.join(_sp)}{_aura}")
+            parts.append(f"👻 Spirits: {' · '.join(_sp)}")
     except Exception:
         pass
 
     status_lines = status_summary(get_status_effects(player.get('user_id')))
     if status_lines:
-        parts.append(f"│ 🧪 Effects: {' | '.join(status_lines[:5])}")
+        parts.append(f"🧪 Effects: {' | '.join(status_lines[:5])}")
 
-    parts.append("╰──────────────────────────╯")
+    parts.append("")
 
-    if log_lines:
-        clean = [l for l in log_lines if "━━━" not in str(l) and "────" not in str(l)][-5:]
-        if clean:
-            log_section = "\n".join(f"> {l}" for l in clean)
-            parts.append(log_section)
+    # Enemy Stats
+    turn_str = f" (Turn {turn})" if turn is not None else ""
+    boss_icon = " ☠️" if state.get('is_boss') else ""
+    parts.append(f"Attacker : {state['enemy_name']}{boss_icon}{turn_str}")
+
+    # We do not have enemy level in `state` directly, but we can estimate or omit.
+    # The user example omitted enemy level or used a placeholder. We will show Phase if boss.
+    if state.get('is_boss'):
+        parts.append(f"Phase {state.get('boss_phase', 1)}: {state.get('boss_phase_name', 'NORMAL')}")
+
+    parts.append(f"HP: {state['enemy_hp']:,}|{state['enemy_max_hp']:,}")
+    parts.append(enemy_hp_bar)
+
+    parts.append(f"\n{player['name']}!")
+    parts.append("choose your moves")
 
     return "\n".join(parts)
 
@@ -1699,24 +1710,10 @@ async def items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not state or not state.get('in_combat'):
         await query.answer("No active battle!", show_alert=True)
         return
-    # If in bounty combat, restrict items to those in loadout
-    if state.get("event_key") == "bounty":
-        from utils.database import col
-        hunt = col("bounty_hunts").find_one({"hunter_id": user_id, "status": "active"})
-        if hunt:
-            loadout_items = hunt.get("loadout", [])
-            usable = []
-            for item_name in set(loadout_items):
-                count = loadout_items.count(item_name)
-                usable.append({"item_name": item_name, "quantity": count})
-        else:
-            usable = []
-    else:
-        items = get_inventory(user_id)
-        usable = [i for i in items if i['item_type'] == 'item']
-
+    items = get_inventory(user_id)
+    usable = [i for i in items if i['item_type'] == 'item']
     if not usable:
-        await query.answer("No usable items in inventory or loadout!", show_alert=True)
+        await query.answer("No usable items in inventory!", show_alert=True)
         return
     buttons = [[InlineKeyboardButton(f"{i['item_name']} x{i['quantity']}", callback_data=f"use_item_{i['item_name']}")] for i in usable]
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data='fight')])
@@ -1752,16 +1749,7 @@ async def use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.append(f"🌿 *{item_name}* used! ☘️ All status effects cleared!")
     else:
         log.append(f"Used {item_name}.")
-
-    if state.get("event_key") == "bounty":
-        from utils.database import col
-        hunt = col("bounty_hunts").find_one({"hunter_id": user_id, "status": "active"})
-        if hunt and item_name in hunt.get("loadout", []):
-            hunt["loadout"].remove(item_name)
-            col("bounty_hunts").update_one({"hunter_id": user_id}, {"$set": {"loadout": hunt["loadout"]}})
-    else:
-        remove_item(user_id, item_name)
-
+    remove_item(user_id, item_name)
     player = get_player(user_id)
     state = get_battle_state(user_id)
     turn = context.user_data.get('turn', 1)
@@ -2240,21 +2228,10 @@ async def handle_defeat(query, user_id, player, log, context=None):
     xp_loss = max(0, player['xp'] - 200)
     new_deaths = player['deaths'] + 1
     new_hp = int(player['max_hp'] * 0.5)
-    new_bounty = max(1000, player.get('bounty', 5000) - 20)
-    update_player(user_id, hp=new_hp, sta=player['max_sta'], xp=xp_loss, deaths=new_deaths, bounty=new_bounty)
+    update_player(user_id, hp=new_hp, sta=player['max_sta'], xp=xp_loss, deaths=new_deaths)
     append_battle_log(user_id, log)
     clear_battle_state(user_id)
     clear_status_effects(user_id)
-
-    # Bounty fail handling
-    if hasattr(context, 'user_data'):
-        target_id = context.user_data.pop(f"bounty_target_{user_id}", None)
-        if target_id:
-            col("bounty_hunts").delete_one({"hunter_id": user_id})
-            target = get_player(target_id)
-            if target:
-                update_player(target_id, bounty=target.get('bounty', 5000) + 200)
-
     if hasattr(context, 'user_data'):
         context.user_data.pop(f'battle_ctx_{user_id}', None)
         context.user_data.pop('_counter_ready', None)

@@ -33,9 +33,6 @@ def rankings_keyboard():
         [
             InlineKeyboardButton("⭐ Top Level",    callback_data='rankings_level'),
             InlineKeyboardButton("💠 Most SP",      callback_data='rankings_sp'),
-        ],
-        [
-            InlineKeyboardButton("🎯 Highest Bounties", callback_data='rankings_bounty'),
         ]
     ])
 
@@ -145,25 +142,3 @@ async def rankings_sp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         lines.append("_No data yet._")
     await _safe_edit(query, '\n'.join(lines), parse_mode='Markdown', reply_markup=rankings_keyboard())
-
-async def rankings_bounty(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    top_bounty = get_leaderboard('bounty', limit=10)
-
-    text = "🎯 *MOST WANTED (Highest Bounties)*\n━━━━━━━━━━━━━━━━━━━━━\n\n"
-    if not top_bounty:
-        text += "No active bounties yet.\n"
-    else:
-        for i, p in enumerate(top_bounty):
-            bounty_amt = p.get('bounty', 5000)
-            faction_emoji = "🗡️" if p.get('faction') == 'slayer' else "👹"
-            text += f"`{i+1}.` {faction_emoji} *{p.get('name', 'Unknown')}* — 💰 {bounty_amt:,}\n"
-
-    await _safe_edit(
-        query,
-        text,
-        reply_markup=rankings_keyboard(),
-        parse_mode='Markdown'
-    )

@@ -167,7 +167,6 @@ async def bounty_loadout_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("Beginning assassination...", show_alert=False)
         await _start_hunt_combat(update, context, user_id, hunt)
 
-
 async def _start_hunt_combat(update, context, hunter_id, hunt):
     query = update.callback_query
 
@@ -179,7 +178,7 @@ async def _start_hunt_combat(update, context, hunter_id, hunt):
         "name": f"{target_player['name']} (Bounty)",
         "emoji": "🎯",
         "hp": target_player["max_hp"],
-        "atk": target_player["str_stat"],
+        "atk": target_player.get("str_stat", target_player.get("strength", 10)),
         "threat": "💀 BOUNTY TARGET",
         "xp": 0,
         "yen": 0,
@@ -195,11 +194,6 @@ async def _start_hunt_combat(update, context, hunter_id, hunt):
     from utils.database import set_battle_state, clear_battle_log
     set_battle_state(hunter_id, enemy_data, in_combat=True)
     clear_battle_log(hunter_id)
-
-    # Consume the loadout items from the hunter's inventory
-    from utils.database import remove_item
-    for item in hunt["loadout"]:
-        remove_item(hunter_id, item, 1)
 
     # We will track this is a bounty fight and store the target_id
     context.user_data[f"bounty_target_{hunter_id}"] = hunt["target_id"]
@@ -220,7 +214,6 @@ async def _start_hunt_combat(update, context, hunter_id, hunt):
     markup = build_combat_keyboard(has_ally=False)
 
     await _safe_edit(query, text, reply_markup=markup, parse_mode="Markdown")
-
 
 async def bountyshop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View the bounty shop."""
@@ -289,7 +282,6 @@ async def bountyshop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await query.answer(f"Successfully bought {item['name']}!")
         await _safe_edit(query, f"✅ You purchased *{item['name']}* for {item['price']:,} Bounty Marks.", parse_mode="Markdown")
-
 
 from utils.guards import owner_only
 
