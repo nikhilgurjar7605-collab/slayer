@@ -111,7 +111,7 @@ from handlers.party import (party, alliance_invite, alliance_info, alliance_leav
 from handlers.travel import travel, travel_to
 from handlers.rankings import (rankings, rankings_slayers, rankings_demons,
                                 rankings_richest, rankings_kills,
-                                rankings_level, rankings_sp)
+                                rankings_level, rankings_sp, rankings_bounty)
 from handlers.help_cmd import help_command
 from handlers.raid import joinraid, raidattack
 from handlers.auction import auction, bid
@@ -241,6 +241,7 @@ from handlers.meditate import meditate, meditate_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
 
+from handlers.bounty import target_command, bounty_loadout_callback, bountyshop_command, bountyshop_callback, addbountyitem_command, removebountyitem_command
 from handlers.skilltree import (skilltree, skilltree_owned, skillbuy, skilllist,
                                  skillinfo, skills, skilltree_buy_callback,
                                  skilltree_page_callback, myskills_callback,
@@ -539,6 +540,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'rankings_slayers': rankings_slayers, 'rankings_demons': rankings_demons,
         'rankings_richest': rankings_richest, 'rankings_kills': rankings_kills,
         'rankings_level': rankings_level, 'rankings_sp': rankings_sp,
+        'rankings_bounty': rankings_bounty,
         'alliance_invite': alliance_invite, 'alliance_info': alliance_info,
         'alliance_leave': alliance_leave,
         'goto_profile': profile, 'goto_party': party, 'goto_menu': menu,
@@ -652,6 +654,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'cust_close':            await cust_close_callback(update, context)
     elif data == 'cust_noop':             await cust_noop_callback(update, context)
     elif data == 'cust_preview':          await cust_preview_callback(update, context)
+    elif data.startswith('bl_'):          await bounty_loadout_callback(update, context)
+    elif data.startswith('bb_'):          await bountyshop_callback(update, context)
     elif data.startswith('know_'):        await know_callback(update, context)
     elif data.startswith('help_'):               await help_callback(update, context)
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
@@ -1012,6 +1016,10 @@ def main():
         ('setinterest',      setinterest),
         ('interestinfo',     interestinfo),
         ('claiminterest',    claiminterest),
+        ('target',           target_command),
+        ('bountyshop',       bountyshop_command),
+        ('addbountyitem',    addbountyitem_command),
+        ('removebountyitem', removebountyitem_command),
     ]
     for cmd, handler in everywhere:
         app.add_handler(CommandHandler(cmd, handler))  # no filter = works everywhere

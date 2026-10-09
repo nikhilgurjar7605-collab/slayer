@@ -396,8 +396,10 @@ async def _finish_duel(query, duel_doc, winner_id, loser_id, context, reason="KO
         context.bot_data[today_key] = sp_today + sp_win
 
     update_player(winner_id, xp=winner['xp'] + xp_win, yen=winner['yen'] + yen_win,
-                  skill_points=winner.get('skill_points', 0) + sp_win)
-    update_player(loser_id,  xp=max(0, loser['xp'] - xp_loss), deaths=loser['deaths'] + 1)
+                  skill_points=winner.get('skill_points', 0) + sp_win,
+                  bounty=winner.get('bounty', 5000) + 100)
+    update_player(loser_id,  xp=max(0, loser['xp'] - xp_loss), deaths=loser['deaths'] + 1,
+                  bounty=max(1000, loser.get('bounty', 5000) - 50))
 
     wf = get_player(winner_id); lf = get_player(loser_id)
     update_player(winner_id, hp=wf['max_hp'], sta=wf['max_sta'])

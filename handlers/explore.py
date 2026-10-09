@@ -1699,10 +1699,24 @@ async def items_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not state or not state.get('in_combat'):
         await query.answer("No active battle!", show_alert=True)
         return
-    items = get_inventory(user_id)
-    usable = [i for i in items if i['item_type'] == 'item']
+    # If in bounty combat, restrict items to those in loadout
+    if state.get("event_key") == "bounty":
+        from utils.database import col
+        hunt = col("bounty_hunts").find_one({"hunter_id": user_id, "status": "active"})
+        if hunt:
+            loadout_items = hunt.get("loadout", [])
+            usable = []
+            for item_name in set(loadout_items):
+                count = loadout_items.count(item_name)
+                usable.append({"item_name": item_name, "quantity": count})
+        else:
+            usable = []
+    else:
+        items = get_inventory(user_id)
+        usable = [i for i in items if i['item_type'] == 'item']
+
     if not usable:
-        await query.answer("No usable items in inventory!", show_alert=True)
+        await query.answer("No usable items in inventory or loadout!", show_alert=True)
         return
     buttons = [[InlineKeyboardButton(f"{i['item_name']} x{i['quantity']}", callback_data=f"use_item_{i['item_name']}")] for i in usable]
     buttons.append([InlineKeyboardButton("🔙 Back", callback_data='fight')])
@@ -1738,7 +1752,16 @@ async def use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.append(f"🌿 *{item_name}* used! ☘️ All status effects cleared!")
     else:
         log.append(f"Used {item_name}.")
-    remove_item(user_id, item_name)
+
+    if state.get("event_key") == "bounty":
+        from utils.database import col
+        hunt = col("bounty_hunts").find_one({"hunter_id": user_id, "status": "active"})
+        if hunt and item_name in hunt.get("loadout", []):
+            hunt["loadout"].remove(item_name)
+            col("bounty_hunts").update_one({"hunter_id": user_id}, {"$set": {"loadout": hunt["loadout"]}})
+    else:
+        remove_item(user_id, item_name)
+
     player = get_player(user_id)
     state = get_battle_state(user_id)
     turn = context.user_data.get('turn', 1)
@@ -1968,6 +1991,32 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     if reward_bonus_lines:
         log.append("🎁 " + " | ".join(reward_bonus_lines))
     xp_gain, yen_gain = apply_pet_passives_to_rewards(user_id, xp_gain, yen_gain)
+
+    # Check if this was a bounty target
+    if state.get('event_key') == 'bounty':
+        target_id = context.user_data.pop(f"bounty_target_{user_id}", None)
+        if target_id:
+            from utils.database import get_player
+            target = get_player(target_id)
+            if target:
+                bounty_reward = target.get('bounty', 5000)
+                update_player(user_id, bounty_marks=player.get('bounty_marks', 0) + bounty_reward)
+                update_player(target_id, bounty=5000)
+                log.append(f"🎯 *BOUNTY CLAIMED!* You earned {bounty_reward:,} Bounty Marks!")
+                col("bounty_hunts").delete_one({"hunter_id": user_id})
+                # Optional: Send a DM to the target
+                try:
+                    from bot import log_bot
+                    import asyncio
+                    if log_bot:
+                        asyncio.create_task(log_bot.send_message(
+                            chat_id=target_id,
+                            text=f"💀 *ASSASSINATED!*\n\n{player['name']} hunted you down and claimed your bounty of {bounty_reward:,} Marks.\nYour bounty has been reset to 5,000.",
+                            parse_mode="Markdown"
+                        ))
+                except Exception:
+                    pass
+
     # ── Gacha: equipped spirit XP/Yen bonuses ─────────────────────────────
     try:
         from utils.database import get_spirit_bonuses as _gsb
@@ -2017,7 +2066,8 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         max_hp=bonus_maxhp, max_sta=bonus_maxsta,
         hp=bonus_maxhp,
         sta=bonus_maxsta,
-        skill_points=player.get('skill_points', 0) + sp_gained
+        skill_points=player.get('skill_points', 0) + sp_gained,
+        bounty=player.get('bounty', 5000) + 50
     )
     _loc = player.get('location', 'asakusa')
     _zone = next((z for z in TRAVEL_ZONES if z['id'] == _loc), TRAVEL_ZONES[0])
@@ -2190,10 +2240,21 @@ async def handle_defeat(query, user_id, player, log, context=None):
     xp_loss = max(0, player['xp'] - 200)
     new_deaths = player['deaths'] + 1
     new_hp = int(player['max_hp'] * 0.5)
-    update_player(user_id, hp=new_hp, sta=player['max_sta'], xp=xp_loss, deaths=new_deaths)
+    new_bounty = max(1000, player.get('bounty', 5000) - 20)
+    update_player(user_id, hp=new_hp, sta=player['max_sta'], xp=xp_loss, deaths=new_deaths, bounty=new_bounty)
     append_battle_log(user_id, log)
     clear_battle_state(user_id)
     clear_status_effects(user_id)
+
+    # Bounty fail handling
+    if hasattr(context, 'user_data'):
+        target_id = context.user_data.pop(f"bounty_target_{user_id}", None)
+        if target_id:
+            col("bounty_hunts").delete_one({"hunter_id": user_id})
+            target = get_player(target_id)
+            if target:
+                update_player(target_id, bounty=target.get('bounty', 5000) + 200)
+
     if hasattr(context, 'user_data'):
         context.user_data.pop(f'battle_ctx_{user_id}', None)
         context.user_data.pop('_counter_ready', None)

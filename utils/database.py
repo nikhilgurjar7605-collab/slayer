@@ -364,6 +364,7 @@ def _player_defaults(faction="slayer"):
             "devour_stacks": 0, "explore_count": 0, "explores_since_boss": 20,
             "shards": 0, "gacha_pity": 0, "gacha_total_pulls": 0, "spirits_gifted": 0,
             "equipped_spirits": [],
+            "bounty": 5000, "bounty_marks": 0,
             "created_at": datetime.now(),
         }
     else:
@@ -387,6 +388,7 @@ def _player_defaults(faction="slayer"):
             "devour_stacks": 0, "explore_count": 0, "explores_since_boss": 20,
             "shards": 0, "gacha_pity": 0, "gacha_total_pulls": 0, "spirits_gifted": 0,
             "equipped_spirits": [],
+            "bounty": 5000, "bounty_marks": 0,
             "created_at": datetime.now(),
         }
 
@@ -894,6 +896,8 @@ def get_leaderboard(category, limit=10):
         docs = col("players").find().sort("xp", DESCENDING).limit(limit)
     elif category == "sp":
         docs = col("players").find().sort("skill_points", DESCENDING).limit(limit)
+    elif category == "bounty":
+        docs = col("players").find().sort("bounty", DESCENDING).limit(limit)
     else:
         return []
     result = []
@@ -1259,6 +1263,10 @@ def ensure_player_fields():
     col("players").update_many(
         {"hybrid_style": {"$exists": False}},
         {"$set": {"hybrid_style": None, "hybrid_emoji": None, "demon_mark": 0}}
+    )
+    col("players").update_many(
+        {"bounty": {"$exists": False}},
+        {"$set": {"bounty": 5000, "bounty_marks": 0}}
     )
 
 
