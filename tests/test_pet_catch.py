@@ -19,7 +19,7 @@ cfg.PET_REGIONS = {}
 cfg.PET_WILD_ENCOUNTER_CHANCE = 0.3
 cfg.PET_EGG_DROP = 0.1
 import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location('config', '/workspace/config.py')
+_spec = _ilu.spec_from_file_location('config', '/app/config.py')
 cfg = _ilu.module_from_spec(_spec)
 sys.modules['config'] = cfg
 _spec.loader.exec_module(cfg)
