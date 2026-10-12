@@ -322,7 +322,7 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"│ 🔋 Stamina used: *-{sta_cost} STA*\n"
         f"│\n"
         f"├─ 🔮 *POTENTIAL:* ───────────────┤\n"
-        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\n"
+        f"│ [{progress_bar}] *{new_potential}%* / 100%{tier_label}\n"
         f"│\n"
         f"{status_msg}\n"
         f"╰─────────────────────────────────╯",
