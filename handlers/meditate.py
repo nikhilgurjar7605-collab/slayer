@@ -367,14 +367,14 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
     max_reaction_time = 2.5
     if reaction_duration > max_reaction_time:
         success = False
-        outcome_text = f"❌ *Too Slow!* ({reaction_duration:.2f}s)\\nYour mind strayed to earthly thoughts. No potential was gained."
+        outcome_text = f"❌ *Too Slow!* ({reaction_duration:.2f}s)\\n│ > _Your mind strayed to earthly thoughts._\\n│ > _No potential was gained._"
         gain = 0
     elif not success:
-        outcome_text = f"❌ *Failed Focus* ({reaction_duration:.2f}s)\\nYou reacted in time, but your breathing was flawed. No potential was gained."
+        outcome_text = f"❌ *Failed Focus* ({reaction_duration:.2f}s)\\n│ > _You reacted in time, but your breathing_\\n│ > _was flawed. No potential was gained._"
         gain = 0
     else:
         gain = random.randint(min_gain, max_gain)
-        outcome_text = f"🔮 *Perfect Form!* ({reaction_duration:.2f}s)\\nYour breathing pattern aligns perfectly. You gained *+{gain}%* Potential!"
+        outcome_text = f"🔮 *Perfect Form!* ({reaction_duration:.2f}s)\\n│ > _Your breathing pattern aligns perfectly._\\n│ > _You gained *+{gain}%* Potential!_"
 
     new_potential = min(100, potential + gain)
     
@@ -400,14 +400,14 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.edit_message_text(
         f"╭── 🧘 *{strategy_name.upper()} COMPLETE* 🌿 ──╮\\n"
         f"│\\n"
-        f"│ > {outcome_text}\\n"
+        f"{outcome_text}\\n"
         f"│\\n"
         f"├─ 📈 *REWARDS:* ─────────────────┤\\n"
         f"│ ⭐ XP: *+{xp_gain}*\\n"
         f"│ 🔋 Stamina used: *-{sta_cost} STA*\\n"
         f"│\\n"
         f"├─ 🔮 *POTENTIAL:* ───────────────┤\\n"
-        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\\n"
+        f"│ [{progress_bar}] *{new_potential}%* / 100%{tier_label}\\n"
         f"│\\n"
         f"{status_msg}\\n"
         f"╰─────────────────────────────────╯",
