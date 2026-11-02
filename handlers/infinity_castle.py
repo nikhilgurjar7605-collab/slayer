@@ -218,6 +218,37 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text("You can leave a running squad by retreating from its Castle run.")
         return
 
+    if action == "equip":
+        if len(args) < 2:
+            await update.effective_message.reply_text("Usage: /castle equip ITEM NAME")
+            return
+        item_name = " ".join(args[1:]).strip()
+        item = col("castle_equipment").find_one({
+            "user_id": user_id, "name": {"$regex": f"^{item_name}$", "$options": "i"}
+        })
+        if not item:
+            await update.effective_message.reply_text("You don't own that Castle equipment.")
+            return
+        slot = item.get("slot", item.get("item_type"))
+        field = {"weapon": "castle_equipped_weapon", "sword": "castle_equipped_weapon",
+                 "armor": "castle_equipped_armor", "accessory": "castle_equipped_accessory"}.get(slot)
+        if not field:
+            await update.effective_message.reply_text("This equipment slot is not supported.")
+            return
+        col("castle_equipment").update_many(
+            {"user_id": user_id, "item_type": slot}, {"$set": {"equipped": False}}
+        )
+        col("castle_equipment").update_one(
+            {"instance_id": item["instance_id"], "user_id": user_id},
+            {"$set": {"equipped": True}}
+        )
+        update_player(user_id, **{field: item["name"]})
+        await update.effective_message.reply_text(
+            f"✅ Equipped <b>{item['name']}</b> in your {slot} slot.",
+            parse_mode="HTML"
+        )
+        return
+
     if action in ("equipment", "items"):
         owned = list(col("castle_equipment").find({"user_id": user_id}).sort("obtained_at", -1).limit(30))
         if not owned:
@@ -411,7 +442,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if enemy["hp"] <= 0:
         save_castle_run(run["run_id"], {"current_enemy": enemy})
         result = await _complete_enemy(run, player, party)
-        run = _find_run(user_id) or run
+        run = col("castle_runs").find_one({"run_id": run["run_id"]}) or run
+        run.pop("_id", None)
         if run.get("status") == "completed":
             await query.edit_message_text(result, parse_mode="HTML")
         else:
