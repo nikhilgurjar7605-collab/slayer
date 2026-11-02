@@ -78,7 +78,9 @@ def _enemy_for(player, floor, party_players):
     if boss:
         hp = int(hp * 2.2)
         atk = int(atk * 1.35)
-    rank = "Upper Moon" if floor >= 70 else ("Lower Moon" if floor >= 30 else ("Elite" if floor >= 10 else "Demon"))
+    # Rank is a separate enemy classification, not the enemy's Demon Level.
+    # Floor 10 begins the Lower Moon encounters; Floor 30 introduces Upper Moons.
+    rank = "Upper Moon" if floor >= 30 else ("Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
     rank_abilities = {
         "Demon": "Savage Claws",
         "Elite": "Blood Art Strike",
