@@ -105,6 +105,8 @@ def col(name) -> Collection:
 def init_db():
     """Create indexes and seed starter data."""
     db = _real_get_db()
+    from utils.castle_database import initialize_castle_database
+    initialize_castle_database(db)
 
     # Indexes
     db.players.create_index("user_id", unique=True)
