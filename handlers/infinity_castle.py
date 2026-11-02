@@ -608,7 +608,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(result, parse_mode="HTML")
         else:
             await query.edit_message_text(
-                _render_run(run, player, party, f"⚔️ You dealt {damage:,} damage.\\n{result}"),
+                _render_run(run, player, party, f"⚔️ You dealt {damage:,} damage.\n{result}"),
                 parse_mode="HTML", reply_markup=_keyboard(run)
             )
         return
