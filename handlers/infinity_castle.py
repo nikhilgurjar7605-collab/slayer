@@ -514,6 +514,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     if action == "retreat":
+        if party and user_id != int(party.get("leader_id", 0)):
+            await query.message.reply_text("Only the squad leader can retreat the whole squad.")
+            return
         save_castle_run(run["run_id"], {"status": "retreated"})
         if party:
             col("castle_parties").update_one(
@@ -540,12 +543,12 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     enemy = run.get("current_enemy") or {}
     if int(enemy.get("hp", 0)) <= 0:
-        await query.answer("This floor is already cleared.", show_alert=True)
+        await query.message.reply_text("This floor is already cleared. Move to the next floor.")
         return
     hp_map = run.get("player_hp_by_user") or {str(user_id): int(player.get("hp", 1))}
     current_hp = int(hp_map.get(str(user_id), player.get("hp", 1)))
     if current_hp <= 0:
-        await query.answer("You are defeated. Another squad member must finish this enemy.", show_alert=True)
+        await query.message.reply_text("You are defeated. Another squad member must finish this enemy.")
         return
     skill_bonuses = get_active_skill_bonuses(get_player_skills(user_id), user_id=user_id)
     player_atk = max(1, int(player.get("str_stat", player.get("atk", player.get("attack", 10))) or 10))
