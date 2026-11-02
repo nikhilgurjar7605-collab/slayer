@@ -130,6 +130,7 @@ def _render_run(run, player, party=None, notice=None):
             f"{'☠️ BOSS' if enemy.get('boss') else '👹 ENEMY'}: <b>{escape(str(enemy.get('name')))}</b>",
             f"Enemy Demon Level: <b>{enemy.get('demon_level', enemy.get('level'))}</b>  •  Rank: {escape(str(enemy.get('rank')))}",
             f"Difficulty: <b>{escape(str(enemy.get('difficulty')))}</b>",
+            f"Enemy ability: <b>{escape(str(enemy.get('ability', 'Basic Attack')))}</b>",
             f"Enemy HP: <b>{max(0, int(enemy.get('hp', 0))):,}/{int(enemy.get('max_hp', 1)):,}</b>",
             "━━━━━━━━━━━━━━━━━━━━",
             "<b>Squad HP</b>",
