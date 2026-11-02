@@ -1,0 +1,354 @@
+"""MongoDB persistence and progression helpers for Infinity Castle.
+
+This module is intentionally separate from the main database module to keep
+castle data isolated while reusing the project's existing player and inventory
+systems. It adds no currency, consumables, crafting materials, or duplicate
+player-level/rank systems.
+"""
+from datetime import datetime
+from math import sqrt
+from uuid import uuid4
+
+
+PLAYER_DEFAULTS = {
+    "demon_level": 1,
+    "demon_xp": 0,
+    "castle_highest_floor": 0,
+    "castle_total_clears": 0,
+}
+
+# Equipment-only reward catalogue. These are definitions, not owned inventory.
+CASTLE_EQUIPMENT = [
+    {"item_id": "castle_forged_nichirin", "name": "Castle-forged Nichirin",
+     "slot": "weapon", "rarity": "uncommon", "faction": "slayer",
+     "min_floor": 1, "min_level": 5, "stats": {"atk_bonus": 8},
+     "passive": {"type": "demon_damage", "value": 0.04}},
+    {"item_id": "crimson_moon_blade", "name": "Crimson Moon Blade",
+     "slot": "weapon", "rarity": "epic", "faction": "slayer",
+     "min_floor": 31, "min_level": 25, "stats": {"atk_bonus": 24},
+     "passive": {"type": "critical_chance", "value": 0.06}},
+    {"item_id": "upper_moon_katana", "name": "Upper Moon Katana",
+     "slot": "weapon", "rarity": "legendary", "faction": "any",
+     "min_floor": 61, "min_level": 50, "stats": {"atk_bonus": 38},
+     "passive": {"type": "elite_damage", "value": 0.08}},
+    {"item_id": "demon_kings_armor", "name": "Demon King's Armor",
+     "slot": "armor", "rarity": "legendary", "faction": "demon",
+     "min_floor": 61, "min_level": 50,
+     "stats": {"def_bonus": 32, "hp_bonus": 80},
+     "passive": {"type": "damage_reduction", "value": 0.05}},
+    {"item_id": "wisteria_guard_haori", "name": "Wisteria Guard Haori",
+     "slot": "armor", "rarity": "epic", "faction": "slayer",
+     "min_floor": 31, "min_level": 25, "stats": {"def_bonus": 20},
+     "passive": {"type": "poison_resistance", "value": 0.20}},
+    {"item_id": "infinity_veil", "name": "Infinity Veil",
+     "slot": "armor", "rarity": "mythic", "faction": "any",
+     "min_floor": 91, "min_level": 75,
+     "stats": {"def_bonus": 45, "hp_bonus": 120},
+     "passive": {"type": "damage_reduction", "value": 0.08}},
+    {"item_id": "nakimes_resonance_charm", "name": "Nakime's Resonance Charm",
+     "slot": "accessory", "rarity": "rare", "faction": "any",
+     "min_floor": 21, "min_level": 15, "stats": {"def_bonus": 5},
+     "passive": {"type": "trap_avoidance", "value": 0.10}},
+    {"item_id": "akazas_battle_ring", "name": "Akaza's Battle Ring",
+     "slot": "accessory", "rarity": "legendary", "faction": "any",
+     "min_floor": 61, "min_level": 50, "stats": {"atk_bonus": 12},
+     "passive": {"type": "combat_damage", "value": 0.05}},
+    {"item_id": "muzans_blood_seal", "name": "Muzan's Blood Seal",
+     "slot": "accessory", "rarity": "mythic", "faction": "demon",
+     "min_floor": 100, "min_level": 80,
+     "stats": {"atk_bonus": 20, "hp_bonus": 100},
+     "passive": {"type": "demon_art_power", "value": 0.10}},
+]
+
+RARITY_ORDER = ("common", "uncommon", "rare", "epic", "legendary", "mythic")
+FLOOR_REWARD_BANDS = (
+    (1, 10, ("common", "uncommon")),
+    (11, 20, ("uncommon", "rare")),
+    (21, 30, ("rare",)),
+    (31, 40, ("rare", "epic")),
+    (41, 50, ("epic",)),
+    (51, 60, ("epic", "legendary")),
+    (61, 70, ("legendary",)),
+    (71, 80, ("legendary",)),
+    (81, 90, ("legendary", "mythic")),
+    (91, 99, ("legendary", "mythic")),
+    (100, 100, ("mythic",)),
+)
+
+
+def initialize_castle_database(db):
+    """Create indexes and safely seed castle data; safe to run on every boot."""
+    db.castle_runs.create_index("run_id", unique=True)
+    db.castle_runs.create_index([("user_id", 1), ("status", 1)])
+    db.castle_runs.create_index([("party_id", 1), ("status", 1)])
+    db.castle_parties.create_index("party_id", unique=True)
+    db.castle_parties.create_index([("member_ids", 1), ("status", 1)])
+    db.castle_encounters.create_index(
+        [("run_id", 1), ("floor", 1), ("room_id", 1)], unique=True
+    )
+    db.castle_equipment.create_index("instance_id", unique=True)
+    db.castle_equipment.create_index([("user_id", 1), ("equipped", 1)])
+    db.castle_item_catalog.create_index("item_id", unique=True)
+    db.castle_leaderboards.create_index([("mode", 1), ("highest_floor", -1)])
+    db.castle_reward_claims.create_index("claim_key", unique=True)
+
+    # Only fill missing fields. Never reset existing progress.
+    for field, default in PLAYER_DEFAULTS.items():
+        db.players.update_many(
+            {field: {"$exists": False}}, {"$set": {field: default}}
+        )
+
+    now = datetime.utcnow()
+    for definition in CASTLE_EQUIPMENT:
+        item = dict(definition)
+        item["updated_at"] = now
+        db.castle_item_catalog.update_one(
+            {"item_id": item["item_id"]},
+            {"$set": item, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+
+
+def _col(name):
+    from utils.database import col
+    return col(name)
+
+
+def calculate_player_power(player):
+    """Estimate strength from level AND actual combat stats/equipment bonuses."""
+    if not player:
+        return 1
+    level = max(1, int(player.get("level") or 1))
+    atk = max(0, float(player.get("atk", player.get("attack", 0)) or 0))
+    defense = max(0, float(player.get("def_stat", player.get("defense", 0)) or 0))
+    hp = max(1, float(player.get("max_hp", player.get("hp", 1)) or 1))
+    stamina = max(0, float(player.get("max_sta", player.get("sta", 0)) or 0))
+    power = level * 5 + atk * 2.0 + defense * 1.5 + hp * 0.08 + stamina * 0.04
+    if player.get("faction") == "demon":
+        power += max(1, int(player.get("demon_level") or 1)) * 3
+    return max(1, int(power))
+
+
+def calculate_party_power(players):
+    """Return total and average squad power; squad scaling uses average strength."""
+    powers = [calculate_player_power(p) for p in (players or []) if p]
+    if not powers:
+        return {"total": 0, "average": 1, "size": 0}
+    return {
+        "total": sum(powers),
+        "average": int(sum(powers) / len(powers)),
+        "size": len(powers),
+    }
+
+
+def calculate_enemy_level(player, floor, party_players=None):
+    """Adaptive enemy level: floor + player level + real stats + squad strength.
+
+    The enemy is not scaled by a fixed floor-only formula. A well-equipped
+    player faces stronger enemies than a same-level under-equipped player.
+    Party scaling is soft and capped, preventing 4-player groups from causing
+    a fourfold enemy-level jump.
+    """
+    player = player or {}
+    level = max(1, int(player.get("level") or 1))
+    floor = max(1, min(100, int(floor or 1)))
+    own_power = calculate_player_power(player)
+    reference_power = max(1, level * 12)
+    strength_ratio = own_power / reference_power
+    floor_bonus = (floor - 1) // 8
+    strength_bonus = round((strength_ratio - 1.0) * 8)
+
+    party_players = party_players or [player]
+    party = calculate_party_power(party_players)
+    # Use the squad's average power relative to this player's power.
+    party_ratio = party["average"] / max(1, own_power)
+    party_bonus = min(10, max(0, round((party_ratio - 1) * 6)) + max(0, party["size"] - 1))
+    return max(1, min(500, level + floor_bonus + strength_bonus + party_bonus))
+
+
+def calculate_difficulty(player, floor, party_players=None):
+    """Return a persisted-friendly difficulty breakdown for UI and balancing."""
+    enemy_level = calculate_enemy_level(player, floor, party_players)
+    party_size = max(1, len(party_players or [player]))
+    if enemy_level <= max(1, int((player or {}).get("level") or 1)) + 2:
+        tier = "Normal"
+    elif enemy_level <= max(1, int((player or {}).get("level") or 1)) + 8:
+        tier = "Hard"
+    elif enemy_level <= max(1, int((player or {}).get("level") or 1)) + 16:
+        tier = "Extreme"
+    else:
+        tier = "Nightmare"
+    return {
+        "enemy_level": enemy_level,
+        "tier": tier,
+        "party_size": party_size,
+        "floor": int(floor),
+        "player_power": calculate_player_power(player),
+        "party_power": calculate_party_power(party_players or [player])["total"],
+    }
+
+
+def create_castle_run(user_id, mode="solo", party_id=None):
+    if mode not in ("solo", "squad"):
+        raise ValueError("mode must be 'solo' or 'squad'")
+    run_id = uuid4().hex
+    now = datetime.utcnow()
+    doc = {
+        "run_id": run_id, "user_id": int(user_id), "mode": mode,
+        "party_id": party_id, "floor": 1, "room_id": "entrance",
+        "checkpoint_floor": 1, "status": "active",
+        "created_at": now, "updated_at": now,
+    }
+    _col("castle_runs").insert_one(doc)
+    return doc
+
+
+def get_active_castle_run(user_id):
+    doc = _col("castle_runs").find_one(
+        {"user_id": int(user_id), "status": "active"},
+        sort=[("updated_at", -1)],
+    )
+    if doc:
+        doc.pop("_id", None)
+    return doc
+
+
+def save_castle_run(run_id, updates):
+    allowed = {
+        "floor", "room_id", "checkpoint_floor", "status", "party_id",
+        "power_score", "difficulty", "current_enemy", "room_history",
+    }
+    safe = {k: v for k, v in dict(updates or {}).items() if k in allowed}
+    safe["updated_at"] = datetime.utcnow()
+    return _col("castle_runs").update_one(
+        {"run_id": run_id, "status": "active"}, {"$set": safe}
+    ).modified_count == 1
+
+
+def save_castle_encounter(run_id, floor, room_id, enemy_data):
+    doc = {
+        "run_id": run_id, "floor": int(floor), "room_id": str(room_id),
+        "enemy": dict(enemy_data or {}), "updated_at": datetime.utcnow(),
+    }
+    _col("castle_encounters").update_one(
+        {"run_id": run_id, "floor": int(floor), "room_id": str(room_id)},
+        {"$set": doc}, upsert=True,
+    )
+    return doc
+
+
+def create_castle_party(leader_id):
+    party_id = uuid4().hex[:12]
+    now = datetime.utcnow()
+    party = {
+        "party_id": party_id, "leader_id": int(leader_id),
+        "member_ids": [int(leader_id)], "status": "open",
+        "created_at": now, "updated_at": now,
+    }
+    _col("castle_parties").insert_one(party)
+    return party
+
+
+def get_castle_party(party_id):
+    party = _col("castle_parties").find_one({"party_id": str(party_id)})
+    if party:
+        party.pop("_id", None)
+    return party
+
+
+def add_castle_party_member(party_id, user_id, max_members=4):
+    col = _col("castle_parties")
+    party = col.find_one({"party_id": str(party_id), "status": "open"})
+    if not party:
+        return False
+    members = party.get("member_ids", [])
+    user_id = int(user_id)
+    if user_id in members:
+        return True
+    if len(members) >= max(1, min(4, int(max_members))):
+        return False
+    result = col.update_one(
+        {"party_id": str(party_id), "status": "open",
+         "member_ids": members},
+        {"$push": {"member_ids": user_id},
+         "$set": {"updated_at": datetime.utcnow()}},
+    )
+    return result.modified_count == 1
+
+
+def save_castle_leaderboard(user_id, mode, highest_floor, clears=0):
+    if mode not in ("solo", "squad"):
+        raise ValueError("mode must be 'solo' or 'squad'")
+    _col("castle_leaderboards").update_one(
+        {"user_id": int(user_id), "mode": mode},
+        {"$max": {"highest_floor": int(highest_floor)},
+         "$inc": {"clears": max(0, int(clears))},
+         "$set": {"updated_at": datetime.utcnow()}},
+        upsert=True,
+    )
+
+
+def grant_castle_equipment(user_id, item_id, claim_key, source_floor,
+                           source_enemy=None):
+    """Idempotent reward ledger + owned item record; no currency or materials."""
+    catalog = _col("castle_item_catalog").find_one({"item_id": str(item_id)})
+    if not catalog:
+        return None
+    now = datetime.utcnow()
+    instance_id = uuid4().hex
+    claim = {
+        "claim_key": str(claim_key), "user_id": int(user_id),
+        "item_id": str(item_id), "instance_id": instance_id,
+        "source_floor": int(source_floor), "source_enemy": source_enemy,
+        "claimed_at": now,
+    }
+    try:
+        _col("castle_reward_claims").insert_one(claim)
+    except Exception:
+        # Duplicate claim key means Telegram callback/retry already granted it.
+        return None
+
+    instance = {
+        "instance_id": instance_id, "user_id": int(user_id),
+        "item_id": catalog["item_id"], "name": catalog["name"],
+        "item_type": catalog["slot"], "rarity": catalog["rarity"],
+        "faction": catalog.get("faction", "any"),
+        "stats": catalog.get("stats", {}),
+        "passive": catalog.get("passive", {}),
+        "equipped": False, "source_floor": int(source_floor),
+        "source_enemy": source_enemy, "obtained_at": now,
+    }
+    _col("castle_equipment").insert_one(instance)
+    return instance
+
+
+def add_demon_xp(user_id, amount):
+    """Demon-only progression, separate from the existing player XP/level."""
+    from utils.database import get_player
+    player = get_player(int(user_id))
+    if not player or str(player.get("faction", "")).lower() != "demon":
+        return None
+    amount = max(0, int(amount))
+    col = _col("players")
+    col.update_one({"user_id": int(user_id)}, {"$inc": {"demon_xp": amount}})
+    updated = get_player(int(user_id)) or player
+    xp = max(0, int(updated.get("demon_xp", 0)))
+    # Level N requires 50 * (N-1) * N cumulative Demon XP.
+    demon_level = min(100, max(1, int((1 + sqrt(1 + 8 * xp / 50)) // 2)))
+    col.update_one(
+        {"user_id": int(user_id)},
+        {"$set": {"demon_level": demon_level}},
+    )
+    return {"demon_level": demon_level, "demon_xp": xp}
+
+
+def record_castle_clear(user_id, floor, mode="solo"):
+    """Update best floor and clear totals without changing normal XP or Yen."""
+    floor = max(1, min(100, int(floor)))
+    _col("players").update_one(
+        {"user_id": int(user_id)},
+        {"$max": {"castle_highest_floor": floor},
+         "$inc": {"castle_total_clears": 1}},
+    )
+    save_castle_leaderboard(user_id, mode, floor, 1)
+    return True
