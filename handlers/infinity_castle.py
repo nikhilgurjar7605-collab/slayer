@@ -110,12 +110,17 @@ def _render_run(run, player, party=None, notice=None):
     ]
     if notice:
         lines += ["", notice]
-    if enemy:
+    if enemy and enemy.get("room_type"):
+        lines += [
+            "", f"🧭 Room: <b>{escape(str(enemy.get('room_type')).title())}</b>",
+            escape(str(run.get("room_notice", "The room is clear. Move to the next floor."))),
+        ]
+    elif enemy:
         lines += [
             "", "━━━━━━━━━━━━━━━━━━━━",
-            f"{'☠️ BOSS' if enemy.get('boss') else '👹 ENEMY'}: <b>{enemy.get('name')}</b>",
+            f"{'☠️ BOSS' if enemy.get('boss') else '👹 ENEMY'}: <b>{escape(str(enemy.get('name')))}</b>",
             f"Enemy Demon Level: <b>{enemy.get('demon_level', enemy.get('level'))}</b>  •  Rank: {escape(str(enemy.get('rank')))}",
-            f"Difficulty: <b>{enemy.get('difficulty')}</b>",
+            f"Difficulty: <b>{escape(str(enemy.get('difficulty')))}</b>",
             f"Enemy HP: <b>{max(0, int(enemy.get('hp', 0))):,}/{int(enemy.get('max_hp', 1)):,}</b>",
             "━━━━━━━━━━━━━━━━━━━━",
             "<b>Squad HP</b>",
