@@ -25,7 +25,6 @@ _db     = None
 # LRU cache for frequently accessed data to reduce DB hits
 _stock_price_cache = {}
 _player_cache = {}
-_spirit_bonus_cache = {}   # user_id -> (bonuses dict, timestamp) — hot path for combat
 _CACHE_TTL_SECONDS = 30  # Cache expires after 30 seconds
 
 
@@ -135,11 +134,6 @@ def init_db():
     db.user_activity_logs.create_index([("user_id", 1), ("timestamp", DESCENDING)])
     db.user_activity_logs.create_index("timestamp")
     db.captcha_guard.create_index("user_id", unique=True)
-
-    # ── Gacha / spirits collection indexes ────────────────────────────────
-    db.spirits.create_index([("user_id", 1), ("name", 1)], unique=True)
-    db.spirits.create_index("user_id")
-    db.spirits.create_index([("user_id", 1), ("equipped", 1)])
 
     # ── skill_tree collection indexes ─────────────────────────────────────
     db.skill_tree.create_index("user_id", unique=True)
@@ -362,8 +356,6 @@ def _player_defaults(faction="slayer"):
             "last_daily": None, "daily_streak": 0, "last_streak_day": None,
             "banned": 0, "ban_reason": None, "skill_points": 0,
             "devour_stacks": 0, "explore_count": 0, "explores_since_boss": 20,
-            "shards": 0, "gacha_pity": 0, "gacha_total_pulls": 0, "spirits_gifted": 0,
-            "equipped_spirits": [],
             "created_at": datetime.now(),
         }
     else:
@@ -385,8 +377,6 @@ def _player_defaults(faction="slayer"):
             "last_daily": None, "daily_streak": 0, "last_streak_day": None,
             "banned": 0, "ban_reason": None, "skill_points": 0,
             "devour_stacks": 0, "explore_count": 0, "explores_since_boss": 20,
-            "shards": 0, "gacha_pity": 0, "gacha_total_pulls": 0, "spirits_gifted": 0,
-            "equipped_spirits": [],
             "created_at": datetime.now(),
         }
 
@@ -1295,119 +1285,3 @@ def apply_style_stat_bonus(user_id, style_name):
         col("players").update_one({"user_id": user_id}, {"$set": updates})
 
 
-# ── Gacha / Spirit Summon helpers ─────────────────────────────────────────
-
-def add_shards(user_id, amount: int):
-    """Add spirit shards to a player (atomic)."""
-    col("players").update_one(
-        {"user_id": user_id},
-        {"$inc": {"shards": int(amount)}}
-    )
-    _player_cache.pop(str(user_id), None)
-
-
-def spend_shards(user_id, amount: int) -> bool:
-    """Atomically deduct shards only if the player has enough. Returns success."""
-    res = col("players").update_one(
-        {"user_id": user_id, "shards": {"$gte": int(amount)}},
-        {"$inc": {"shards": -int(amount)}}
-    )
-    _player_cache.pop(str(user_id), None)
-    return res.modified_count > 0
-
-
-def get_spirit_collection(user_id):
-    """Return list of owned spirit docs (deduped by name with count)."""
-    return list(col("spirits").find({"user_id": user_id}, {"_id": 0}))
-
-
-def add_spirit(user_id, spirit: dict) -> bool:
-    """Record a summoned spirit. Duplicates increase count. Returns True if NEW."""
-    res = col("spirits").update_one(
-        {"user_id": user_id, "name": spirit["name"]},
-        {
-            "$inc": {"count": 1},
-            "$setOnInsert": {
-                "user_id": user_id,
-                "name": spirit["name"],
-                "emoji": spirit.get("emoji", ""),
-                "rarity": spirit.get("rarity", "Common"),
-                "universe": spirit.get("universe", "Demon Slayer"),
-                "lore": spirit.get("lore", ""),
-                "passive": spirit.get("passive", {}),
-                "equipped": False,
-                "first_summoned": datetime.now(),
-            },
-        },
-        upsert=True,
-    )
-    # Keep stored metadata fresh (owner edits universes/lore/passives via admin panel)
-    meta = {}
-    if spirit.get("universe"):
-        meta["universe"] = spirit["universe"]
-    if spirit.get("lore"):
-        meta["lore"] = spirit["lore"]
-    if spirit.get("emoji"):
-        meta["emoji"] = spirit["emoji"]
-    if spirit.get("rarity"):
-        meta["rarity"] = spirit["rarity"]
-    if spirit.get("passive") is not None:
-        meta["passive"] = spirit["passive"]
-    if meta:
-        col("spirits").update_one(
-            {"user_id": user_id, "name": spirit["name"]},
-            {"$set": meta},
-        )
-    _invalidate_spirit_caches(user_id)  # derived bonuses may have changed
-    return res.upserted_id is not None
-
-
-def set_spirit_equipped(user_id, name: str, equipped: bool) -> bool:
-    """Equip/unequip a spirit. Enforces GACHA_MAX_EQUIPPED slots. Returns success."""
-    if equipped:
-        from config import GACHA_MAX_EQUIPPED
-        currently = col("spirits").count_documents(
-            {"user_id": user_id, "equipped": True}
-        )
-        already = col("spirits").count_documents(
-            {"user_id": user_id, "name": name, "equipped": True}
-        )
-        if not already and currently >= GACHA_MAX_EQUIPPED:
-            return False
-    res = col("spirits").update_one(
-        {"user_id": user_id, "name": name},
-        {"$set": {"equipped": bool(equipped)}},
-    )
-    _invalidate_spirit_caches(user_id)  # bonuses are derived from spirits
-    return res.matched_count > 0
-
-
-def get_equipped_spirits(user_id) -> list:
-    return list(col("spirits").find(
-        {"user_id": user_id, "equipped": True}, {"_id": 0}
-    ))
-
-
-def _invalidate_spirit_caches(user_id):
-    """Drop derived spirit caches for a player (call after any spirit mutation)."""
-    _player_cache.pop(str(user_id), None)
-    _spirit_bonus_cache.pop(user_id, None)
-
-
-def get_spirit_bonuses(user_id) -> dict:
-    """Combined fractional passives from all EQUIPPED spirits.
-    Keys: atk_pct, def_pct, hp_pct, sta_pct, spd_pct, xp_pct, yen_pct, shard_bonus
-
-    Cached in-memory (TTL = _CACHE_TTL_SECONDS) because combat calls this on
-    every attack/defend turn — avoids a DB round-trip per turn for fast gameplay.
-    """
-    import time
-    cached = _spirit_bonus_cache.get(user_id)
-    if cached and time.time() - cached[1] < _CACHE_TTL_SECONDS:
-        return cached[0]
-    total = {}
-    for s in get_equipped_spirits(user_id):
-        for k, v in (s.get("passive") or {}).items():
-            total[k] = total.get(k, 0) + float(v)
-    _spirit_bonus_cache[user_id] = (total, time.time())
-    return total

@@ -125,8 +125,6 @@ from handlers.pets import (
     pet_catch_callback, pet_flee_callback, pet_hatch_callback,
 )
 from handlers.lottery import lottery, lottery_play
-from handlers.gacha import summon, spirits_cmd, shards_cmd, gacha_callback
-from handlers.gacha_admin import register_spirit_admin
 from handlers.slayermark import slayermark
 from handlers.gif_store import (
     addgifbanner, removegifbanner, listgifbanners, setmygifbanner,
@@ -237,7 +235,6 @@ from handlers.pettrade import pettrade, petoffer, petaccept, pt_callback
 from handlers.direct_fetch import sword_command, armour_command
 from handlers.enemydex import slayerdex, demondex
 from handlers.image_checker import checkimages
-from handlers.bulk_spirits import bulkaddspirits
 
 from handlers.meditate import meditate, meditate_callback, meditate_react_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
@@ -301,23 +298,7 @@ ANY = filters.ALL  # works everywhere
 
 async def on_startup(app: Application):
     await app.bot.send_message(chat_id=-1003882841537, text="Bot has been started!")
-    # Register the owner command in Telegram's /menu so it actually appears
-    # and is delivered to the bot (commands not in this list still work when
-    # typed, but visible commands are easier to use and less likely to be
-    # swallowed by group privacy settings).
-    try:
-        from telegram import BotCommand
-        cmds = [
-            BotCommand("spiritadd", "Admin: add a spirit from any anime universe"),
-            BotCommand("spiritremove", "Admin: remove/block a spirit from gacha"),
-            BotCommand("spiritunblock", "Admin: restore a removed spirit"),
-            BotCommand("summon", "Summon spirits with shards"),
-            BotCommand("spirits", "View & equip your spirits"),
-            BotCommand("shards", "View your spirit shards"),
-        ]
-        await app.bot.set_my_commands(cmds)
-    except Exception as _e:
-        logger.warning("set_my_commands failed: %s", _e)
+
 
 
 async def buy_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -659,16 +640,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith('ahelp_'):              await admin_help_callback(update, context)
     elif data.startswith('pt_'):                 await pt_callback(update, context)
     elif data.startswith('ownerhelp_'):          await ownerhelp_callback(update, context)
-    elif data.startswith('ospi_') or data.startswith('gacha_') or data.startswith('spirit_equip_'):
-        # Should never be reached — these are matched by dedicated
-        # CallbackQueryHandlers registered before this router. Kept as a safe
-        # fallback so old on-screen buttons still work if handler order ever
-        # changes again.
-        if data.startswith('ospi_'):
-            from handlers.gacha_admin import spiritsadmin_callback
-            await spiritsadmin_callback(update, context)
-        else:
-            await gacha_callback(update, context)
     else:
         await query.answer("Unknown action.", show_alert=True)
 
@@ -949,7 +920,6 @@ def main():
         ('giveitem',        giveitem),
         ('resetplayer',     resetplayer),
         ('checkimages',     checkimages),
-        ('bulkaddspirits',  bulkaddspirits),
         ('givesp',          user_givesp),   # ALL players — gives from own SP
         ('adminsp',         admin_givesp),  # admin only — grants SP freely
         ('check',           check),
@@ -1038,9 +1008,6 @@ def main():
         ('unlist',       unlist),
         ('markethistory',markethistory),
         ('lottery',      lottery_play),
-        ('summon',       summon),
-        ('spirits',      spirits_cmd),
-        ('shards',       shards_cmd),
         ('joinraid',     joinraid),
         ('raidattack',   raidattack),
         ('travel',       travel),
@@ -1122,19 +1089,6 @@ def main():
 
     app.add_handler(PreCheckoutQueryHandler(_unified_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT & filters.ChatType.PRIVATE, _unified_successful_payment))
-    # ── Owner spirit rift admin — THE ONE command /spiritadd (guided flow).
-    #    MUST be registered here; without this call the owner commands do nothing.
-    register_spirit_admin(app)
-    # ── IMPORTANT: gacha / spirit callbacks MUST be registered BEFORE the
-    #    catch-all callback_router (group 0 handlers run in registration
-    #    order). Previously these ran after the router, so the router's
-    #    ownership check swallowed every gacha_/ospi_ button with
-    #    "These buttons are not yours." and nothing worked.
-    app.add_handler(CallbackQueryHandler(gacha_callback, pattern=r'^(gacha_|spirit_equip_)'))
-    # Owner spirit-rift panel callbacks (legacy panels + anything the guided
-    # /spiritadd ConversationHandler didn't consume in its rarity step).
-    from handlers.gacha_admin import spiritsadmin_callback as _spiritsadmin_cb
-    app.add_handler(CallbackQueryHandler(_spiritsadmin_cb, pattern=r'^ospi_'))
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
