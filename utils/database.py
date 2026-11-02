@@ -415,6 +415,12 @@ def create_player(user_id, username, name, faction, style, style_emoji,
         "story": story, "story_bonus": story_bonus,
         "rank": rank, "rank_kanji": rank_kanji,
     })
+    if str(faction).lower() == "demon":
+        d.update({
+            "demon_level": 1, "demon_xp": 0, "demon_abilities": [],
+            "demon_regen_bonus": 0.0, "demon_art_bonus": 0.0,
+        })
+    d.update({"castle_highest_floor": 0, "castle_total_clears": 0})
     col("players").update_one(
         {"user_id": user_id},
         {"$setOnInsert": d},
