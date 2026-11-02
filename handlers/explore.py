@@ -276,8 +276,7 @@ def _threat_emoji(threat: str) -> str:
 
 
 def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
-                          active_pet: Optional[Dict] = None,
-                          ) -> str:
+                          active_pet: Optional[Dict] = None) -> str:
     """Render the compact wild-encounter card shown on /explore."""
     enemy_level  = max(1, int(preview.get('recommended_level', 1) or 1))
     player_level = get_level(player['xp'])
