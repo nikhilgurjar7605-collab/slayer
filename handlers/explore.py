@@ -206,15 +206,6 @@ def combat_status(player: Dict, state: Dict, ally: Optional[Dict] = None, log_li
         parts.append(f"HP: {state['ally_hp']:,}|{state['ally_max_hp']:,}")
         parts.append(ally_hp_bar)
 
-    # Spirit & Status Effects
-    try:
-        from utils.spirits import equipped_spirit_names
-        _sp = equipped_spirit_names(player.get('user_id'))
-        if _sp:
-            parts.append(f"👻 Spirits: {' · '.join(_sp)}")
-    except Exception:
-        pass
-
     status_lines = status_summary(get_status_effects(player.get('user_id')))
     if status_lines:
         parts.append(f"🧪 Effects: {' | '.join(status_lines[:5])}")
@@ -433,14 +424,6 @@ def calc_dmg(player, base_min=8, base_max=20, owned_skills=None, is_technique=Fa
         _pet_atk = get_pet_passives(user_id).get('atk_pct', 0)
         if _pet_atk:
             dmg = int(dmg * (1 + _pet_atk))
-        # ── Gacha: equipped spirit ATK bonus ──────────────────────────────
-        try:
-            from utils.database import get_spirit_bonuses
-            _sp_atk = get_spirit_bonuses(user_id).get('atk_pct', 0)
-            if _sp_atk:
-                dmg = int(dmg * (1 + _sp_atk))
-        except Exception:
-            pass
         if context and context.user_data.get(f'pet_low_hp_boost_{user_id}'):
             _boost = context.user_data.pop(f'pet_low_hp_boost_{user_id}')
             dmg = int(dmg * (1 + _boost))
@@ -502,9 +485,7 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
     # Guard/reflect/pressure effects applied after this call are unaffected.
     if state.get('is_boss'):
         try:
-            from handlers.gacha_admin import (
-                BOSS_DEF_IGNORE, BOSS_CRIT_CHANCE, BOSS_CRIT_MULT,
-            )
+            from utils.boss_balance import BOSS_DEF_IGNORE, BOSS_CRIT_CHANCE, BOSS_CRIT_MULT
         except Exception:
             BOSS_DEF_IGNORE, BOSS_CRIT_CHANCE, BOSS_CRIT_MULT = 0.40, 0.15, 1.5
         _mit = 1.0
@@ -523,12 +504,6 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
             except Exception:
                 pass
         _mit -= min(0.30, max(0, player.get('potential_tier', 0) or 0) * 0.03)
-        if user_id:
-            try:
-                from utils.database import get_spirit_bonuses
-                _mit -= float(get_spirit_bonuses(user_id).get('def_pct', 0) or 0)
-            except Exception:
-                pass
         _mit = max(0.0, min(0.95, _mit))
         # restore the portion of mitigation the boss ignores
         dmg = int(dmg / max(1e-6, 1 - _mit * (1 - BOSS_DEF_IGNORE)))
@@ -741,7 +716,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Boss scaling: hard but beatable — players NEED spirits to win ──
     # Growth is cap-bounded (BOSS_HP_CAP / BOSS_ATK_CAP) so bosses stay
     # dangerous at every level without one-shotting geared late-game players.
-    from handlers.gacha_admin import (
+    from utils.boss_balance import (
         BOSS_HP_MULT, BOSS_ATK_MULT, BOSS_XP_MULT, BOSS_YEN_MULT,
         BOSS_LEVEL_HP_K, BOSS_LEVEL_ATK_K, BOSS_HP_CAP, BOSS_ATK_CAP,
     )
@@ -922,19 +897,6 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             pet_lines = [f"🐾 *Pet:* {active_pet['name']} active"]
 
-    # ── Spirit presence line at battle start ───────────────────────────────
-    spirit_lines = []
-    try:
-        from utils.spirits import equipped_spirit_names, spirit_battle_line
-        _snames = equipped_spirit_names(user_id)
-        if _snames:
-            spirit_lines = [f"👻 *Spirits beside you:* {' · '.join(_snames)}"]
-            _wl = spirit_battle_line(user_id, "attack", chance=0.6)
-            if _wl:
-                spirit_lines.append(_wl)
-    except Exception:
-        pass
-
     pdisp = pressure_display(pressure, location)
     boss_line = f"\n☠️ *BOSS BATTLE!* HP x3 | ATK x1.5" if state.get('is_boss') else ""
     intro = f"⚔️ *BATTLE BEGINS!*{boss_line}\n{pdisp}"
@@ -1047,23 +1009,6 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     log.append(f"⚔️ *{player['name']}* strikes *{state['enemy_name']}*")
     log.append("💥 *" + (f'CRIT! {base_dmg:,} dmg*' if crit else f'{base_dmg:,} dmg*'))
-    # ── Spirit active moves: equipped spirits ATTACK in the battle log ────
-    try:
-        from utils.spirits import spirit_move_line, spirit_battle_line
-        _mv = spirit_move_line(user_id, chance_mult=1.3 if state.get('is_boss') else 1.0)
-        if _mv:
-            _line, _frac = _mv
-            _sdmg = max(1, int(base_dmg * _frac))
-            new_enemy_hp = max(0, new_enemy_hp - _sdmg)
-            update_battle_enemy_hp(user_id, new_enemy_hp)
-            state = get_battle_state(user_id) or state
-            log.append(f"{_line} — {_sdmg:,} spirit damage!")
-        if player['hp'] < player.get('max_hp', 1) * 0.30:
-            _sl2 = spirit_battle_line(user_id, "low_hp", chance=0.5)
-            if _sl2:
-                log.append(_sl2)
-    except Exception:
-        pass
     if new_enemy_hp <= 0:
         await handle_victory(query, user_id, player, state, log, context)
         return
@@ -1140,18 +1085,6 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
-    # ── Spirit guardians: equipped spirits ward off part of the blow ─────
-    try:
-        from utils.spirits import spirit_guard_reduction
-        _red, _gline = spirit_guard_reduction(user_id)
-        if _red >= 1.0:
-            enemy_dmg = 0
-            if _gline:
-                log.append(_gline)
-        elif _red > 0:
-            enemy_dmg = max(1, int(enemy_dmg * (1 - _red)))
-    except Exception:
-        pass
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
     context.user_data[f'battle_ctx_{user_id}'] = ctx
     if bonuses.get('def_pct'):
@@ -1957,14 +1890,6 @@ async def goto_explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────────────────────────────────
 async def handle_victory(query, user_id, player, state, log, context=None):
     log.append(f"💀 *{state['enemy_name']}* — DEFEATED!")
-    # ── Spirit presence: your spirits celebrate the victory ──────────────
-    try:
-        from utils.spirits import spirit_battle_line
-        _vl = spirit_battle_line(user_id, "victory", chance=0.6)
-        if _vl:
-            log.append(_vl)
-    except Exception:
-        pass
     xp_gain = state['prize_xp']
     yen_gain = state['prize_yen']
     reward_mult, reward_bonus_lines = reward_multiplier(
@@ -2057,15 +1982,6 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     if state.get('is_boss'):
         add_item(user_id, 'Boss Shard', 'material')
         drop_lines.append(f"🔸 Boss Shard _(found in {_region_label})_")
-        # ── Gacha: boss spirit-shard reward (max 5) ──────────────────────
-        try:
-            from handlers.gacha import roll_boss_shards
-            from utils.database import add_shards as _add_shards
-            _bs = roll_boss_shards(state.get('enemy_name', ''))
-            _add_shards(user_id, _bs)
-            drop_lines.append(f"🔮 +{_bs} Spirit Shards _(boss reward)_")
-        except Exception:
-            pass
     faction = player.get('faction', 'slayer')
     enemy_faction_type = state.get('faction_type', '')
     devour_msg = ""
