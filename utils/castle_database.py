@@ -378,6 +378,20 @@ def add_demon_xp(user_id, amount):
     }
 
 
+def record_castle_progress(user_id, floor, mode="solo"):
+    """Track the best reached floor without counting it as a full clear."""
+    floor = max(1, min(100, int(floor)))
+    _col("players").update_one(
+        {"user_id": int(user_id)}, {"$max": {"castle_highest_floor": floor}}
+    )
+    _col("castle_leaderboards").update_one(
+        {"user_id": int(user_id), "mode": mode},
+        {"$max": {"highest_floor": floor},
+         "$set": {"updated_at": datetime.utcnow()}},
+        upsert=True,
+    )
+
+
 def record_castle_clear(user_id, floor, mode="solo"):
     """Update best floor and clear totals without changing normal XP or Yen."""
     floor = max(1, min(100, int(floor)))
