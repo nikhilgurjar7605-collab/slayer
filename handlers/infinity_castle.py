@@ -194,6 +194,9 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action in ("squad", "party"):
+        if _find_run(user_id):
+            await update.effective_message.reply_text("Finish or retreat from your active Castle run before creating a squad.")
+            return
         party = create_castle_party(user_id)
         await update.effective_message.reply_text(
             "👥 <b>Castle squad created!</b>\n"
@@ -220,6 +223,9 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "start":
+        if _find_run(user_id):
+            await update.effective_message.reply_text("You already have an active Castle run. Use /castle status.")
+            return
         party = col("castle_parties").find_one(
             {"leader_id": user_id, "status": "open"}
         )
@@ -592,7 +598,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         notice += "\n💀 You were defeated. A squad member can continue the fight."
         if not party:
             save_castle_run(run["run_id"], {"status": "defeated"})
-            notice += "\nYour solo run has ended."
+            notice += "\nYour solo run has ended. Use /castle resume to continue from your checkpoint."
+        elif all(int(value) <= 0 for value in hp_map.values()):
+            save_castle_run(run["run_id"], {"status": "defeated"})
+            col("castle_parties").update_one(
+                {"party_id": party["party_id"]}, {"$set": {"status": "defeated"}}
+            )
+            notice += "\nThe whole squad has fallen. The leader can use /castle resume."
     await query.edit_message_text(
         _render_run(run, player, party, notice),
         parse_mode="HTML", reply_markup=_keyboard(run)
