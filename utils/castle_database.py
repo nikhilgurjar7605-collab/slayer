@@ -242,7 +242,7 @@ def save_castle_run(run_id, updates):
     allowed = {
         "floor", "room_id", "checkpoint_floor", "status", "party_id",
         "power_score", "difficulty", "current_enemy", "room_history",
-        "player_hp_by_user",
+        "player_hp_by_user", "room_type", "room_notice",
     }
     safe = {k: v for k, v in dict(updates or {}).items() if k in allowed}
     safe["updated_at"] = datetime.utcnow()
