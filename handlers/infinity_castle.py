@@ -326,7 +326,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         item_name = " ".join(args[1:]).strip()
         item = col("castle_equipment").find_one({
-            "user_id": user_id, "name": {"$regex": f"^{item_name}$", "$options": "i"}
+            "user_id": user_id, "name": {"$regex": f"^{re.escape(item_name)}$", "$options": "i"}
         })
         if not item:
             await update.effective_message.reply_text("You don't own that Castle equipment.")
@@ -547,7 +547,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if action == "solo":
         if run:
-            await query.answer("You already have an active run.", show_alert=True)
+            await query.message.reply_text("You already have an active run. Use /castle status.")
             return
         run = create_castle_run(user_id, "solo")
         await _start_floor(run, player, None)
@@ -558,7 +558,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if action == "squad":
         if run:
-            await query.answer("Finish or retreat from your active run first.", show_alert=True)
+            await query.message.reply_text("Finish or retreat from your active run first.")
             return
         party = create_castle_party(user_id)
         await query.edit_message_text(
@@ -643,7 +643,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "next":
         enemy = run.get("current_enemy") or {}
         if int(enemy.get("hp", 1)) > 0:
-            await query.answer("Defeat the current enemy first.", show_alert=True)
+            await query.message.reply_text("Defeat the current enemy first.")
             return
         floor = int(run.get("floor", 1)) + 1
         save_castle_run(run["run_id"], {"floor": floor})
