@@ -114,11 +114,24 @@ def _col(name):
     return col(name)
 
 
+def _player_level(player):
+    """Use the game's existing XP-to-level formula when level is not stored."""
+    if not player:
+        return 1
+    if player.get("level"):
+        return max(1, int(player["level"]))
+    try:
+        from utils.helpers import get_level
+        return max(1, int(get_level(int(player.get("xp", 0) or 0))))
+    except Exception:
+        return 1
+
+
 def calculate_player_power(player):
     """Estimate strength from level AND actual combat stats/equipment bonuses."""
     if not player:
         return 1
-    level = max(1, int(player.get("level") or 1))
+    level = _player_level(player)
     atk = max(0, float(player.get("atk", player.get("attack", 0)) or 0))
     defense = max(0, float(player.get("def_stat", player.get("defense", 0)) or 0))
     hp = max(1, float(player.get("max_hp", player.get("hp", 1)) or 1))
@@ -150,7 +163,7 @@ def calculate_enemy_level(player, floor, party_players=None):
     a fourfold enemy-level jump.
     """
     player = player or {}
-    level = max(1, int(player.get("level") or 1))
+    level = _player_level(player)
     floor = max(1, min(100, int(floor or 1)))
     own_power = calculate_player_power(player)
     reference_power = max(1, level * 12)
@@ -170,11 +183,12 @@ def calculate_difficulty(player, floor, party_players=None):
     """Return a persisted-friendly difficulty breakdown for UI and balancing."""
     enemy_level = calculate_enemy_level(player, floor, party_players)
     party_size = max(1, len(party_players or [player]))
-    if enemy_level <= max(1, int((player or {}).get("level") or 1)) + 2:
+    base_level = _player_level(player)
+    if enemy_level <= base_level + 2:
         tier = "Normal"
-    elif enemy_level <= max(1, int((player or {}).get("level") or 1)) + 8:
+    elif enemy_level <= base_level + 8:
         tier = "Hard"
-    elif enemy_level <= max(1, int((player or {}).get("level") or 1)) + 16:
+    elif enemy_level <= base_level + 16:
         tier = "Extreme"
     else:
         tier = "Nightmare"
@@ -217,6 +231,7 @@ def save_castle_run(run_id, updates):
     allowed = {
         "floor", "room_id", "checkpoint_floor", "status", "party_id",
         "power_score", "difficulty", "current_enemy", "room_history",
+        "player_hp_by_user",
     }
     safe = {k: v for k, v in dict(updates or {}).items() if k in allowed}
     safe["updated_at"] = datetime.utcnow()
@@ -329,16 +344,11 @@ def add_demon_xp(user_id, amount):
     if not player or str(player.get("faction", "")).lower() != "demon":
         return None
     amount = max(0, int(amount))
-    col = _col("players")
-    col.update_one({"user_id": int(user_id)}, {"$inc": {"demon_xp": amount}})
-    updated = get_player(int(user_id)) or player
-    xp = max(0, int(updated.get("demon_xp", 0)))
+    xp = max(0, int(player.get("demon_xp", 0))) + amount
     # Level N requires 50 * (N-1) * N cumulative Demon XP.
     demon_level = min(100, max(1, int((1 + sqrt(1 + 8 * xp / 50)) // 2)))
-    col.update_one(
-        {"user_id": int(user_id)},
-        {"$set": {"demon_level": demon_level}},
-    )
+    from utils.database import update_player
+    update_player(int(user_id), demon_xp=xp, demon_level=demon_level)
     return {"demon_level": demon_level, "demon_xp": xp}
 
 
