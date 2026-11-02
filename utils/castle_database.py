@@ -92,7 +92,7 @@ def initialize_castle_database(db):
     db.castle_leaderboards.create_index([("mode", 1), ("highest_floor", -1)])
     db.castle_reward_claims.create_index("claim_key", unique=True)
 
-    # Only fill missing fields. Never reset existing progress.
+    # Only fill missing fields. Never reset existing progress in other fields.
     for field, default in PLAYER_DEFAULTS.items():
         db.players.update_many(
             {field: {"$exists": False}}, {"$set": {field: default}}
