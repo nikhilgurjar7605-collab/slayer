@@ -282,15 +282,16 @@ log = logger  # alias used in some handlers
 async def post_init(application):
     """Called after app starts — log webhook info."""
     import os
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("WEBHOOK_URL", "")
     BOT_TOKEN_ENV = os.environ.get("BOT_TOKEN", "")
     await resume_bank_giveaways(application)
     await resume_sp_features(application)
     schedule_daily_bank_tax(application)
     if WEBHOOK_URL and BOT_TOKEN_ENV:
         info = await application.bot.get_webhook_info()
-        logger.info(f"Webhook active: {info.url}")
-        logger.info(f"Pending updates: {info.pending_update_count}")
+        # Never print the webhook URL: it contains the bot token.
+        logger.info("Webhook active: %s", bool(info.url))
+        logger.info("Pending updates: %s", info.pending_update_count)
     else:
         logger.info("Running in polling mode")
 
@@ -1165,7 +1166,8 @@ def main():
         webhook_path = f"/{BOT_TOKEN}"
         full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
         
-        logger.info(f"🌐 Running on Render with webhook: {full_webhook_url}")
+        # Do not log full_webhook_url because its path contains the bot token.
+        logger.info("🌐 Running on Render webhook mode.")
         
         async def setup_webhook():
             await app.bot.set_webhook(full_webhook_url)
@@ -1213,7 +1215,7 @@ def main():
             url_path=webhook_path,
             webhook_url=full_webhook_url,
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
+            drop_pending_updates=False,
         )
     else:
         # Running locally or without webhook - use polling mode
@@ -1221,7 +1223,7 @@ def main():
         try:
             app.run_polling(
                 allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
+                drop_pending_updates=False,
                 close_loop=False,  # Don't close the loop - we're in a restart loop
             )
         finally:
@@ -1350,7 +1352,7 @@ if __name__ == '__main__':
     _PING_TIMEOUT  = 15
 
     def _keep_alive():
-        """Pings the public URL on a fixed cadence with back-off on failure."""
+        """Pings the local diagnostic health server; this does not prevent Render sleep."""
         print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
         _time.sleep(20)
         failures = 0
