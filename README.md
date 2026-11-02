@@ -171,3 +171,14 @@ demon_slayer_bot/
     ├── database.py     — SQLite database layer
     └── helpers.py      — Utility functions
 ```
+
+
+---
+
+## 🌐 Slayer: Eclipse Webapp Backend
+
+The independent browser RPG backend lives in `backend/`. It uses the same MongoDB connection variable and database as the Telegram bot, but stores webapp accounts and progress in separate `web_*` collections. Webapp characters start fresh and do not inherit Telegram bot progress.
+
+For Vercel deployment, import this repository and set the Vercel project's **Root Directory** to `backend`. Configure `MONGO_URL`, `JWT_SECRET`, and optionally `WEB_ORIGINS` in Vercel Environment Variables.
+
+See [backend/README.md](backend/README.md) for setup instructions, API routes and Story Mode details.
