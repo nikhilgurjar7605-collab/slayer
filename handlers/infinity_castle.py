@@ -78,10 +78,17 @@ def _enemy_for(player, floor, party_players):
     if boss:
         hp = int(hp * 2.2)
         atk = int(atk * 1.35)
+    rank = "Upper Moon" if floor >= 70 else ("Lower Moon" if floor >= 30 else ("Elite" if floor >= 10 else "Demon"))
+    rank_abilities = {
+        "Demon": "Savage Claws",
+        "Elite": "Blood Art Strike",
+        "Lower Moon": "Crimson Blood Art",
+        "Upper Moon": "Overwhelming Blood Technique",
+    }
     return {
         "name": name, "level": level, "demon_level": level, "hp": hp, "max_hp": hp,
         "atk": atk, "boss": boss, "difficulty": difficulty["tier"],
-        "rank": "Upper Moon" if floor >= 70 else ("Lower Moon" if floor >= 30 else ("Elite" if floor >= 10 else "Demon")),
+        "rank": rank, "ability": "Muzan's Final Judgment" if floor == 100 else (rank_abilities.get(rank) if boss else rank_abilities.get(rank)),
     }
 
 
@@ -617,7 +624,10 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             passive = gear.get("passive", {})
             if passive.get("type") == "damage_reduction":
                 reduction += float(passive.get("value", 0))
-    enemy_damage = max(1, int((int(enemy.get("atk", 5)) - (int(player.get("def_stat", player.get("defense", 0)) or 0) + armor_bonus) // 3) * max(0.25, 1 - min(0.60, reduction)))
+    rank_multiplier = {"Elite": 1.05, "Lower Moon": 1.10, "Upper Moon": 1.20}.get(enemy.get("rank"), 1.0)
+    if enemy.get("boss"):
+        rank_multiplier += 0.10
+    enemy_damage = max(1, int((int(enemy.get("atk", 5)) - (int(player.get("def_stat", player.get("defense", 0)) or 0) + armor_bonus) // 3) * rank_multiplier * max(0.25, 1 - max(0, min(0.60, reduction))))
     current_hp = max(0, current_hp - enemy_damage)
     regen = 0
     if str(player.get("faction", "")).lower() == "demon" and current_hp > 0:
