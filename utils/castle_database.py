@@ -299,6 +299,21 @@ def save_castle_run(run_id, updates):
     ).modified_count == 1
 
 
+def apply_castle_enemy_damage(run_id, expected_hp, damage):
+    """Compare-and-swap enemy HP so duplicate Telegram taps cannot double-hit."""
+    result = _col("castle_runs").update_one(
+        {
+            "run_id": str(run_id), "status": "active",
+            "current_enemy.hp": int(expected_hp),
+        },
+        {
+            "$inc": {"current_enemy.hp": -max(1, int(damage))},
+            "$set": {"updated_at": datetime.utcnow()},
+        },
+    )
+    return result.modified_count == 1
+
+
 def save_castle_encounter(run_id, floor, room_id, enemy_data):
     doc = {
         "run_id": run_id, "floor": int(floor), "room_id": str(room_id),
