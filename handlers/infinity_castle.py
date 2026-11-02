@@ -138,6 +138,49 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     action = args[0].lower() if args else "status"
 
+    if action == "resume":
+        previous = col("castle_runs").find_one(
+            {"user_id": user_id, "status": "defeated"},
+            sort=[("updated_at", -1)]
+        )
+        if not previous:
+            await update.effective_message.reply_text("No defeated Castle run is available to resume.")
+            return
+        party = get_castle_party(previous.get("party_id")) if previous.get("party_id") else None
+        if party and int(party.get("leader_id", 0)) != user_id:
+            await update.effective_message.reply_text("Only the squad leader can resume this run.")
+            return
+        floor = max(1, int(previous.get("checkpoint_floor", 1)))
+        members = _party_players(party) if party else [player]
+        hp_map = {}
+        for member in members:
+            uid = int(member["user_id"])
+            restored_hp = max(1, int(member.get("max_hp", 100) * 0.50))
+            hp_map[str(uid)] = restored_hp
+            update_player(uid, hp=restored_hp)
+        col("castle_runs").update_one(
+            {"run_id": previous["run_id"], "status": "defeated"},
+            {"$set": {
+                "status": "active", "floor": floor,
+                "room_id": f"floor_{floor}", "player_hp_by_user": hp_map,
+                "updated_at": datetime.utcnow(),
+            }}
+        )
+        if party:
+            col("castle_parties").update_one(
+                {"party_id": party["party_id"]},
+                {"$set": {"status": "running"}}
+            )
+        run = col("castle_runs").find_one({"run_id": previous["run_id"]})
+        run.pop("_id", None)
+        await _start_floor(run, player, party)
+        run = _find_run(user_id)
+        await update.effective_message.reply_text(
+            _render_run(run, player, party, f"🔁 Resumed from checkpoint floor {floor}. Squad HP restored to 50%."),
+            parse_mode="HTML", reply_markup=_keyboard(run)
+        )
+        return
+
     if action in ("solo", "enter"):
         if _find_run(user_id):
             await update.effective_message.reply_text("You already have an active Castle run. Use /castle status.")
@@ -280,6 +323,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🏯 <b>INFINITY CASTLE</b>\n"
             "100 floors • Adaptive difficulty • Solo or squads of 4\n\n"
             "/castle solo — Start alone\n"
+            "/castle resume — Resume from last checkpoint\n"
             "/castle squad — Create a squad\n"
             "/castle join CODE — Join a squad\n"
             "/castle start — Leader starts squad run\n"
