@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 
 from utils.database import get_player, update_player, col
 from utils.helpers import get_level
+from config import SHOP_ITEMS
 from utils.castle_database import (
     create_castle_run, get_active_castle_run, save_castle_run,
     calculate_player_power, calculate_difficulty, create_castle_party,
@@ -538,7 +539,11 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_hp <= 0:
         await query.answer("You are defeated. Another squad member must finish this enemy.", show_alert=True)
         return
-    player_atk = max(1, int(player.get("atk", player.get("attack", 10)) or 10))
+    player_atk = max(1, int(player.get("str_stat", player.get("atk", player.get("attack", 10))) or 10))
+    for base_weapon in SHOP_ITEMS.get("swords", []):
+        if base_weapon.get("name") == player.get("equipped_sword"):
+            player_atk += int(base_weapon.get("atk_bonus", 0))
+            break
     weapon_bonus = 0
     weapon_multiplier = 1.0
     weapon = None
@@ -592,6 +597,10 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     armor_bonus = 0
+    for base_armor in SHOP_ITEMS.get("armor", []):
+        if base_armor.get("name") == player.get("equipped_armor"):
+            armor_bonus += int(base_armor.get("def_bonus", 0))
+            break
     armor = None
     if player.get("castle_equipped_armor"):
         armor = col("castle_equipment").find_one({
