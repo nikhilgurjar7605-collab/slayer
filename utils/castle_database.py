@@ -167,7 +167,21 @@ def calculate_player_power(player):
         pass
     hp = max(1, float(player.get("max_hp", player.get("hp", 1)) or 1))
     stamina = max(0, float(player.get("max_sta", player.get("sta", 0)) or 0))
+    skill_bonuses = {}
+    if player.get("user_id") is not None:
+        try:
+            from handlers.skilltree import get_player_skills, get_active_skill_bonuses
+            skill_bonuses = get_active_skill_bonuses(
+                get_player_skills(int(player["user_id"])),
+                user_id=int(player["user_id"]),
+            )
+            atk *= 1 + float(skill_bonuses.get("atk_pct", 0) or 0)
+            defense *= 1 + float(skill_bonuses.get("def_pct", 0) or 0)
+            hp += max(0, float(skill_bonuses.get("max_hp", 0) or 0))
+        except Exception:
+            skill_bonuses = {}
     power = level * 5 + atk * 2.0 + defense * 1.5 + hp * 0.08 + stamina * 0.04
+    power += max(0, float(skill_bonuses.get("crit_bonus", 0) or 0)) * 20
     # Include equipped Castle gear in the adaptive power calculation.
     user_id = player.get("user_id")
     if user_id is not None:
