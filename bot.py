@@ -280,18 +280,32 @@ logger = logging.getLogger(__name__)
 log = logger  # alias used in some handlers
 
 async def post_init(application):
-    """Called after app starts — log webhook info."""
+    """Restore optional background systems without preventing bot startup."""
     import os
+
     WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("WEBHOOK_URL", "")
     BOT_TOKEN_ENV = os.environ.get("BOT_TOKEN", "")
-    await resume_bank_giveaways(application)
-    await resume_sp_features(application)
-    schedule_daily_bank_tax(application)
+
+    for label, startup_task in (
+        ("bank giveaways", lambda: resume_bank_giveaways(application)),
+        ("SP features", lambda: resume_sp_features(application)),
+        ("daily bank tax", lambda: schedule_daily_bank_tax(application)),
+    ):
+        try:
+            result = startup_task()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.exception("Startup task failed: %s", label)
+
     if WEBHOOK_URL and BOT_TOKEN_ENV:
-        info = await application.bot.get_webhook_info()
-        # Never print the webhook URL: it contains the bot token.
-        logger.info("Webhook active: %s", bool(info.url))
-        logger.info("Pending updates: %s", info.pending_update_count)
+        try:
+            info = await application.bot.get_webhook_info()
+            # Never print the webhook URL: it contains the bot token.
+            logger.info("Webhook active: %s", bool(info.url))
+            logger.info("Pending updates: %s", info.pending_update_count)
+        except Exception:
+            logger.exception("Could not inspect Telegram webhook status.")
     else:
         logger.info("Running in polling mode")
 
