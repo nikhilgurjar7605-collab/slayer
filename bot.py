@@ -298,7 +298,58 @@ PRIVATE = filters.ChatType.PRIVATE
 ANY = filters.ALL  # works everywhere
 
 async def on_startup(app: Application):
-    await app.bot.send_message(chat_id=-1003882841537, text="Bot has been started!")
+    """Run every startup task exactly once and publish Telegram's command menu."""
+    # The builder's original post_init callback was being overwritten below.
+    # Call it here so resumable systems and scheduled jobs are restored.
+    await post_init(app)
+
+    from telegram import BotCommand
+    commands = [
+        BotCommand("start", "Create or open your Slayer"),
+        BotCommand("menu", "Open the game hub"),
+        BotCommand("explore", "Explore and battle demons"),
+        BotCommand("mission", "View and accept missions"),
+        BotCommand("travel", "Travel between regions"),
+        BotCommand("profile", "View your character"),
+        BotCommand("inventory", "Open your inventory"),
+        BotCommand("shop", "Browse the shop"),
+        BotCommand("party", "Manage your party"),
+        BotCommand("skilltree", "View your skill tree"),
+        BotCommand("castle", "Enter the Infinity Castle"),
+        BotCommand("demonlevel", "View Demon progression"),
+        BotCommand("daily", "Claim your daily reward"),
+        BotCommand("rankings", "View global rankings"),
+        BotCommand("help", "Show game commands"),
+    ]
+    try:
+        await app.bot.set_my_commands(commands)
+        logger.info("Telegram command menu registered (%d commands).", len(commands))
+    except Exception:
+        logger.exception("Could not publish Telegram command menu.")
+
+    try:
+        await app.bot.send_message(chat_id=-1003882841537, text="🗡️ Demon Slayer RPG is online.")
+    except Exception:
+        logger.exception("Startup notification could not be delivered.")
+
+
+async def _global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log handler failures and give the player a useful, non-sensitive response."""
+    error = context.error
+    logger.error(
+        "Unhandled update failure (update_id=%s)",
+        getattr(update, "update_id", "unknown"),
+        exc_info=(type(error), error, error.__traceback__) if error else None,
+    )
+    message = getattr(update, "effective_message", None)
+    if message:
+        try:
+            await message.reply_text(
+                "⚠️ That action hit a game error. Your progress has not intentionally been reset. "
+                "Please try again in a moment."
+            )
+        except Exception:
+            logger.exception("Could not send the player-facing error notice.")
 
 
 
@@ -1098,6 +1149,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
+    app.add_error_handler(_global_error_handler)
 
     logger.info("🗡️ Demon Slayer RPG Bot starting...")
     app.post_init = on_startup
