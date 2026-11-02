@@ -358,9 +358,24 @@ def add_demon_xp(user_id, amount):
     xp = max(0, int(player.get("demon_xp", 0))) + amount
     # Level N requires 50 * (N-1) * N cumulative Demon XP.
     demon_level = min(100, max(1, int((1 + sqrt(1 + 8 * xp / 50)) // 2)))
+    milestones = {
+        5: "Blood Sense", 10: "Rapid Regeneration",
+        20: "Blood Demon Art I", 35: "Enhanced Physiology",
+        50: "Blood Demon Art II", 75: "Superior Regeneration",
+        100: "Demon King's Evolution",
+    }
+    unlocked = [name for level, name in milestones.items() if demon_level >= level]
     from utils.database import update_player
-    update_player(int(user_id), demon_xp=xp, demon_level=demon_level)
-    return {"demon_level": demon_level, "demon_xp": xp}
+    update_player(
+        int(user_id), demon_xp=xp, demon_level=demon_level,
+        demon_abilities=unlocked,
+        demon_regen_bonus=min(0.12, (demon_level // 10) * 0.015),
+        demon_art_bonus=min(0.25, (demon_level // 10) * 0.025),
+    )
+    return {
+        "demon_level": demon_level, "demon_xp": xp,
+        "unlocked_abilities": unlocked,
+    }
 
 
 def record_castle_clear(user_id, floor, mode="solo"):
