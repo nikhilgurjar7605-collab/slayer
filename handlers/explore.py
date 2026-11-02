@@ -277,7 +277,7 @@ def _threat_emoji(threat: str) -> str:
 
 def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
                           active_pet: Optional[Dict] = None,
-                          shard_found: int = 0) -> str:
+                          ) -> str:
     """Render the compact wild-encounter card shown on /explore."""
     enemy_level  = max(1, int(preview.get('recommended_level', 1) or 1))
     player_level = get_level(player['xp'])
@@ -307,8 +307,6 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     else:
         pet_line = "🐾 No pet active"
     lines.append(f"{pet_line}  //  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥")
-    if shard_found:
-        lines.append("🔮 You found a Spirit Shard while exploring! (+1)")
     return "\n".join(lines)
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -469,18 +467,8 @@ def calc_enemy_dmg(player, state, owned_skills=None, user_id=None, context=None)
     if tier > 0:
         dmg = max(1, int(dmg * (1 - tier * 0.03)))
 
-    # ── Gacha: equipped spirit DEF bonus ──────────────────────────────────
-    if user_id:
-        try:
-            from utils.database import get_spirit_bonuses
-            _sp_def = get_spirit_bonuses(user_id).get('def_pct', 0)
-            if _sp_def:
-                dmg = max(1, int(dmg * (1 - _sp_def)))
-        except Exception:
-            pass
-
     # ── Boss brutality: armor penetration + critical blows ────────────────
-    # Bosses shred through gear/skill/spirit mitigation (BOSS_DEF_IGNORE of
+    # Bosses shred through gear and skill mitigation (BOSS_DEF_IGNORE of
     # every % reduction is nullified) and can land devastating crits.
     # Guard/reflect/pressure effects applied after this call are unaffected.
     if state.get('is_boss'):
@@ -713,7 +701,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         roll_exploration_event(boss=bool(enemy_template.get('is_boss'))),
     )
 
-    # ── Boss scaling: hard but beatable — players NEED spirits to win ──
+    # ── Boss scaling: hard but beatable ─────────────────────────────────
     # Growth is cap-bounded (BOSS_HP_CAP / BOSS_ATK_CAP) so bosses stay
     # dangerous at every level without one-shotting geared late-game players.
     from utils.boss_balance import (
@@ -762,20 +750,10 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_pet = get_active_pet(user_id)
     preview = encounter_preview(enemy, level)
 
-    # ── Gacha: rare shard find while exploring (non-boss encounters) ──────
-    _shard_found = 0
-    if not enemy.get('is_boss'):
-        try:
-            from handlers.gacha import grant_explore_shards
-            _shard_found = grant_explore_shards(user_id)
-        except Exception:
-            _shard_found = 0
-
     # ── New card-style encounter UI (🌲 header, ⦿ blocks, ╌ dividers) ────
     encounter_text = format_wild_encounter(
         enemy, player, preview,
         active_pet=active_pet,
-        shard_found=_shard_found,
     )
 
     if is_callback:
@@ -908,8 +886,6 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
         intro += "\n" + "\n".join(skill_lines)
     if pet_lines:
         intro += "\n" + "\n".join(pet_lines)
-    if spirit_lines:
-        intro += "\n" + "\n".join(spirit_lines)
     intro += "\n\n"
 
     status_text = combat_status(player, state, ally, turn=1)
@@ -1355,15 +1331,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ally = get_active_ally(state)
     log = []
     log.append(f"💨 *{player['name']}* → *{art_name}* F{form['form']}: *{form['name']}*")
-    # ── Spirit presence: spirit empowers the technique ───────────────────
-    try:
-        from utils.spirits import spirit_battle_line
-        _tl = spirit_battle_line(user_id, "technique")
-        if _tl:
-            log.append(_tl)
-    except Exception:
-        pass
-
     form_image_doc = col("style_images").find_one({"style_name": form["name"]})
     if form_image_doc:
         p_img = form_image_doc.get("file_id") or form_image_doc.get("url") or form_image_doc.get("image")
@@ -1450,17 +1417,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_sta = max(0, player['sta'] - actual_sta_cost)
     previous_enemy_hp = state['enemy_hp']
     new_enemy_hp = max(0, previous_enemy_hp - total_dmg)
-    # ── Spirit follow-up: spirits strike alongside techniques too ────────
-    try:
-        from utils.spirits import spirit_move_line
-        _mv = spirit_move_line(user_id, chance_mult=1.15)
-        if _mv:
-            _line, _frac = _mv
-            _sdmg = max(1, int(total_dmg * _frac))
-            new_enemy_hp = max(0, new_enemy_hp - _sdmg)
-            log.append(f"{_line} — {_sdmg:,} spirit damage!")
-    except Exception:
-        pass
     update_player(user_id, sta=new_sta)
     update_battle_enemy_hp(user_id, new_enemy_hp)
     _apply_boss_phase_transition(user_id, previous_enemy_hp, new_enemy_hp, state, log, context)
@@ -1533,18 +1489,6 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.append(_enemy_ai_hint(state_fresh, context))
     enemy_dmg = calc_enemy_dmg(player, state_fresh, owned_skills=owned_skills, user_id=user_id, context=context)
     enemy_dmg = int(enemy_dmg / pressure['def_mult'])
-    # ── Spirit guardians: equipped spirits ward off part of the blow ─────
-    try:
-        from utils.spirits import spirit_guard_reduction
-        _red, _gline = spirit_guard_reduction(user_id)
-        if _red >= 1.0:
-            enemy_dmg = 0
-            if _gline:
-                log.append(_gline)
-        elif _red > 0:
-            enemy_dmg = max(1, int(enemy_dmg * (1 - _red)))
-    except Exception:
-        pass
     enemy_dmg, ctx = apply_enemy_context_effects(state_fresh, ctx, enemy_dmg, log)
     context.user_data[f'battle_ctx_{user_id}'] = ctx
     if bonuses.get('def_pct'):
@@ -1904,16 +1848,6 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     if reward_bonus_lines:
         log.append("🎁 " + " | ".join(reward_bonus_lines))
     xp_gain, yen_gain = apply_pet_passives_to_rewards(user_id, xp_gain, yen_gain)
-    # ── Gacha: equipped spirit XP/Yen bonuses ─────────────────────────────
-    try:
-        from utils.database import get_spirit_bonuses as _gsb
-        _sp_b = _gsb(user_id)
-        if _sp_b.get('xp_pct'):
-            xp_gain = int(xp_gain * (1 + _sp_b['xp_pct']))
-        if _sp_b.get('yen_pct'):
-            yen_gain = int(yen_gain * (1 + _sp_b['yen_pct']))
-    except Exception:
-        pass
     drops = json.loads(state['prize_drops']) if state['prize_drops'] else []
     if player.get('story_bonus') == 'xp_bonus':
         xp_gain = int(xp_gain * 1.1)
