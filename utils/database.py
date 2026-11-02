@@ -1285,4 +1285,3 @@ def apply_style_stat_bonus(user_id, style_name):
         col("players").update_one({"user_id": user_id}, {"$set": updates})
 
 
- ─────────────────────────────────────────
