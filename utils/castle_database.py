@@ -222,10 +222,13 @@ def calculate_enemy_level(player, floor, party_players=None):
     level = _player_level(player)
     floor = max(1, min(100, int(floor or 1)))
     own_power = calculate_player_power(player)
-    reference_power = max(1, level * 12)
-    strength_ratio = own_power / reference_power
+    # A fresh level-1 character with starter gear is roughly 125 power.
+    # Raise the expected baseline gradually with player level; this prevents
+    # starter characters from being matched against level-70 enemies.
+    reference_power = 125 + max(0, level - 1) * 24
+    strength_ratio = own_power / max(1, reference_power)
     floor_bonus = (floor - 1) // 8
-    strength_bonus = round((strength_ratio - 1.0) * 8)
+    strength_bonus = max(-5, min(10, round((strength_ratio - 1.0) * 6)))
 
     party_players = party_players or [player]
     party = calculate_party_power(party_players)
