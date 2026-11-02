@@ -1,13 +1,7 @@
 import logging
+from html import escape
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-    Update,
-)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.error import BadRequest, TimedOut
 from telegram.ext import ContextTypes
 
@@ -22,11 +16,10 @@ async def _safe_edit(query, text, **kwargs):
     try:
         await query.edit_message_text(text, **kwargs)
     except BadRequest as exc:
-        if "Message is not modified" in str(exc):
+        message = str(exc).lower()
+        if "message is not modified" in message:
             return
-        if any(term in str(exc).lower() for term in (
-            "can't be edited", "message to edit not found", "message to edit not found",
-        )):
+        if "can't be edited" in message or "message to edit not found" in message:
             await query.message.reply_text(text, **kwargs)
             return
         raise
@@ -59,8 +52,7 @@ def _main_menu_keyboard():
 
 @dm_only
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    player = get_player(user_id)
+    player = get_player(update.effective_user.id)
     msg = update.effective_message
 
     if not player:
@@ -74,10 +66,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    name = player.get("name") or update.effective_user.first_name or "Slayer"
-    rank = player.get("rank", "Unranked")
+    name = escape(str(player.get("name") or update.effective_user.first_name or "Slayer"))
+    rank = escape(str(player.get("rank", "Unranked")))
     level = max(1, int(player.get("level", 1) or 1))
-
     text = (
         "⛩️ <b>DEMON SLAYER CORPS</b>\n"
         "<i>Your journey continues.</i>\n"
@@ -87,32 +78,12 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<b>Choose your destination</b>"
     )
-
     keyboard = _main_menu_keyboard()
-    reply_kb = ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("Explore"), KeyboardButton("Profile")],
-            [KeyboardButton("Inventory"), KeyboardButton("Shop")],
-            [KeyboardButton("Skills"), KeyboardButton("Close Menu")],
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False,
-        input_field_placeholder="Choose an action or type a command…",
-    )
 
     if update.callback_query:
-        await _safe_edit(
-            update.callback_query, text, parse_mode="HTML", reply_markup=keyboard
-        )
+        await _safe_edit(update.callback_query, text, parse_mode="HTML", reply_markup=keyboard)
     else:
-        await msg.reply_text(
-            text, parse_mode="HTML", reply_markup=keyboard
-        )
-        # Keep the familiar reply keyboard available for players who prefer it.
-        await msg.reply_text(
-            "Quick actions are available below.",
-            reply_markup=reply_kb,
-        )
+        await msg.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @dm_only
@@ -130,7 +101,4 @@ async def close_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove(),
         )
     elif update.message:
-        await update.message.reply_text(
-            "Menu closed.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        await update.message.reply_text("Menu closed.", reply_markup=ReplyKeyboardRemove())
