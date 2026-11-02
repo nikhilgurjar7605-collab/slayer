@@ -113,7 +113,7 @@ def _render_run(run, player, party=None, notice=None):
         lines += [
             "", "━━━━━━━━━━━━━━━━━━━━",
             f"{'☠️ BOSS' if enemy.get('boss') else '👹 ENEMY'}: <b>{enemy.get('name')}</b>",
-            f"Enemy Demon Level: <b>{enemy.get('level')}</b>  •  Rank: {enemy.get('rank')}",
+            f"Enemy Demon Level: <b>{enemy.get('demon_level', enemy.get('level'))}</b>  •  Rank: {escape(str(enemy.get('rank')))}",
             f"Difficulty: <b>{enemy.get('difficulty')}</b>",
             f"Enemy HP: <b>{max(0, int(enemy.get('hp', 0))):,}/{int(enemy.get('max_hp', 1)):,}</b>",
             "━━━━━━━━━━━━━━━━━━━━",
@@ -123,12 +123,10 @@ def _render_run(run, player, party=None, notice=None):
             member = get_player(int(uid))
             if member:
                 hp = hp_map.get(str(uid), member.get("hp", 1))
-                lines.append(f"• {member.get('name', 'Slayer')}: {max(0, int(hp)):,} HP")
+                lines.append(f"• {escape(str(member.get('name', 'Slayer')))}: {max(0, int(hp)):,} HP")
     if floor == MAX_FLOOR and enemy.get("boss"):
-        lines.append("
-⚠️ Final battle. Defeat Muzan to clear the Castle.")
-    return "
-".join(lines)
+        lines.append("\n⚠️ Final battle. Defeat Muzan to clear the Castle.")
+    return "\n".join(lines)
 
 
 async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,18 +256,19 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = ["🎁 <b>CASTLE EQUIPMENT</b>"]
         for item in owned:
             lines.append(
-                f"• <b>{item.get('name')}</b> [{item.get('rarity', 'Common').title()}] "
+                f"• <b>{escape(str(item.get('name')))}</b> [{escape(str(item.get('rarity', 'Common').title()))}] "
                 f"— {item.get('slot')} — Floor {item.get('source_floor')}"
             )
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
         return
 
     if action == "leaderboard":
-        rows = list(col("castle_leaderboards").find({"mode": "solo"}).sort("highest_floor", -1).limit(10))
-        lines = ["🏆 <b>CASTLE SOLO LEADERBOARD</b>"]
+        mode = "squad" if len(args) > 1 and args[1].lower() == "squad" else "solo"
+        rows = list(col("castle_leaderboards").find({"mode": mode}).sort("highest_floor", -1).limit(10))
+        lines = [f"🏆 <b>CASTLE {mode.upper()} LEADERBOARD</b>"]
         for i, row in enumerate(rows, 1):
             member = get_player(int(row["user_id"])) or {}
-            lines.append(f"{i}. {member.get('name', 'Unknown')} — Floor {row.get('highest_floor', 0)}")
+            lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {row.get('highest_floor', 0)}")
         if len(lines) == 1:
             lines.append("No clears recorded yet.")
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -286,7 +285,8 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/castle start — Leader starts squad run\n"
             "/castle status — Current run\n"
             "/castle equipment — Your Castle gear\n"
-            "/castle leaderboard — Top solo clears",
+            "/castle leaderboard [squad] — Castle rankings\n"
+            "/castle equip ITEM — Equip a Castle item",
             parse_mode="HTML",
         )
         return
@@ -495,6 +495,9 @@ async def demonlevel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🩸 <b>DEMON PROGRESSION</b>\n"
         f"Demon Level: <b>{int(player.get('demon_level', 1))}</b>\n"
         f"Demon XP: <b>{int(player.get('demon_xp', 0)):,}</b>\n"
+        f"Unlocked abilities: <b>{escape(', '.join(player.get('demon_abilities', [])) or 'None yet')}</b>\n"
+        f"Regeneration bonus: <b>{int(float(player.get('demon_regen_bonus', 0)) * 100)}%</b>\n"
+        f"Demon Art bonus: <b>{int(float(player.get('demon_art_bonus', 0)) * 100)}%</b>\n"
         "Earn Demon XP by defeating Infinity Castle enemies and bosses. "
         "This progression is separate from your normal player level.",
         parse_mode="HTML",
