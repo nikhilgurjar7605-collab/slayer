@@ -137,7 +137,18 @@ def calculate_player_power(player):
     hp = max(1, float(player.get("max_hp", player.get("hp", 1)) or 1))
     stamina = max(0, float(player.get("max_sta", player.get("sta", 0)) or 0))
     power = level * 5 + atk * 2.0 + defense * 1.5 + hp * 0.08 + stamina * 0.04
-    if player.get("faction") == "demon":
+    # Include equipped Castle gear in the adaptive power calculation.
+    user_id = player.get("user_id")
+    if user_id is not None:
+        try:
+            for gear in _col("castle_equipment").find({"user_id": int(user_id), "equipped": True}):
+                stats = gear.get("stats", {})
+                power += max(0, float(stats.get("atk_bonus", 0))) * 2
+                power += max(0, float(stats.get("def_bonus", 0))) * 1.5
+                power += max(0, float(stats.get("hp_bonus", 0))) * 0.08
+        except Exception:
+            pass
+    if str(player.get("faction", "")).lower() == "demon":
         power += max(1, int(player.get("demon_level") or 1)) * 3
     return max(1, int(power))
 
