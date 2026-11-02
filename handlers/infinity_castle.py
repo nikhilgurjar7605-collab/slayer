@@ -585,6 +585,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     armor_bonus = 0
+    armor = None
     if player.get("castle_equipped_armor"):
         armor = col("castle_equipment").find_one({
             "user_id": user_id, "name": player["castle_equipped_armor"], "equipped": True
