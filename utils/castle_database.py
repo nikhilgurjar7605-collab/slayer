@@ -24,6 +24,14 @@ DEMON_DEFAULTS = {
 
 # Equipment-only reward catalogue. These are definitions, not owned inventory.
 CASTLE_EQUIPMENT = [
+    {"item_id": "castle_scout_blade", "name": "Castle Scout Blade",
+     "slot": "weapon", "rarity": "common", "faction": "slayer",
+     "min_floor": 1, "min_level": 1, "stats": {"atk_bonus": 3},
+     "passive": {}},
+    {"item_id": "worn_guard_vest", "name": "Worn Guard Vest",
+     "slot": "armor", "rarity": "common", "faction": "any",
+     "min_floor": 1, "min_level": 1, "stats": {"def_bonus": 3},
+     "passive": {}},
     {"item_id": "castle_forged_nichirin", "name": "Castle-forged Nichirin",
      "slot": "weapon", "rarity": "uncommon", "faction": "slayer",
      "min_floor": 1, "min_level": 5, "stats": {"atk_bonus": 8},
