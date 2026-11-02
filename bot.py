@@ -1126,12 +1126,12 @@ def main():
         import urllib.request as _urllib_req
         import urllib.error as _urllib_err
         
-        _PING_TARGET = (WEBHOOK_URL + "/healthz") if WEBHOOK_URL else f"http://127.0.0.1:{PORT}/healthz"
+        _PING_TARGET = f"http://127.0.0.1:{HEALTH_PORT}/healthz"
         _PING_INTERVAL = 8 * 60
         _PING_TIMEOUT = 15
         
         def _keep_alive():
-            """Pings the public URL on a fixed cadence with back-off on failure."""
+            """Pings the local health server on a fixed cadence."""
             print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
             _time.sleep(20)
             failures = 0
@@ -1293,7 +1293,7 @@ if __name__ == '__main__':
     import urllib.error   as _urllib_err
 
     # Ping the health endpoint on the separate health port
-    _PING_TARGET   = (RENDER_URL + "/healthz") if RENDER_URL else f"http://127.0.0.1:{HEALTH_PORT}/healthz"
+    _PING_TARGET   = f"http://127.0.0.1:{HEALTH_PORT}/healthz"
     _PING_INTERVAL = 8 * 60
     _PING_TIMEOUT  = 15
 
