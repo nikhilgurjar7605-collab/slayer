@@ -1,6 +1,7 @@
 """Infinity Castle Telegram commands and persistent turn-based encounters."""
 import random
 from datetime import datetime
+from html import escape
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -75,7 +76,7 @@ def _enemy_for(player, floor, party_players):
         hp = int(hp * 2.2)
         atk = int(atk * 1.35)
     return {
-        "name": name, "level": level, "hp": hp, "max_hp": hp,
+        "name": name, "level": level, "demon_level": level, "hp": hp, "max_hp": hp,
         "atk": atk, "boss": boss, "difficulty": difficulty["tier"],
         "rank": "Upper Moon" if floor >= 70 else ("Lower Moon" if floor >= 30 else ("Elite" if floor >= 10 else "Demon")),
     }
@@ -431,9 +432,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     player_atk = max(1, int(player.get("atk", player.get("attack", 10)) or 10))
     weapon_bonus = 0
-    if player.get("equipped_sword"):
+    if player.get("castle_equipped_weapon"):
         weapon = col("castle_equipment").find_one({
-            "user_id": user_id, "name": player["equipped_sword"], "equipped": True
+            "user_id": user_id, "name": player["castle_equipped_weapon"], "equipped": True
         })
         if weapon:
             weapon_bonus = int(weapon.get("stats", {}).get("atk_bonus", 0))
@@ -454,7 +455,14 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    enemy_damage = max(1, int(enemy.get("atk", 5)) - int(player.get("def_stat", player.get("defense", 0)) or 0) // 3)
+    armor_bonus = 0
+    if player.get("castle_equipped_armor"):
+        armor = col("castle_equipment").find_one({
+            "user_id": user_id, "name": player["castle_equipped_armor"], "equipped": True
+        })
+        if armor:
+            armor_bonus = int(armor.get("stats", {}).get("def_bonus", 0))
+    enemy_damage = max(1, int(enemy.get("atk", 5)) - (int(player.get("def_stat", player.get("defense", 0)) or 0) + armor_bonus) // 3)
     current_hp = max(0, current_hp - enemy_damage)
     hp_map[str(user_id)] = current_hp
     save_castle_run(run["run_id"], {
