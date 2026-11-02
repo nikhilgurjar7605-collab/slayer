@@ -299,13 +299,63 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _start_floor(run, player, party):
     floor = int(run.get("floor", 1))
     members = _party_players(party) if party else [player]
-    enemy = _enemy_for(player, floor, members)
     hp_map = run.get("player_hp_by_user") or {
         str(p["user_id"]): int(p.get("hp", p.get("max_hp", 100))) for p in members
     }
+    room_type = "combat"
+    room_notice = "An enemy blocks your path."
+    if floor % 10 != 0 and floor % 10 == 5:
+        room_type = "treasure"
+        room_notice = "A hidden chamber contains Castle equipment."
+        for member in members:
+            item = _pick_equipment(int(member["user_id"]), floor, member, {"name": "Treasure Chamber"})
+            if item:
+                granted = grant_castle_equipment(
+                    int(member["user_id"]), item["item_id"],
+                    f"{run['run_id']}:{floor}:{member['user_id']}",
+                    floor, "Treasure Chamber"
+                )
+                if granted:
+                    room_notice += f"\\n{member.get('name', 'Player')} found {granted['name']} ({granted['rarity']})."
+    elif floor % 10 != 0 and floor % 10 == 7:
+        room_type = "trap"
+        room_notice = "The floor shifts and a hidden trap springs!"
+        for member in members:
+            uid = int(member["user_id"])
+            trap_reduction = 0
+            accessory = col("castle_equipment").find_one({
+                "user_id": uid, "equipped": True,
+                "passive.type": "trap_avoidance"
+            })
+            if accessory:
+                trap_reduction = float(accessory.get("passive", {}).get("value", 0))
+            damage = max(1, int(member.get("max_hp", 100) * 0.10 * (1 - trap_reduction)))
+            hp_map[str(uid)] = max(1, int(hp_map.get(str(uid), member.get("hp", 1))) - damage)
+            update_player(uid, hp=hp_map[str(uid)])
+            room_notice += f"\\n{member.get('name', 'Player')} lost {damage} HP."
+    elif floor % 10 != 0 and floor % 10 == 9:
+        room_type = "rest"
+        room_notice = "A quiet chamber restores the squad before the next battle."
+        for member in members:
+            uid = int(member["user_id"])
+            max_hp = int(member.get("max_hp", 100))
+            restored = max(1, int(max_hp * 0.20))
+            hp_map[str(uid)] = min(max_hp, int(hp_map.get(str(uid), member.get("hp", 1))) + restored)
+            update_player(uid, hp=hp_map[str(uid)])
+            room_notice += f"\\n{member.get('name', 'Player')} recovered HP."
+    if room_type == "combat":
+        enemy = _enemy_for(player, floor, members)
+    else:
+        enemy = {
+            "name": f"{room_type.title()} Chamber", "level": 0,
+            "demon_level": 0, "hp": 0, "max_hp": 0, "atk": 0,
+            "boss": False, "rank": "Room", "difficulty": "Event",
+            "room_type": room_type,
+        }
     save_castle_run(run["run_id"], {
         "current_enemy": enemy, "player_hp_by_user": hp_map,
         "room_id": f"floor_{floor}", "floor": floor,
+        "room_type": room_type, "room_notice": room_notice,
         "checkpoint_floor": ((floor - 1) // 10) * 10 + 1,
     })
 
