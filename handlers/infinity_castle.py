@@ -1,5 +1,6 @@
 """Infinity Castle Telegram commands and persistent turn-based encounters."""
 import random
+import re
 from datetime import datetime
 from html import escape
 
@@ -306,7 +307,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for item in owned:
             lines.append(
                 f"• <b>{escape(str(item.get('name')))}</b> [{escape(str(item.get('rarity', 'Common').title()))}] "
-                f"— {item.get('slot')} — Floor {item.get('source_floor')}"
+                f"— {item.get('slot', item.get('item_type'))} — Floor {item.get('source_floor')}"
             )
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
         return
@@ -366,7 +367,7 @@ async def _start_floor(run, player, party):
                     floor, "Treasure Chamber"
                 )
                 if granted:
-                    room_notice += f"\\n{member.get('name', 'Player')} found {granted['name']} ({granted['rarity']})."
+                    room_notice += f"\n{member.get('name', 'Player')} found {granted['name']} ({granted['rarity']})."
     elif floor % 10 != 0 and floor % 10 == 7:
         room_type = "trap"
         room_notice = "The floor shifts and a hidden trap springs!"
@@ -382,7 +383,7 @@ async def _start_floor(run, player, party):
             damage = max(1, int(member.get("max_hp", 100) * 0.10 * (1 - trap_reduction)))
             hp_map[str(uid)] = max(1, int(hp_map.get(str(uid), member.get("hp", 1))) - damage)
             update_player(uid, hp=hp_map[str(uid)])
-            room_notice += f"\\n{member.get('name', 'Player')} lost {damage} HP."
+            room_notice += f"\n{member.get('name', 'Player')} lost {damage} HP."
     elif floor % 10 != 0 and floor % 10 == 9:
         room_type = "rest"
         room_notice = "A quiet chamber restores the squad before the next battle."
@@ -392,7 +393,7 @@ async def _start_floor(run, player, party):
             restored = max(1, int(max_hp * 0.20))
             hp_map[str(uid)] = min(max_hp, int(hp_map.get(str(uid), member.get("hp", 1))) + restored)
             update_player(uid, hp=hp_map[str(uid)])
-            room_notice += f"\\n{member.get('name', 'Player')} recovered HP."
+            room_notice += f"\n{member.get('name', 'Player')} recovered HP."
     if room_type == "combat":
         enemy = _enemy_for(player, floor, members)
     else:
@@ -532,13 +533,23 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     player_atk = max(1, int(player.get("atk", player.get("attack", 10)) or 10))
     weapon_bonus = 0
+    weapon_multiplier = 1.0
+    weapon = None
     if player.get("castle_equipped_weapon"):
         weapon = col("castle_equipment").find_one({
             "user_id": user_id, "name": player["castle_equipped_weapon"], "equipped": True
         })
         if weapon:
             weapon_bonus = int(weapon.get("stats", {}).get("atk_bonus", 0))
+            passive = weapon.get("passive", {})
+            if passive.get("type") == "demon_damage":
+                weapon_multiplier += float(passive.get("value", 0))
+            elif passive.get("type") == "elite_damage" and enemy.get("rank") in ("Elite", "Lower Moon", "Upper Moon"):
+                weapon_multiplier += float(passive.get("value", 0))
     accessory_bonus = 0
+    accessory_multiplier = 1.0
+    critical = False
+    accessory = None
     if player.get("castle_equipped_accessory"):
         accessory = col("castle_equipment").find_one({
             "user_id": user_id, "name": player["castle_equipped_accessory"], "equipped": True
@@ -547,11 +558,16 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             accessory_bonus = int(accessory.get("stats", {}).get("atk_bonus", 0))
             passive = accessory.get("passive", {})
             if passive.get("type") == "combat_damage":
-                accessory_bonus += int(player_atk * float(passive.get("value", 0)))
+                accessory_multiplier += float(passive.get("value", 0))
+            elif passive.get("type") == "demon_art_power" and str(player.get("faction", "")).lower() == "demon":
+                accessory_multiplier += float(passive.get("value", 0))
+            elif passive.get("type") == "critical_chance" and random.random() < float(passive.get("value", 0)):
+                critical = True
     demon_bonus = 0
     if str(player.get("faction", "")).lower() == "demon":
         demon_bonus = int(player_atk * float(player.get("demon_art_bonus", 0) or 0))
-    damage = max(1, player_atk + weapon_bonus + accessory_bonus + demon_bonus + random.randint(0, max(2, player_atk // 3)))
+    damage = int((player_atk + weapon_bonus + accessory_bonus + demon_bonus + random.randint(0, max(2, player_atk // 3))) * weapon_multiplier * accessory_multiplier * (1.5 if critical else 1.0))
+    damage = max(1, damage)
     enemy["hp"] = max(0, int(enemy["hp"]) - damage)
     if enemy["hp"] <= 0:
         save_castle_run(run["run_id"], {"current_enemy": enemy})
@@ -575,7 +591,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         if armor:
             armor_bonus = int(armor.get("stats", {}).get("def_bonus", 0))
-    enemy_damage = max(1, int(enemy.get("atk", 5)) - (int(player.get("def_stat", player.get("defense", 0)) or 0) + armor_bonus) // 3)
+    reduction = 0.0
+    for gear in (armor, accessory):
+        if gear:
+            passive = gear.get("passive", {})
+            if passive.get("type") == "damage_reduction":
+                reduction += float(passive.get("value", 0))
+    enemy_damage = max(1, int((int(enemy.get("atk", 5)) - (int(player.get("def_stat", player.get("defense", 0)) or 0) + armor_bonus) // 3) * max(0.25, 1 - min(0.60, reduction)))
     current_hp = max(0, current_hp - enemy_damage)
     regen = 0
     if str(player.get("faction", "")).lower() == "demon" and current_hp > 0:
