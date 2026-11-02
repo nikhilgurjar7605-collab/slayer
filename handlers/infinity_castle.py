@@ -607,7 +607,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "user_id": user_id, "name": player["castle_equipped_armor"], "equipped": True
         })
         if armor:
-            armor_bonus = int(armor.get("stats", {}).get("def_bonus", 0))
+            armor_bonus += int(armor.get("stats", {}).get("def_bonus", 0))
     reduction = 0.0
     for gear in (armor, accessory):
         if gear:
