@@ -25,7 +25,6 @@ _db     = None
 # LRU cache for frequently accessed data to reduce DB hits
 _stock_price_cache = {}
 _player_cache = {}
-_spirit_bonus_cache = {}   # user_id -> (bonuses dict, timestamp) — hot path for combat
 _CACHE_TTL_SECONDS = 30  # Cache expires after 30 seconds
 
 
@@ -135,11 +134,6 @@ def init_db():
     db.user_activity_logs.create_index([("user_id", 1), ("timestamp", DESCENDING)])
     db.user_activity_logs.create_index("timestamp")
     db.captcha_guard.create_index("user_id", unique=True)
-
-    # ── Gacha / spirits collection indexes ────────────────────────────────
-    db.spirits.create_index([("user_id", 1), ("name", 1)], unique=True)
-    db.spirits.create_index("user_id")
-    db.spirits.create_index([("user_id", 1), ("equipped", 1)])
 
     # ── skill_tree collection indexes ─────────────────────────────────────
     db.skill_tree.create_index("user_id", unique=True)
@@ -362,8 +356,6 @@ def _player_defaults(faction="slayer"):
             "last_daily": None, "daily_streak": 0, "last_streak_day": None,
             "banned": 0, "ban_reason": None, "skill_points": 0,
             "devour_stacks": 0, "explore_count": 0, "explores_since_boss": 20,
-            "shards": 0, "gacha_pity": 0, "gacha_total_pulls": 0, "spirits_gifted": 0,
-            "equipped_spirits": [],
             "created_at": datetime.now(),
         }
     else:
@@ -385,8 +377,6 @@ def _player_defaults(faction="slayer"):
             "last_daily": None, "daily_streak": 0, "last_streak_day": None,
             "banned": 0, "ban_reason": None, "skill_points": 0,
             "devour_stacks": 0, "explore_count": 0, "explores_since_boss": 20,
-            "shards": 0, "gacha_pity": 0, "gacha_total_pulls": 0, "spirits_gifted": 0,
-            "equipped_spirits": [],
             "created_at": datetime.now(),
         }
 
@@ -1295,7 +1285,7 @@ def apply_style_stat_bonus(user_id, style_name):
         col("players").update_one({"user_id": user_id}, {"$set": updates})
 
 
-# ── Gacha / Spirit Summon helpers ─────────────────────────────────────────
+ ─────────────────────────────────────────
 
 def add_shards(user_id, amount: int):
     """Add spirit shards to a player (atomic)."""
