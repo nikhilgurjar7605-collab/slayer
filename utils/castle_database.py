@@ -404,7 +404,7 @@ def add_demon_xp(user_id, amount):
         return None
     amount = max(0, int(amount))
     xp = max(0, int(player.get("demon_xp", 0))) + amount
-    # Level N requires 50 * (N-1) * N cumulative Demon XP.
+    # Level N requires 25 * (N-1) * N cumulative Demon XP.
     demon_level = min(100, max(1, int((1 + sqrt(1 + 8 * xp / 50)) // 2)))
     milestones = {
         5: "Blood Sense", 10: "Rapid Regeneration",
