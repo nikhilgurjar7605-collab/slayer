@@ -192,7 +192,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("Create your character first with /start.")
         return
     args = context.args or []
-    action = args[0].lower() if args else "menu"
+    action = args[0].lower() if args else "status"
 
     if action in ("menu", "hub", "help"):
         await update.effective_message.reply_text(
