@@ -2,7 +2,7 @@ import logging
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from utils.database import get_player, get_inventory
+from utils.database import get_player, get_inventory, col
 log = logging.getLogger(__name__)
 
 PAGE_SIZE = 10   # materials shown per page
@@ -75,6 +75,15 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(" |")
         for i in armor_inv:
             lines.append(f"╰➤ {i['item_name']}")
+
+    castle_gear = list(col("castle_equipment").find({"user_id": user_id}).sort("obtained_at", -1).limit(10))
+    if castle_gear:
+        lines.append("")
+        lines.append("🏯 CASTLE EQUIPMENT")
+        lines.append(" |")
+        for gear in castle_gear:
+            mark = " ✅" if gear.get("equipped") else ""
+            lines.append(f"╰➤ {gear.get('name', 'Unknown')} [{str(gear.get('rarity', 'common')).title()}]{mark}")
 
     mat_count = sum(i["quantity"] for i in materials)
     mat_types = len(materials)
