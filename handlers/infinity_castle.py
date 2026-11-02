@@ -117,6 +117,16 @@ def _keyboard(run, is_party_member=True):
     return InlineKeyboardMarkup(rows)
 
 
+def _lobby_keyboard():
+    """Main Castle hub: every major mode is reachable without memorising commands."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚔️ Enter Solo", callback_data="castle:solo"),
+         InlineKeyboardButton("👥 Create Squad", callback_data="castle:squad")],
+        [InlineKeyboardButton("🎒 Equipment", callback_data="castle:equipment"),
+         InlineKeyboardButton("🏆 Leaderboard", callback_data="castle:leaderboard")],
+    ])
+
+
 def _render_run(run, player, party=None, notice=None):
     floor = int(run.get("floor", 1))
     enemy = run.get("current_enemy") or {}
@@ -371,17 +381,15 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not run:
         await update.effective_message.reply_text(
             "🏯 <b>INFINITY CASTLE</b>\n"
-            "100 floors • Adaptive difficulty • Solo or squads of 4\n\n"
-            "/castle solo — Start alone\n"
-            "/castle resume — Resume from last checkpoint\n"
-            "/castle squad — Create a squad\n"
-            "/castle join CODE — Join a squad\n"
-            "/castle start — Leader starts squad run\n"
-            "/castle status — Current run\n"
-            "/castle equipment — Your Castle gear\n"
-            "/castle leaderboard [squad] — Castle rankings\n"
-            "/castle equip ITEM — Equip a Castle item",
-            parse_mode="HTML",
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "100 floors. One climb. No second chances.\n\n"
+            "Fight through shifting chambers, defeat the Twelve Kizuki, "
+            "collect Castle equipment and reach Muzan on Floor 100.\n\n"
+            "<b>Choose your path:</b>\n"
+            "⚔️ Solo — fight alone\n"
+            "👥 Squad — team up with up to 3 other slayers\n\n"
+            "Use /castle resume to continue from your last checkpoint.",
+            parse_mode="HTML", reply_markup=_lobby_keyboard(),
         )
         return
     party = get_castle_party(run.get("party_id")) if run.get("party_id") else None
@@ -527,16 +535,95 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not player:
         await query.edit_message_text("Create your character first with /start.")
         return
+    action = query.data.split(":", 1)[1]
     run = _find_run(user_id)
+
+    # Lobby actions must work even when the player has no active run.
+    if action == "menu":
+        await query.edit_message_text(
+            "🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb.",
+            parse_mode="HTML", reply_markup=_lobby_keyboard()
+        )
+        return
+    if action == "solo":
+        if run:
+            await query.answer("You already have an active run.", show_alert=True)
+            return
+        run = create_castle_run(user_id, "solo")
+        await _start_floor(run, player, None)
+        run = _find_run(user_id)
+        await query.edit_message_text(
+            _render_run(run, player), parse_mode="HTML", reply_markup=_keyboard(run)
+        )
+        return
+    if action == "squad":
+        if run:
+            await query.answer("Finish or retreat from your active run first.", show_alert=True)
+            return
+        party = create_castle_party(user_id)
+        await query.edit_message_text(
+            "👥 <b>Squad created</b>\n"
+            f"Party code: <code>{escape(str(party['party_id']))}</code>\n\n"
+            "Share this code with up to 3 players:\n"
+            f"<code>/castle join {escape(str(party['party_id']))}</code>\n\n"
+            "When everyone has joined, start the run with /castle start.",
+            parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
+            ]])
+        )
+        return
+    if action == "equipment":
+        owned = list(col("castle_equipment").find({"user_id": user_id}).sort("obtained_at", -1).limit(30))
+        lines = ["🎒 <b>YOUR CASTLE ARMOURY</b>", "━━━━━━━━━━━━━━━━━━━━"]
+        if not owned:
+            lines.append("Your armoury is empty. Defeat enemies and bosses to earn gear.")
+        else:
+            for item in owned:
+                slot = item.get("slot", item.get("item_type", "gear"))
+                equipped = "  <b>✓ EQUIPPED</b>" if item.get("equipped") else ""
+                lines.append(
+                    f"• <b>{escape(str(item.get('name', 'Unknown gear')))}</b> "
+                    f"[{escape(str(item.get('rarity', 'common')).title())}] — "
+                    f"{escape(str(slot).title())}{equipped}"
+                )
+                stats = item.get("stats", {})
+                bonuses = [f"+{int(v)} {k.replace('_bonus', '').upper()}" for k, v in stats.items() if v]
+                if bonuses:
+                    lines.append("  " + " · ".join(bonuses))
+            lines.append("\nEquip an item with /castle equip ITEM NAME.")
+        await query.edit_message_text(
+            "\n".join(lines), parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
+            ]])
+        )
+        return
+    if action == "leaderboard":
+        rows = list(col("castle_leaderboards").find({"mode": "solo"}).sort("highest_floor", -1).limit(10))
+        lines = ["🏆 <b>INFINITY CASTLE — SOLO RANKINGS</b>", "━━━━━━━━━━━━━━━━━━━━"]
+        if not rows:
+            lines.append("No explorers have made a recorded climb yet.")
+        for i, row in enumerate(rows, 1):
+            member = get_player(int(row["user_id"])) or {}
+            lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {int(row.get('highest_floor', 0))}")
+        await query.edit_message_text(
+            "\n".join(lines), parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
+            ]])
+        )
+        return
     if not run:
-        await query.edit_message_text("No active Castle run. Use /castle solo or /castle squad.")
+        await query.edit_message_text(
+            "No active Castle run. Choose a mode to begin.",
+            reply_markup=_lobby_keyboard()
+        )
         return
     party = get_castle_party(run.get("party_id")) if run.get("party_id") else None
     members = party.get("member_ids", []) if party else [run["user_id"]]
     if user_id not in members:
         await query.edit_message_text("You are not a member of this Castle run.")
         return
-    action = query.data.split(":", 1)[1]
     if action == "status":
         await query.edit_message_text(
             _render_run(run, player, party), parse_mode="HTML", reply_markup=_keyboard(run)
@@ -655,7 +742,12 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         run = col("castle_runs").find_one({"run_id": run["run_id"]}) or run
         run.pop("_id", None)
         if run.get("status") == "completed":
-            await query.edit_message_text(result, parse_mode="HTML")
+            await query.edit_message_text(
+                result, parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
+                ]])
+            )
         else:
             await query.edit_message_text(
                 _render_run(run, player, party, f"⚔️ You dealt {damage:,} damage.\n{result}"),
