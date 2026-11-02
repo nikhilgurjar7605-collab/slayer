@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 from utils.database import get_player, update_player, col
 from utils.helpers import get_level
 from config import SHOP_ITEMS
+from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from utils.castle_database import (
     create_castle_run, get_active_castle_run, save_castle_run,
     calculate_player_power, calculate_difficulty, create_castle_party,
@@ -539,7 +540,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_hp <= 0:
         await query.answer("You are defeated. Another squad member must finish this enemy.", show_alert=True)
         return
+    skill_bonuses = get_active_skill_bonuses(get_player_skills(user_id), user_id=user_id)
     player_atk = max(1, int(player.get("str_stat", player.get("atk", player.get("attack", 10))) or 10))
+    player_atk = int(player_atk * (1 + float(skill_bonuses.get("atk_pct", 0) or 0)))
     for base_weapon in SHOP_ITEMS.get("swords", []):
         if base_weapon.get("name") == player.get("equipped_sword"):
             player_atk += int(base_weapon.get("atk_bonus", 0))
@@ -560,7 +563,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 weapon_multiplier += float(passive.get("value", 0))
     accessory_bonus = 0
     accessory_multiplier = 1.0
-    critical = False
+    critical = random.random() < float(skill_bonuses.get("crit_bonus", 0) or 0)
     accessory = None
     if player.get("castle_equipped_accessory"):
         accessory = col("castle_equipment").find_one({
@@ -608,7 +611,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         if armor:
             armor_bonus += int(armor.get("stats", {}).get("def_bonus", 0))
-    reduction = 0.0
+    reduction = float(skill_bonuses.get("dmg_reduce", 0) or 0)
     for gear in (armor, accessory):
         if gear:
             passive = gear.get("passive", {})
@@ -620,7 +623,10 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(player.get("faction", "")).lower() == "demon" and current_hp > 0:
         regen = min(
             max(0, int(player.get("max_hp", current_hp)) - current_hp),
-            int(int(player.get("max_hp", current_hp)) * float(player.get("demon_regen_bonus", 0) or 0))
+            int(int(player.get("max_hp", current_hp)) * (
+                float(player.get("demon_regen_bonus", 0) or 0) +
+                float(skill_bonuses.get("regen_pct", 0) or 0)
+            )) + int(skill_bonuses.get("regen_hp", 0) or 0)
         )
         current_hp += regen
     hp_map[str(user_id)] = current_hp
