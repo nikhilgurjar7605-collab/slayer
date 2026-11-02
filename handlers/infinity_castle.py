@@ -12,7 +12,7 @@ from utils.helpers import get_level
 from config import SHOP_ITEMS
 from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from utils.castle_database import (
-    create_castle_run, get_active_castle_run, save_castle_run,
+    create_castle_run, get_active_castle_run, save_castle_run, apply_castle_enemy_damage,
     calculate_player_power, calculate_difficulty, create_castle_party,
     get_castle_party, add_castle_party_member, add_demon_xp,
     grant_castle_equipment, record_castle_clear, record_castle_progress,
@@ -593,18 +593,22 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         demon_bonus = int(player_atk * float(player.get("demon_art_bonus", 0) or 0))
     damage = int((player_atk + weapon_bonus + accessory_bonus + demon_bonus + random.randint(0, max(2, player_atk // 3))) * weapon_multiplier * accessory_multiplier * (1.5 if critical else 1.0))
     damage = max(1, damage)
-    enemy["hp"] = max(0, int(enemy["hp"]) - damage)
-    if enemy["hp"] <= 0:
-        save_castle_run(run["run_id"], {"current_enemy": enemy})
+    expected_enemy_hp = int(enemy["hp"])
+    if not apply_castle_enemy_damage(run["run_id"], expected_enemy_hp, damage):
+        await query.message.reply_text("Another squad action updated this enemy first. Tap Status and try again.")
+        return
+    run = col("castle_runs").find_one({"run_id": run["run_id"]}) or run
+    run.pop("_id", None)
+    enemy = run.get("current_enemy") or {}
+    if int(enemy.get("hp", 0)) <= 0:
         result = await _complete_enemy(run, player, party)
         run = col("castle_runs").find_one({"run_id": run["run_id"]}) or run
         run.pop("_id", None)
         if run.get("status") == "completed":
             await query.edit_message_text(result, parse_mode="HTML")
         else:
-            run["current_enemy"] = dict(enemy, hp=0)
             await query.edit_message_text(
-                _render_run(run, player, party, f"⚔️ You dealt {damage:,} damage.\n{result}"),
+                _render_run(run, player, party, f"⚔️ You dealt {damage:,} damage.\\n{result}"),
                 parse_mode="HTML", reply_markup=_keyboard(run)
             )
         return
