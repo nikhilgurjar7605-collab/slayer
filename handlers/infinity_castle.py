@@ -92,17 +92,28 @@ def _enemy_for(player, floor, party_players):
     }
 
 
+def _bar(value, maximum, width=12):
+    maximum = max(1, int(maximum or 1))
+    value = max(0, min(maximum, int(value or 0)))
+    filled = int(round((value / maximum) * width))
+    return "█" * filled + "░" * (width - filled)
+
+
 def _keyboard(run, is_party_member=True):
     rows = []
     enemy = run.get("current_enemy") or {}
     if enemy and int(enemy.get("hp", 0)) > 0:
         rows.append([
             InlineKeyboardButton("⚔️ Attack", callback_data="castle:attack"),
+            InlineKeyboardButton("⚡ Technique · 25 STA", callback_data="castle:technique"),
+        ])
+        rows.append([
+            InlineKeyboardButton("🛡️ Guard", callback_data="castle:guard"),
             InlineKeyboardButton("🏃 Retreat", callback_data="castle:retreat"),
         ])
     else:
-        rows.append([InlineKeyboardButton("➡️ Next Floor", callback_data="castle:next")])
-    rows.append([InlineKeyboardButton("📊 Status", callback_data="castle:status")])
+        rows.append([InlineKeyboardButton("➡️ Continue to Next Floor", callback_data="castle:next")])
+    rows.append([InlineKeyboardButton("📊 Battle Status", callback_data="castle:status")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -111,37 +122,54 @@ def _render_run(run, player, party=None, notice=None):
     enemy = run.get("current_enemy") or {}
     members = party.get("member_ids", []) if party else [run.get("user_id")]
     hp_map = run.get("player_hp_by_user", {})
+    player_hp = int(hp_map.get(str(player.get("user_id")), player.get("hp", 1)))
+    player_max_hp = int(player.get("max_hp", max(1, player_hp)))
+    player_sta = int(player.get("sta", 0))
+    player_max_sta = int(player.get("max_sta", max(1, player_sta)))
     lines = [
         "🏯 <b>INFINITY CASTLE</b>",
-        f"Floor <b>{floor}/{MAX_FLOOR}</b>  •  Checkpoint: {run.get('checkpoint_floor', 1)}",
-        f"Mode: <b>{run.get('mode', 'solo').title()}</b>  •  Squad: {len(members)}/4",
-        f"Your level: <b>{_level(player)}</b>  •  Combat power: <b>{calculate_player_power(player):,}</b>",
+        f"Floor <b>{floor}/{MAX_FLOOR}</b>  <code>{_bar(floor, MAX_FLOOR, 16)}</code>",
+        f"Mode: <b>{run.get('mode', 'solo').title()}</b>  •  Squad: <b>{len(members)}/4</b>",
+        f"Level: <b>{_level(player)}</b>  •  Combat Power: <b>{calculate_player_power(player):,}</b>",
+        "",
+        f"❤️ You: <b>{max(0, player_hp):,}/{player_max_hp:,}</b>  <code>{_bar(player_hp, player_max_hp)}</code>",
+        f"⚡ Stamina: <b>{player_sta:,}/{player_max_sta:,}</b>  <code>{_bar(player_sta, player_max_sta)}</code>",
     ]
     if notice:
         lines += ["", notice]
     if enemy and enemy.get("room_type"):
         lines += [
-            "", f"🧭 Room: <b>{escape(str(enemy.get('room_type')).title())}</b>",
+            "", "━━━━━━━━━━━━━━━━━━━━",
+            f"🧭 <b>{escape(str(enemy.get('room_type')).title())} Chamber</b>",
             escape(str(run.get("room_notice", "The room is clear. Move to the next floor."))),
+            "━━━━━━━━━━━━━━━━━━━━",
         ]
     elif enemy:
+        enemy_hp = max(0, int(enemy.get("hp", 0)))
+        enemy_max_hp = max(1, int(enemy.get("max_hp", 1)))
         lines += [
             "", "━━━━━━━━━━━━━━━━━━━━",
-            f"{'☠️ BOSS' if enemy.get('boss') else '👹 ENEMY'}: <b>{escape(str(enemy.get('name')))}</b>",
-            f"Enemy Demon Level: <b>{enemy.get('demon_level', enemy.get('level'))}</b>  •  Rank: {escape(str(enemy.get('rank')))}",
+            f"{'☠️ FINAL BOSS' if floor == MAX_FLOOR else ('☠️ BOSS' if enemy.get('boss') else '👹 ENEMY')}",
+            f"<b>{escape(str(enemy.get('name')))}</b>",
+            f"Rank: <b>{escape(str(enemy.get('rank')))}</b>  •  Demon Level: <b>{enemy.get('demon_level', enemy.get('level'))}</b>",
             f"Difficulty: <b>{escape(str(enemy.get('difficulty')))}</b>",
-            f"Enemy ability: <b>{escape(str(enemy.get('ability', 'Basic Attack')))}</b>",
-            f"Enemy HP: <b>{max(0, int(enemy.get('hp', 0))):,}/{int(enemy.get('max_hp', 1)):,}</b>",
+            f"Blood Art: <b>{escape(str(enemy.get('ability', 'Basic Attack')))}</b>",
+            f"Enemy HP: <b>{enemy_hp:,}/{enemy_max_hp:,}</b>",
+            f"<code>{_bar(enemy_hp, enemy_max_hp, 16)}</code>",
             "━━━━━━━━━━━━━━━━━━━━",
-            "<b>Squad HP</b>",
+            "<b>Squad Status</b>",
         ]
         for uid in members:
             member = get_player(int(uid))
             if member:
-                hp = hp_map.get(str(uid), member.get("hp", 1))
-                lines.append(f"• {escape(str(member.get('name', 'Slayer')))}: {max(0, int(hp)):,} HP")
+                hp = max(0, int(hp_map.get(str(uid), member.get("hp", 1))))
+                maximum = max(1, int(member.get("max_hp", 1)))
+                lines.append(
+                    f"• {escape(str(member.get('name', 'Slayer')))}  "
+                    f"{hp:,}/{maximum:,} HP  <code>{_bar(hp, maximum, 8)}</code>"
+                )
     if floor == MAX_FLOOR and enemy.get("boss"):
-        lines.append("\n⚠️ Final battle. Defeat Muzan to clear the Castle.")
+        lines.append("\n⚠️ <b>FINAL BATTLE</b> — defeat Muzan to clear the Castle.")
     return "\n".join(lines)
 
 
@@ -539,7 +567,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML", reply_markup=_keyboard(run)
         )
         return
-    if action != "attack":
+    if action not in ("attack", "technique", "guard"):
         return
 
     enemy = run.get("current_enemy") or {}
@@ -551,6 +579,26 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_hp <= 0:
         await query.message.reply_text("You are defeated. Another squad member must finish this enemy.")
         return
+
+    is_technique = action == "technique"
+    is_guard = action == "guard"
+    current_sta = max(0, int(player.get("sta", 0) or 0))
+    max_sta = max(0, int(player.get("max_sta", current_sta) or current_sta))
+    technique_cost = 25
+    if is_technique and current_sta < technique_cost:
+        await query.message.reply_text(
+            f"⚡ Not enough stamina. You need {technique_cost} STA; current stamina: {current_sta}."
+        )
+        return
+    if is_technique:
+        current_sta -= technique_cost
+        player["sta"] = current_sta
+        update_player(user_id, sta=current_sta)
+    elif is_guard:
+        current_sta = min(max_sta, current_sta + 12)
+        player["sta"] = current_sta
+        update_player(user_id, sta=current_sta)
+
     skill_bonuses = get_active_skill_bonuses(get_player_skills(user_id), user_id=user_id)
     player_atk = max(1, int(player.get("str_stat", player.get("atk", player.get("attack", 10))) or 10))
     player_atk = int(player_atk * (1 + float(skill_bonuses.get("atk_pct", 0) or 0)))
@@ -592,7 +640,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     demon_bonus = 0
     if str(player.get("faction", "")).lower() == "demon":
         demon_bonus = int(player_atk * float(player.get("demon_art_bonus", 0) or 0))
-    damage = int((player_atk + weapon_bonus + accessory_bonus + demon_bonus + random.randint(0, max(2, player_atk // 3))) * weapon_multiplier * accessory_multiplier * (1.5 if critical else 1.0))
+    technique_multiplier = 1.85 if is_technique else 1.0
+    damage = int((player_atk + weapon_bonus + accessory_bonus + demon_bonus + random.randint(0, max(2, player_atk // 3))) * weapon_multiplier * accessory_multiplier * technique_multiplier * (1.5 if critical else 1.0))
     damage = max(1, damage)
     expected_enemy_hp = int(enemy["hp"])
     if not apply_castle_enemy_damage(run["run_id"], expected_enemy_hp, damage):
@@ -627,6 +676,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if armor:
             armor_bonus += int(armor.get("stats", {}).get("def_bonus", 0))
     reduction = float(skill_bonuses.get("dmg_reduce", 0) or 0)
+    if is_guard:
+        reduction = max(reduction, 0.55)
     for gear in (armor, accessory):
         if gear:
             passive = gear.get("passive", {})
@@ -654,7 +705,15 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_player(user_id, hp=current_hp)
     run["current_enemy"] = enemy
     run["player_hp_by_user"] = hp_map
-    notice = f"⚔️ You dealt {damage:,} damage. Enemy counterattacked for {enemy_damage:,}."
+    action_label = (
+        f"⚡ {escape(str(player.get('style') or 'Special Technique'))}"
+        if is_technique else ("🛡️ Guard stance" if is_guard else "⚔️ Basic attack")
+    )
+    notice = f"{action_label}: {damage:,} damage. Enemy counterattacked for {enemy_damage:,}."
+    if is_technique:
+        notice += f" Spent {technique_cost} STA."
+    if is_guard:
+        notice += " Incoming damage reduced; recovered 12 STA."
     if regen:
         notice += f" Demon regeneration restored {regen:,} HP."
     if current_hp <= 0:
