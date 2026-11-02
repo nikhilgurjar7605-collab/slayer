@@ -1293,9 +1293,11 @@ if __name__ == '__main__':
             srv = ThreadingHTTPServer((HOST, HEALTH_PORT), _H)
             _health_started.set()
             print(f"[HEALTH] Listening on {HOST}:{HEALTH_PORT}", flush=True)
-            if RENDER_URL:
-                print(f"[HEALTH] Render URL: {RENDER_URL}", flush=True)
-                print(f"[HEALTH] Health check: {RENDER_URL}/healthz", flush=True)
+            print(
+                f"[HEALTH] Local diagnostic endpoint: http://127.0.0.1:{HEALTH_PORT}/healthz "
+                "(internal only; Render routes public traffic to the webhook port).",
+                flush=True,
+            )
             srv.serve_forever()
         except Exception as e:
             log.error("[HEALTH ERROR] %s", e)
