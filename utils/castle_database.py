@@ -11,10 +11,15 @@ from uuid import uuid4
 
 
 PLAYER_DEFAULTS = {
-    "demon_level": 1,
-    "demon_xp": 0,
     "castle_highest_floor": 0,
     "castle_total_clears": 0,
+}
+DEMON_DEFAULTS = {
+    "demon_level": 1,
+    "demon_xp": 0,
+    "demon_abilities": [],
+    "demon_regen_bonus": 0.0,
+    "demon_art_bonus": 0.0,
 }
 
 # Equipment-only reward catalogue. These are definitions, not owned inventory.
@@ -96,6 +101,12 @@ def initialize_castle_database(db):
     for field, default in PLAYER_DEFAULTS.items():
         db.players.update_many(
             {field: {"$exists": False}}, {"$set": {field: default}}
+        )
+    # Demon progression fields belong only to Demon-faction characters.
+    for field, default in DEMON_DEFAULTS.items():
+        db.players.update_many(
+            {"faction": "demon", field: {"$exists": False}},
+            {"$set": {field: default}}
         )
 
     now = datetime.utcnow()
