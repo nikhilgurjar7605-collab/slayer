@@ -13,7 +13,7 @@ from utils.castle_database import (
     create_castle_run, get_active_castle_run, save_castle_run,
     calculate_player_power, calculate_difficulty, create_castle_party,
     get_castle_party, add_castle_party_member, add_demon_xp,
-    grant_castle_equipment, record_castle_clear,
+    grant_castle_equipment, record_castle_clear, record_castle_progress,
 )
 
 MAX_FLOOR = 100
@@ -298,7 +298,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         update_player(user_id, **{field: item["name"]})
         await update.effective_message.reply_text(
-            f"✅ Equipped <b>{item['name']}</b> in your {slot} slot.",
+            f"✅ Equipped <b>{escape(str(item['name']))}</b> in your {slot} slot.",
             parse_mode="HTML"
         )
         return
@@ -414,6 +414,8 @@ async def _start_floor(run, player, party):
         "room_type": room_type, "room_notice": room_notice,
         "checkpoint_floor": ((floor - 1) // 10) * 10 + 1,
     })
+    for member in members:
+        record_castle_progress(member["user_id"], floor, run.get("mode", "solo"))
 
 
 def _pick_equipment(user_id, floor, player, enemy):
@@ -460,7 +462,7 @@ async def _complete_enemy(run, player, party):
                 floor, enemy.get("name")
             )
             if granted:
-                rewards.append(f"{member.get('name', 'Player')}: {granted['name']} ({granted['rarity']})")
+                rewards.append(f"{escape(str(member.get('name', 'Player')))}: {escape(str(granted['name']))} ({escape(str(granted['rarity']))})")
     if floor == MAX_FLOOR:
         for member in recipients:
             record_castle_clear(member["user_id"], floor, run.get("mode", "solo"))
