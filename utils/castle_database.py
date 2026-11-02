@@ -132,8 +132,20 @@ def calculate_player_power(player):
     if not player:
         return 1
     level = _player_level(player)
-    atk = max(0, float(player.get("atk", player.get("attack", 0)) or 0))
+    atk = max(0, float(player.get("str_stat", player.get("atk", player.get("attack", 0))) or 0))
     defense = max(0, float(player.get("def_stat", player.get("defense", 0)) or 0))
+    try:
+        from config import SHOP_ITEMS
+        for item in SHOP_ITEMS.get("swords", []):
+            if item.get("name") == player.get("equipped_sword"):
+                atk += max(0, float(item.get("atk_bonus", 0)))
+                break
+        for item in SHOP_ITEMS.get("armor", []):
+            if item.get("name") == player.get("equipped_armor"):
+                defense += max(0, float(item.get("def_bonus", 0)))
+                break
+    except Exception:
+        pass
     hp = max(1, float(player.get("max_hp", player.get("hp", 1)) or 1))
     stamina = max(0, float(player.get("max_sta", player.get("sta", 0)) or 0))
     power = level * 5 + atk * 2.0 + defense * 1.5 + hp * 0.08 + stamina * 0.04
