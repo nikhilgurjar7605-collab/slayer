@@ -438,7 +438,20 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         if weapon:
             weapon_bonus = int(weapon.get("stats", {}).get("atk_bonus", 0))
-    damage = max(1, player_atk + weapon_bonus + random.randint(0, max(2, player_atk // 3)))
+    accessory_bonus = 0
+    if player.get("castle_equipped_accessory"):
+        accessory = col("castle_equipment").find_one({
+            "user_id": user_id, "name": player["castle_equipped_accessory"], "equipped": True
+        })
+        if accessory:
+            accessory_bonus = int(accessory.get("stats", {}).get("atk_bonus", 0))
+            passive = accessory.get("passive", {})
+            if passive.get("type") == "combat_damage":
+                accessory_bonus += int(player_atk * float(passive.get("value", 0)))
+    demon_bonus = 0
+    if str(player.get("faction", "")).lower() == "demon":
+        demon_bonus = int(player_atk * float(player.get("demon_art_bonus", 0) or 0))
+    damage = max(1, player_atk + weapon_bonus + accessory_bonus + demon_bonus + random.randint(0, max(2, player_atk // 3)))
     enemy["hp"] = max(0, int(enemy["hp"]) - damage)
     if enemy["hp"] <= 0:
         save_castle_run(run["run_id"], {"current_enemy": enemy})
@@ -464,6 +477,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             armor_bonus = int(armor.get("stats", {}).get("def_bonus", 0))
     enemy_damage = max(1, int(enemy.get("atk", 5)) - (int(player.get("def_stat", player.get("defense", 0)) or 0) + armor_bonus) // 3)
     current_hp = max(0, current_hp - enemy_damage)
+    regen = 0
+    if str(player.get("faction", "")).lower() == "demon" and current_hp > 0:
+        regen = min(
+            max(0, int(player.get("max_hp", current_hp)) - current_hp),
+            int(int(player.get("max_hp", current_hp)) * float(player.get("demon_regen_bonus", 0) or 0))
+        )
+        current_hp += regen
     hp_map[str(user_id)] = current_hp
     save_castle_run(run["run_id"], {
         "current_enemy": enemy, "player_hp_by_user": hp_map,
@@ -472,6 +492,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     run["current_enemy"] = enemy
     run["player_hp_by_user"] = hp_map
     notice = f"⚔️ You dealt {damage:,} damage. Enemy counterattacked for {enemy_damage:,}."
+    if regen:
+        notice += f" Demon regeneration restored {regen:,} HP."
     if current_hp <= 0:
         notice += "\n💀 You were defeated. A squad member can continue the fight."
         if not party:
