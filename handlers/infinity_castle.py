@@ -55,8 +55,8 @@ def _castle_guard(handler):
                     # be identified from Telegram without exposing a traceback.
                     detail = f"{type(exc).__name__}: {str(exc)[:350]}"
                     await message.reply_text(
-                        "⚠️ Infinity Castle error\\n"
-                        f"<code>{escape(detail)}</code>\\n"
+                        "⚠️ Infinity Castle error\n"
+                        f"<code>{escape(detail)}</code>\n"
                         "Please send this error text to the developer.",
                         parse_mode="HTML"
                     )
@@ -316,7 +316,7 @@ def _keyboard(run, is_party_member=True, user_id=None):
 def _squad_share_url(party_id):
     """Open Telegram's share sheet with a ready-to-send Castle squad invite."""
     invite_text = (
-        "Join my Infinity Castle squad! Open the Demon Slayer bot and use:\\n"
+        "Join my Infinity Castle squad! Open the Demon Slayer bot and use:\n"
         f"/castle join {party_id}"
     )
     return "https://t.me/share/url?" + urlencode({"url": "https://t.me", "text": invite_text})
@@ -1070,14 +1070,14 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_power = sum(calculate_player_power(member) for member in members)
         squad_name = escape(str(party.get("squad_name") or "Unnamed Squad"))
         await _safe_castle_edit(query,
-            "🏯 <b>INFINITY CASTLE · SQUAD LOBBY</b>\\n"
-            "━━━━━━━━━━━━━━━━━━━━\\n"
-            f"👥 <b>{squad_name}</b>\\n"
-            f"🆔 Invite code: <code>{escape(str(party['party_id']))}</code>\\n"
-            f"⚔️ Squad Power: <b>{total_power:,}</b>\\n"
-            f"🧑‍🤝‍🧑 Members: <b>{len(members)}/4</b>\\n\\n"
-            "<b>HOW TO INVITE</b>\\n"
-            "Share the invite message with up to 3 friends. They can join before the leader starts the expedition.\\n\\n"
+            "🏯 <b>INFINITY CASTLE · SQUAD LOBBY</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👥 <b>{squad_name}</b>\n"
+            f"🆔 Invite code: <code>{escape(str(party['party_id']))}</code>\n"
+            f"⚔️ Squad Power: <b>{total_power:,}</b>\n"
+            f"🧑‍🤝‍🧑 Members: <b>{len(members)}/4</b>\n\n"
+            "<b>HOW TO INVITE</b>\n"
+            "Share the invite message with up to 3 friends. They can join before the leader starts the expedition.\n\n"
             "💡 The squad code stays the same while this squad is open.",
             parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📨 Share Squad Invite", url=_squad_share_url(party["party_id"]))],
@@ -1211,8 +1211,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             hp = max(0, int(member.get("hp", 0) or 0))
             max_hp = max(1, int(member.get("max_hp", hp or 1) or 1))
             lines.append(
-                f"{index}. <b>{escape(str(member.get('name', f'Player {uid}')))}</b> · {role}\\n"
-                f"   Lv.{level}  |  Power {power:,}  |  HP {hp:,}/{max_hp:,}\\n"
+                f"{index}. <b>{escape(str(member.get('name', f'Player {uid}')))}</b> · {role}\n"
+                f"   Lv.{level}  |  Power {power:,}  |  HP {hp:,}/{max_hp:,}\n"
                 f"   <code>{_bar(hp, max_hp, 12)}</code>"
             )
         lines.extend([
@@ -1234,7 +1234,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append([InlineKeyboardButton("↻ Refresh Squad", callback_data="castle:my_squad")])
         buttons.append([InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop"),
                         InlineKeyboardButton("🏯 Castle Hub", callback_data="castle:menu")])
-        await _safe_castle_edit(query, "\\n".join(lines), parse_mode="HTML",
+        await _safe_castle_edit(query, "\n".join(lines), parse_mode="HTML",
                                 reply_markup=InlineKeyboardMarkup(buttons))
         return
     if action == "leave_squad":
@@ -1739,9 +1739,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_technique else ("🛡️ Guard stance" if is_guard else "⚔️ Basic attack")
     )
     notice = (
-        f"{action_label}\\n"
+        f"{action_label}\n"
         f"🗡️ Damage dealt: <b>{enemy_damage_dealt:,}</b> | Demon HP: "
-        f"<b>{enemy_hp_before:,} → {enemy_hp_after:,}</b>\\n"
+        f"<b>{enemy_hp_before:,} → {enemy_hp_after:,}</b>\n"
         f"💥 Damage received: <b>{enemy_damage:,}</b> | Your HP: "
         f"<b>{player_hp_before:,} → {player_hp_after_hit:,}</b>"
     )
