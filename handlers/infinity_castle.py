@@ -1039,28 +1039,58 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _render_run(run, player, party, "🤝 Co-op battle started! Every squad member can take a turn."),
             parse_mode="HTML", reply_markup=_keyboard(run)
         )
+        notified_ids = []
+        dm_failed_ids = []
+        group_chat_id = query.message.chat_id if query.message else None
         for member in members:
             member_id = int(member["user_id"])
             if member_id == user_id:
                 continue
             member_player = get_player(member_id) or member
+            battle_text = (
+                "⚔️ <b>YOUR SQUAD BATTLE HAS STARTED!</b>\\n"
+                "Your squad leader has entered the Infinity Castle. "
+                "You can now take your own turns using the battle buttons below.\\n\\n"
+                + _render_run(run, member_player, party)
+            )
             try:
                 await context.bot.send_message(
                     chat_id=member_id,
-                    text=(
-                        "⚔️ <b>YOUR SQUAD BATTLE HAS STARTED!</b>\\n"
-                        "Your squad leader has entered the Infinity Castle. "
-                        "You can now take your own turns using the battle buttons below.\\n\\n"
-                        + _render_run(run, member_player, party)
-                    ),
+                    text=battle_text,
                     parse_mode="HTML",
                     reply_markup=_keyboard(run),
                 )
-            except Exception:
-                logger.exception(
-                    "Could not send Castle battle-start notification to member %s",
-                    member_id,
+                notified_ids.append(member_id)
+            except Exception as exc:
+                # Telegram blocks unsolicited private messages until that user
+                # opens the bot. If the squad was started in a shared group,
+                # post a group notice so the member still sees the battle start.
+                logger.warning(
+                    "Castle DM failed for member %s: %s", member_id, exc
                 )
+                dm_failed_ids.append(member_id)
+                if group_chat_id and group_chat_id < 0:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=group_chat_id,
+                            text=(
+                                f"⚔️ <b>{escape(str(member_player.get('name', 'Squad member')))}</b>, "
+                                "your squad battle has started! Open the bot and send /castle "
+                                "to get your personal battle controls."
+                            ),
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Could not post Castle group fallback for member %s",
+                            member_id,
+                        )
+        if dm_failed_ids:
+            await query.message.reply_text(
+                "⚠️ I couldn't DM every squad member. Those members must open this bot "
+                "and send /start once; Telegram does not allow bots to start private chats. "
+                + (f"Members needing /start: {', '.join(str(uid) for uid in dm_failed_ids)}")
+            )
         return
     if action == "shop":
         shop_text, supplies = _castle_shop_text(user_id)
