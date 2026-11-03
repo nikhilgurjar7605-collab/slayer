@@ -297,7 +297,7 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     else:
         companion_line = "🐦‍⬛ Kasugai Crow • Active"
 
-    return "\\n".join([
+    return "\n".join([
         f"🌲 <b>While walking, you encountered {enemy_name}!</b>{boss_icon}",
         f"📜 People of this area signify it as a <b>{threat} Threat of Level {enemy_level}</b>.",
         f"<i>{event_desc}</i>",
