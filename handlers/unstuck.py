@@ -18,8 +18,6 @@ def _clear_castle_state(user_id):
     user_id = int(user_id)
     fixed = []
 
-    # Clear stale or stuck Infinity Castle solo/co-op run state.
-    fixed.extend(_clear_castle_state(user_id))
     party = col("castle_parties").find_one({
         "$or": [{"member_ids": user_id}, {"leader_id": user_id}],
         "status": {"$in": ["open", "running"]},
@@ -66,6 +64,9 @@ async def unstuck(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     fixed = []
+
+    # Clear stale or stuck Infinity Castle solo/co-op run state.
+    fixed.extend(_clear_castle_state(user_id))
 
     # Clear battle state
     state = get_battle_state(user_id)
