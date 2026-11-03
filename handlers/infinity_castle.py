@@ -213,7 +213,49 @@ def _enemy_for(player, floor, party_players):
     base_hp = 95 + level * 25 + floor * 13
     base_atk = 16 + level * 3 + floor // 2
     size = max(1, len(party_players))
-    hp = int(base_hp * (1 + 0.58 * (size - 1)))
+
+    # Scale HP against the actual squad's damage output as well as level.
+    # This stops high-stat/equipped players from deleting ordinary demons in
+    # one hit, while keeping larger squads facing a meaningfully tougher pool.
+    attack_values = []
+    for member in (party_players or [player]):
+        member_atk = max(1, int(member.get("str_stat", member.get("atk", member.get("attack", 10))) or 10))
+        member_uid = member.get("user_id")
+        if member_uid is not None:
+            try:
+                from handlers.skilltree import get_player_skills, get_active_skill_bonuses
+                bonuses = get_active_skill_bonuses(
+                    get_player_skills(int(member_uid)), user_id=int(member_uid)
+                )
+                member_atk = int(member_atk * (1 + float(bonuses.get("atk_pct", 0) or 0)))
+            except Exception:
+                pass
+        try:
+            for sword in SHOP_ITEMS.get("swords", []):
+                if sword.get("name") == member.get("equipped_sword"):
+                    member_atk += int(sword.get("atk_bonus", 0))
+                    break
+        except Exception:
+            pass
+        for slot in ("castle_equipped_weapon", "castle_equipped_accessory"):
+            equipped_name = member.get(slot)
+            if equipped_name and member_uid is not None:
+                gear = col("castle_equipment").find_one({
+                    "user_id": int(member_uid), "name": equipped_name, "equipped": True
+                })
+                if gear:
+                    member_atk += int(gear.get("stats", {}).get("atk_bonus", 0))
+        if str(member.get("faction", "")).lower() == "demon":
+            member_atk += int(member_atk * float(member.get("demon_art_bonus", 0) or 0))
+        attack_values.append(max(1, member_atk))
+
+    strongest_attack = max(attack_values or [10])
+    squad_attack = sum(attack_values or [10])
+    hp = max(
+        int(base_hp * (1 + 0.58 * (size - 1))),
+        int(strongest_attack * 5),
+        int(squad_attack * 2.5),
+    )
     atk = int(base_atk * (1 + 0.22 * (size - 1)))
     if boss:
         hp = int(hp * 2.5)
