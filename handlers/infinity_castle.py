@@ -1032,11 +1032,35 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await _start_floor(run, player, party)
         run = _find_run(user_id)
+        # Give every squad member a personal battle message with working
+        # Attack/Technique/Guard buttons. The leader already has the edited panel.
         await _safe_castle_edit(
             query,
             _render_run(run, player, party, "🤝 Co-op battle started! Every squad member can take a turn."),
             parse_mode="HTML", reply_markup=_keyboard(run)
         )
+        for member in members:
+            member_id = int(member["user_id"])
+            if member_id == user_id:
+                continue
+            member_player = get_player(member_id) or member
+            try:
+                await context.bot.send_message(
+                    chat_id=member_id,
+                    text=(
+                        "⚔️ <b>YOUR SQUAD BATTLE HAS STARTED!</b>\\n"
+                        "Your squad leader has entered the Infinity Castle. "
+                        "You can now take your own turns using the battle buttons below.\\n\\n"
+                        + _render_run(run, member_player, party)
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_keyboard(run),
+                )
+            except Exception:
+                logger.exception(
+                    "Could not send Castle battle-start notification to member %s",
+                    member_id,
+                )
         return
     if action == "shop":
         shop_text, supplies = _castle_shop_text(user_id)
