@@ -277,7 +277,7 @@ def _threat_emoji(threat: str) -> str:
 
 def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
                           active_pet: Optional[Dict] = None) -> str:
-    """Render a compact Telegram HTML wild-encounter caption."""
+    """Build a compact Telegram HTML exploration encounter message."""
     from html import escape
 
     enemy_level = max(1, int(preview.get('recommended_level', 1) or 1))
@@ -285,23 +285,23 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     threat = escape(str(preview.get('threat', 'UNKNOWN')))
     enemy_name = escape(str(enemy.get('name', 'Unknown Enemy')))
     player_name = escape(str(player.get('name', 'Slayer')))
-    event_desc = escape(str(preview.get('event_description') or 'The area is quiet...'))
+    event_desc = escape(str(preview.get('event_description') or 'The enemy watches your every move.'))
     boss_icon = " ☠️" if enemy.get('is_boss') else ""
 
     if active_pet:
         pet_name = escape(str(active_pet.get('name', 'Pet')))
         pet_emoji = PETS.get(active_pet.get('name'), {}).get('emoji', '🐾')
-        pet_line = f"{pet_emoji} {pet_name} Active"
+        pet_line = f"{pet_emoji} {pet_name} • Active"
     else:
-        pet_line = "🐦‍⬛ Kasugai Crow: Active"
+        pet_line = "🐦‍⬛ Kasugai Crow • Active"
 
     lines = [
         f"🌲 <b>While walking, you encountered {enemy_name}!</b>{boss_icon}",
-        f"📜 <b>{threat} Threat • Level {enemy_level}</b>",
+        f"📜 People of this area signify it as a <b>{threat} Threat of Level {enemy_level}</b>.",
         event_desc,
-        f"👹 <b>{enemy_name.upper()}</b>  ⚔️ {player_name}",
-        f"❤️ {player['hp']:,}/{player['max_hp']:,} HP • Lv. {player_level}",
-        f"{pet_line} • ⭐ {enemy['xp']:,} XP • 💰 {enemy['yen']:,}¥",
+        f"👹 <b>{enemy_name.upper()}</b>  |  🗡️ {player_name}",
+        f"❤️ {player['hp']:,}/{player['max_hp']:,} HP  •  Lv. {player_level}",
+        f"{pet_line}  |  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥",
     ]
     return "\n".join(lines)
 
@@ -782,20 +782,17 @@ async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not state:
         await query.answer("No enemy encountered yet! Use /explore first.", show_alert=True)
         return
+    from html import escape
     drops = json.loads(state['prize_drops']) if state['prize_drops'] else []
-    drops_text = ', '.join(drops) if drops else 'None'
-    event_line = state.get('event_label', '🌲 WILD ENCOUNTER')
+    drops_text = escape(', '.join(str(item) for item in drops) if drops else 'None')
+    enemy_name = escape(str(state.get('enemy_name', 'Enemy')))
     threat_line = 'HIGH' if state.get('is_boss') else ('MODERATE' if state.get('is_elite') else 'NORMAL')
     text = (
-        f"🏆 *REWARD PREVIEW*\n\n"
-        f"╭──────────────────────────╮\n"
-        f"│ {state['enemy_emoji']} *{state['enemy_name']}*\n"
-        f"│ └─ Threat: {threat_line}\n"
-        f"├──────────────────────────┤\n"
-        f"│ ⭐ XP:    +{state['prize_xp']:,}\n"
-        f"│ 💰 Yen:   +{state['prize_yen']:,}¥\n"
-        f"│ 🎁 Drops: {drops_text}\n"
-        f"╰──────────────────────────╯"
+        f"🏆 <b>Reward Preview</b>\n"
+        f"👹 <b>{enemy_name}</b> • {threat_line} Threat\n"
+        f"⭐ XP: +{state['prize_xp']:,}\n"
+        f"💰 Yen: +{state['prize_yen']:,}¥\n"
+        f"🎁 Drops: {drops_text}"
     )
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
@@ -803,7 +800,7 @@ async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_category="enemies",
         image_key=state['enemy_name'],
         reply_markup=build_encounter_keyboard(),
-        parse_mode='Markdown'
+        parse_mode='HTML'
     )
 
 # ─────────────────────────────────────────────────────────────────────────
