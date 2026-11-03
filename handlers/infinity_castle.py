@@ -89,16 +89,24 @@ def _level(player):
 def _party_players(party):
     if not party:
         return []
-    return [p for uid in party.get("member_ids", [])
-            if (p := get_player(int(uid))) is not None]
+    # Always include the leader, including parties created by older bot versions
+    # where leader_id was not copied into member_ids.
+    member_ids = list(dict.fromkeys(
+        [int(party.get("leader_id", 0))] +
+        [int(uid) for uid in party.get("member_ids", [])]
+    ))
+    return [p for uid in member_ids if uid and
+            (p := get_player(uid)) is not None]
 
 
 def _find_run(user_id):
+    user_id = int(user_id)
     run = get_active_castle_run(user_id)
     if run:
         return run
     party = col("castle_parties").find_one(
-        {"member_ids": int(user_id), "status": "running"}
+        {"$or": [{"member_ids": user_id}, {"leader_id": user_id}],
+         "status": "running"}
     )
     if party:
         run = col("castle_runs").find_one(
@@ -346,6 +354,13 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not party:
             await update.effective_message.reply_text("You don't have an open squad to start.")
             return
+        # Repair older squad records and guarantee the owner is a member.
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open"},
+            {"$addToSet": {"member_ids": user_id},
+             "$set": {"updated_at": datetime.utcnow()}}
+        )
+        party = get_castle_party(party["party_id"])
         members = _party_players(party)
         if not members:
             await update.effective_message.reply_text("No valid squad members found.")
@@ -703,16 +718,37 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_castle_edit(query, "🏃 You retreated. Your Castle run has ended. Use /castle to begin again.")
         return
     if action == "next":
-        enemy = run.get("current_enemy") or {}
-        if int(enemy.get("hp", 1)) > 0:
-            await query.message.reply_text("Defeat the current enemy first.")
+        # Re-read the persistent run before advancing; callbacks may arrive late
+        # or from an old Telegram message after another squad member has advanced.
+        fresh_run = col("castle_runs").find_one(
+            {"run_id": run["run_id"], "status": "active"}
+        )
+        if not fresh_run:
+            await _safe_castle_edit(query, "This Castle run is no longer active. Open /castle to continue.")
             return
-        floor = int(run.get("floor", 1)) + 1
-        save_castle_run(run["run_id"], {"floor": floor})
-        await _start_floor(run, player, party)
-        run = _find_run(user_id)
-        await _safe_castle_edit(query, 
-            _render_run(run, player, party, f"⚔️ Floor {floor}: a new enemy appears!"),
+        fresh_run.pop("_id", None)
+        enemy = fresh_run.get("current_enemy") or {}
+        if int(enemy.get("hp", 1)) > 0:
+            await query.answer("Defeat the current enemy first.", show_alert=True)
+            return
+        current_floor = int(fresh_run.get("floor", 1))
+        if current_floor >= MAX_FLOOR:
+            await _safe_castle_edit(query, "🏆 The Castle is complete. Return to the Castle Hub.")
+            return
+        floor = current_floor + 1
+        # Use the latest party roster so newly joined squad members are included.
+        party = get_castle_party(fresh_run.get("party_id")) if fresh_run.get("party_id") else None
+        if party:
+            party = col("castle_parties").find_one({"party_id": party["party_id"]}) or party
+            party.pop("_id", None)
+        save_castle_run(fresh_run["run_id"], {"floor": floor})
+        fresh_run["floor"] = floor
+        await _start_floor(fresh_run, player, party)
+        run = col("castle_runs").find_one({"run_id": fresh_run["run_id"]}) or fresh_run
+        run.pop("_id", None)
+        await _safe_castle_edit(
+            query,
+            _render_run(run, player, party, f"⚔️ Floor {floor}: the next chamber opens!"),
             parse_mode="HTML", reply_markup=_keyboard(run)
         )
         return
