@@ -329,6 +329,8 @@ def save_castle_encounter(run_id, floor, room_id, enemy_data):
 def create_castle_party(leader_id):
     party_id = uuid4().hex[:12]
     now = datetime.utcnow()
+    # The owner is the first squad member automatically; no separate
+    # self-join operation should be required.
     party = {
         "party_id": party_id, "leader_id": int(leader_id),
         "member_ids": [int(leader_id)], "status": "open",
