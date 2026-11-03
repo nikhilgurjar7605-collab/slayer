@@ -76,9 +76,20 @@ async def _safe_castle_edit(query, text, **kwargs):
         if any(token in reason for token in (
             "message to edit not found", "message can't be edited",
             "message_id_invalid", "message to edit is not found",
+            "there is no text in the message to edit",
         )):
             if query.message:
-                await query.message.reply_text(text, **kwargs)
+                # A media message has a caption rather than editable text.
+                # Remove its old buttons before posting the replacement screen.
+                if "there is no text in the message to edit" in reason:
+                    try:
+                        await query.edit_message_reply_markup(reply_markup=None)
+                    except BadRequest:
+                        pass
+                rendered = str(text or "").strip()
+                if not rendered:
+                    rendered = "⚠️ This Castle screen could not be rendered. Please use /castle to reopen it."
+                await query.message.reply_text(rendered, **kwargs)
                 return
         raise
 
