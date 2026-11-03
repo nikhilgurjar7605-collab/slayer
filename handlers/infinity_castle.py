@@ -234,6 +234,7 @@ def _render_run(run, player, party=None, notice=None):
 @_castle_guard
 async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    logger.info("Castle command received: user_id=%s args=%s", user_id, context.args or [])
     player = get_player(user_id)
     if not player:
         await update.effective_message.reply_text("Create your character first with /start.")
@@ -588,6 +589,7 @@ async def _complete_enemy(run, player, party):
 @_castle_guard
 async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    logger.info("Castle callback received: user_id=%s data=%s", query.from_user.id, query.data)
     await query.answer()
     user_id = query.from_user.id
     player = get_player(user_id)
