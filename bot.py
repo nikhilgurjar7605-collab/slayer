@@ -455,10 +455,16 @@ async def _track_user_callback_activity(update: Update, context: ContextTypes.DE
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    data = query.data
-    # Infinity Castle callbacks are handled by castle_callback (registered in group 1).
-    # Do not let this catch-all router answer them as "Unknown action" first.
-    if data and data.startswith('castle:'):
+    data = query.data or ""
+    # Current Castle buttons use the castle: namespace. Older Castle messages
+    # used plain action names; identify those by their message heading so they
+    # do not fall through to the global router's "Unknown action" alert.
+    message_text = (query.message.text or query.message.caption or "") if query.message else ""
+    is_castle_message = "INFINITY CASTLE" in message_text.upper()
+    if data.startswith("castle:"):
+        return
+    if is_castle_message and data in {"attack", "technique", "guard", "retreat", "status", "next"}:
+        await castle_callback(update, context)
         return
     # These are handled by ConversationHandler — callback_router must NOT touch them
     conv_callbacks = ('faction_', 'story_')
