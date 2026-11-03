@@ -45,7 +45,7 @@ async def _safe_edit_message_text(query, text, **kwargs):
     if not rendered:
         rendered = "⚠️ This Castle screen could not be rendered. Please use /castle to reopen it."
     try:
-        return await _safe_edit_message_text(query,rendered, **kwargs)
+        return await query.edit_message_text(rendered, **kwargs)
     except BadRequest as exc:
         error_text = str(exc).lower()
         if "there is no text in the message to edit" not in error_text:
