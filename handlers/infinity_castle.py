@@ -348,7 +348,7 @@ def _lobby_keyboard():
 
 
 def _render_run(run, player, party=None, notice=None):
-    """Unified Castle battle HUD with clear expedition, enemy and team panels."""
+    """Compact Telegram battle HUD with consistent HP bars and quoted narration."""
     floor = int(run.get("floor", 1))
     enemy = run.get("current_enemy") or {}
     members = list(dict.fromkeys(
@@ -356,50 +356,62 @@ def _render_run(run, player, party=None, notice=None):
         if party else [int(run.get("user_id", player.get("user_id", 0)))]
     ))
     hp_map = run.get("player_hp_by_user", {})
-    player_hp = int(hp_map.get(str(player.get("user_id")), player.get("hp", 1)))
-    player_max_hp = max(1, int(player.get("max_hp", max(1, player_hp))))
-    player_sta = int(player.get("sta", 0))
-    player_max_sta = max(1, int(player.get("max_sta", max(1, player_sta))))
-    mode = "SQUAD RAID" if party else "SOLO RAID"
+    mode_label = f"Squad: {len(members)}/4" if party else "Solo Expedition"
+
     lines = [
-        "🏯 <b>INFINITY CASTLE</b>  ·  <code>EXPEDITION</code>",
-        "━━━━━━━━━━━━━━━━━━━━",
-        f"🧭 <b>FLOOR {floor:02d} / {MAX_FLOOR}</b>  ·  {mode}",
-        f"<code>{_bar(floor, MAX_FLOOR, 18)}</code>  <b>{int(floor / MAX_FLOOR * 100)}%</b>",
-        f"⭐ Slayer Lv.{_level(player)}  ·  ⚔️ Power <b>{calculate_player_power(player):,}</b>",
-        "", "🧬 <b>YOUR VITALS</b>",
-        f"❤️ HP  <b>{max(0, player_hp):,}/{player_max_hp:,}</b>",
-        f"<code>{_bar(player_hp, player_max_hp, 18)}</code>",
-        f"⚡ STA <b>{player_sta:,}/{player_max_sta:,}</b>",
-        f"<code>{_bar(player_sta, player_max_sta, 18)}</code>",
+        f"🏯 <b>INFINITY CASTLE</b> · Floor <code>{floor:02d}/{MAX_FLOOR}</code>",
+        f"⚔️ {mode_label} · ⭐ Lv.{_level(player)} · Power: <b>{calculate_player_power(player):,}</b>",
     ]
-    if notice:
-        lines.extend(["", "💬 <b>COMBAT LOG</b>", escape(str(notice))])
+
     if enemy and enemy.get("room_type"):
-        lines.extend(["", "━━━━━━━━━━━━━━━━━━━━",
-            f"🌀 <b>{escape(str(enemy.get('room_type')).upper())} CHAMBER</b>",
-            escape(str(run.get("room_notice", "The chamber is clear. Move onward.")))])
+        lines.extend([
+            "",
+            f"🌀 <b>{escape(str(enemy.get('room_type')).title())} Chamber</b>",
+            escape(str(run.get("room_notice", "The chamber is clear. Move onward."))),
+        ])
     elif enemy:
         enemy_hp = max(0, int(enemy.get("hp", 0)))
         enemy_max_hp = max(1, int(enemy.get("max_hp", 1)))
-        enemy_label = "FINAL BOSS" if floor == MAX_FLOOR else ("BOSS ENCOUNTER" if enemy.get("boss") else "HOSTILE DEMON")
-        lines.extend(["", "━━━━━━━━━━━━━━━━━━━━", f"☠️ <b>{enemy_label}</b>",
-            f"👹 <b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b>",
-            f"{escape(str(enemy.get('rank', 'Demon')))}  ·  Demon Lv.{enemy.get('demon_level', enemy.get('level', 1))}",
-            f"🩸 HP <b>{enemy_hp:,}/{enemy_max_hp:,}</b>",
-            f"<code>{_bar(enemy_hp, enemy_max_hp, 18)}</code>",
-            f"🩸 Blood Art: <i>{escape(str(enemy.get('ability', 'Unknown technique')))}</i>",
-            "", "📜 <b>ENCOUNTER INTEL</b>",
-            escape(str(enemy.get("story", "The demon blocks your path. Stay alert.")))])
-    if len(members) > 1 or party:
-        lines.extend(["", "━━━━━━━━━━━━━━━━━━━━", f"🤝 <b>YOUR SQUAD</b>  ·  {len(members)}/4"])
-        for uid in members:
-            member = get_player(int(uid))
-            if member:
-                hp = max(0, int(hp_map.get(str(uid), member.get("hp", 1))))
-                maximum = max(1, int(member.get("max_hp", 1)))
-                lines.append(f"• <b>{escape(str(member.get('name', 'Slayer')))}</b>  ·  {hp:,}/{maximum:,} HP")
-                lines.append(f"  <code>{_bar(hp, maximum, 12)}</code>")
+        lines.extend([
+            "",
+            f"👹 <b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b> · Lv.{int(enemy.get('demon_level', enemy.get('level', 1)))}",
+            f"❤️ HP: <b>{enemy_hp:,}/{enemy_max_hp:,}</b>",
+            f"<code>{_bar(enemy_hp, enemy_max_hp, 10)}</code>",
+        ])
+
+    if notice:
+        lines.extend([
+            "",
+            "<blockquote><b>⚔️ BATTLE REPORT</b>\n" + escape(str(notice)) + "</blockquote>",
+        ])
+
+    lines.extend(["", "<b>👥 SQUAD STATUS</b>" if party else "<b>👤 SLAYER STATUS</b>"])
+    for uid in members:
+        member = get_player(int(uid))
+        if not member:
+            continue
+        hp = max(0, int(hp_map.get(str(uid), member.get("hp", 1))))
+        maximum = max(1, int(member.get("max_hp", max(1, hp))))
+        stamina = max(0, int(member.get("sta", 0) or 0))
+        max_stamina = max(1, int(member.get("max_sta", max(1, stamina)) or 1))
+        state = "💀 DEFEATED" if hp <= 0 else "🟢 ACTIVE"
+        lines.extend([
+            f"• <b>{escape(str(member.get('name', 'Slayer')))}</b> · Lv.{_level(member)} · {state}",
+            f"  ❤️ {hp:,}/{maximum:,} HP · ⚡ {stamina:,}/{max_stamina:,}",
+            f"  <code>{_bar(hp, maximum, 10)}</code>",
+        ])
+
+    chapter = (
+        run.get("chapter_text")
+        or enemy.get("story")
+        or run.get("room_notice")
+        or "The castle shifts around you. A presence waits beyond the corridor."
+    )
+    lines.extend([
+        "",
+        "<blockquote>📖 " + escape(str(chapter)) + "</blockquote>",
+    ])
+
     if floor == MAX_FLOOR and enemy.get("boss"):
         lines.extend(["", "⚠️ <b>FINAL CONFRONTATION</b>",
                       "Defeat Muzan Kibutsuji and end the Castle's reign of terror."])
@@ -1889,15 +1901,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     run["current_enemy"] = enemy
     run["player_hp_by_user"] = hp_map
     action_label = (
-        f"⚡ {escape(str(player.get('style') or 'Special Technique'))}"
-        if is_technique else ("🛡️ Guard stance" if is_guard else "⚔️ Basic attack")
+        str(player.get("style") or "Special Technique")
+        if is_technique else ("Guard stance" if is_guard else "Basic attack")
     )
     notice = (
         f"{action_label}\n"
-        f"🗡️ Damage dealt: <b>{enemy_damage_dealt:,}</b> | Demon HP: "
-        f"<b>{enemy_hp_before:,} → {enemy_hp_after:,}</b>\n"
-        f"💥 Damage received: <b>{enemy_damage:,}</b> | Your HP: "
-        f"<b>{player_hp_before:,} → {player_hp_after_hit:,}</b>"
+        f"🗡️ Damage dealt: {enemy_damage_dealt:,}\n"
+        f"💥 Damage received: {enemy_damage:,}"
     )
     if is_technique:
         notice += f" Spent {technique_cost} STA."
