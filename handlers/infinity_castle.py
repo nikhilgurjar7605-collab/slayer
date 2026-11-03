@@ -176,47 +176,52 @@ def _lobby_keyboard():
 
 
 def _render_run(run, player, party=None, notice=None):
+    """Compact Telegram battle panel with clear hierarchy and less visual noise."""
     floor = int(run.get("floor", 1))
     enemy = run.get("current_enemy") or {}
     members = party.get("member_ids", []) if party else [run.get("user_id")]
     hp_map = run.get("player_hp_by_user", {})
     player_hp = int(hp_map.get(str(player.get("user_id")), player.get("hp", 1)))
-    player_max_hp = int(player.get("max_hp", max(1, player_hp)))
+    player_max_hp = max(1, int(player.get("max_hp", max(1, player_hp))))
     player_sta = int(player.get("sta", 0))
-    player_max_sta = int(player.get("max_sta", max(1, player_sta)))
+    player_max_sta = max(1, int(player.get("max_sta", max(1, player_sta))))
+
     lines = [
         "🏯 <b>INFINITY CASTLE</b>",
-        f"Floor <b>{floor}/{MAX_FLOOR}</b>  <code>{_bar(floor, MAX_FLOOR, 16)}</code>",
-        f"Mode: <b>{run.get('mode', 'solo').title()}</b>  •  Squad: <b>{len(members)}/4</b>",
-        f"Level: <b>{_level(player)}</b>  •  Combat Power: <b>{calculate_player_power(player):,}</b>",
+        f"FLOOR <b>{floor}/{MAX_FLOOR}</b>  <code>{_bar(floor, MAX_FLOOR, 12)}</code>",
+        f"⚔️ {run.get('mode', 'solo').title()}  ·  👥 {len(members)}/4",
+        f"⭐ Lv. <b>{_level(player)}</b>  ·  Power <b>{calculate_player_power(player):,}</b>",
         "",
-        f"❤️ You: <b>{max(0, player_hp):,}/{player_max_hp:,}</b>  <code>{_bar(player_hp, player_max_hp)}</code>",
-        f"⚡ Stamina: <b>{player_sta:,}/{player_max_sta:,}</b>  <code>{_bar(player_sta, player_max_sta)}</code>",
+        f"❤️ <b>{max(0, player_hp):,}/{player_max_hp:,}</b> HP",
+        f"<code>{_bar(player_hp, player_max_hp, 12)}</code>",
+        f"⚡ <b>{player_sta:,}/{player_max_sta:,}</b> STA",
+        f"<code>{_bar(player_sta, player_max_sta, 12)}</code>",
     ]
     if notice:
-        lines += ["", notice]
+        lines.extend(["", f"💬 {escape(str(notice))}"])
+
     if enemy and enemy.get("room_type"):
-        lines += [
-            "", "━━━━━━━━━━━━━━━━━━━━",
+        lines.extend([
+            "", "━━━━━━━━━━━━━━━━",
             f"🧭 <b>{escape(str(enemy.get('room_type')).title())} Chamber</b>",
             escape(str(run.get("room_notice", "The room is clear. Move to the next floor."))),
-            "━━━━━━━━━━━━━━━━━━━━",
-        ]
+            "━━━━━━━━━━━━━━━━",
+        ])
     elif enemy:
         enemy_hp = max(0, int(enemy.get("hp", 0)))
         enemy_max_hp = max(1, int(enemy.get("max_hp", 1)))
-        lines += [
-            "", "━━━━━━━━━━━━━━━━━━━━",
-            f"{'☠️ FINAL BOSS' if floor == MAX_FLOOR else ('☠️ BOSS' if enemy.get('boss') else '👹 ENEMY')}",
-            f"<b>{escape(str(enemy.get('name')))}</b>",
-            f"Rank: <b>{escape(str(enemy.get('rank')))}</b>  •  Demon Level: <b>{enemy.get('demon_level', enemy.get('level'))}</b>",
-            f"Difficulty: <b>{escape(str(enemy.get('difficulty')))}</b>",
-            f"Blood Art: <b>{escape(str(enemy.get('ability', 'Basic Attack')))}</b>",
-            f"Enemy HP: <b>{enemy_hp:,}/{enemy_max_hp:,}</b>",
-            f"<code>{_bar(enemy_hp, enemy_max_hp, 16)}</code>",
-            "━━━━━━━━━━━━━━━━━━━━",
-            "<b>Squad Status</b>",
-        ]
+        enemy_label = "FINAL BOSS" if floor == MAX_FLOOR else ("BOSS" if enemy.get("boss") else "ENEMY")
+        lines.extend([
+            "", "━━━━━━━━━━━━━━━━",
+            f"{'☠️' if enemy.get('boss') else '👹'} <b>{enemy_label}</b>",
+            f"<b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b>",
+            f"{escape(str(enemy.get('rank', 'Unknown')))}  ·  Demon Lv. <b>{enemy.get('demon_level', enemy.get('level', 1))}</b>",
+            f"🩸 {escape(str(enemy.get('ability', 'Basic Attack')))}",
+            f"Enemy HP  <b>{enemy_hp:,}/{enemy_max_hp:,}</b>",
+            f"<code>{_bar(enemy_hp, enemy_max_hp, 12)}</code>",
+            "━━━━━━━━━━━━━━━━",
+            "<b>YOUR SQUAD</b>",
+        ])
         for uid in members:
             member = get_player(int(uid))
             if member:
@@ -224,12 +229,13 @@ def _render_run(run, player, party=None, notice=None):
                 maximum = max(1, int(member.get("max_hp", 1)))
                 lines.append(
                     f"• {escape(str(member.get('name', 'Slayer')))}  "
-                    f"{hp:,}/{maximum:,} HP  <code>{_bar(hp, maximum, 8)}</code>"
+                    f"<b>{hp:,}/{maximum:,}</b> HP"
                 )
+                lines.append(f"  <code>{_bar(hp, maximum, 10)}</code>")
+
     if floor == MAX_FLOOR and enemy.get("boss"):
         lines.append("\n⚠️ <b>FINAL BATTLE</b> — defeat Muzan to clear the Castle.")
     return "\n".join(lines)
-
 
 @_castle_guard
 async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
