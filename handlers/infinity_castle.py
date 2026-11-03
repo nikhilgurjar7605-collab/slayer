@@ -126,6 +126,7 @@ def _lobby_keyboard():
          InlineKeyboardButton("👥 Create Squad", callback_data="castle:squad")],
         [InlineKeyboardButton("🎒 Equipment", callback_data="castle:equipment"),
          InlineKeyboardButton("🏆 Leaderboard", callback_data="castle:leaderboard")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="goto_menu")],
     ])
 
 
