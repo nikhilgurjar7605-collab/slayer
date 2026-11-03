@@ -95,7 +95,7 @@ async def _execute_broadcast(context: ContextTypes.DEFAULT_TYPE, notify_chat_id:
     duration = time.time() - start_time
     summary = (
         f"📣 *Broadcast {'cancelled' if cancelled else 'complete'}*\n\n"
-        f"👥 Targeted: *{len(players)}*\n"
+        f"👥 Users: *{len(players)}* | Groups: *{len(groups)}*\n"
         f"✅ Sent: *{sent}*\n"
         f"❌ Failed: *{failed}*\n"
         f"⏱️ Duration: *{duration:.2f}s*"
@@ -172,7 +172,9 @@ async def bcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Usage:</b>\n"
         "1. Reply to a message with <code>/bcast</code> or <code>/announce</code> for options.\n"
         "2. Send a photo with <code>/bcast your caption</code>.\n"
-        "3. Type <code>/bcast your message</code>.",
+        "3. Type <code>/bcast your message</code> (users + groups).\n"
+        "4. Use <code>/bcast groups your message</code> for groups only.\n"
+        "5. Use <code>/bcast users your message</code> for users only.",
         parse_mode="HTML",
     )
 
