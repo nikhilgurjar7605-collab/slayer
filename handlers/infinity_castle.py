@@ -1317,16 +1317,10 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_castle_edit(query, "🥾 Member removed from the squad.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👥 Refresh Squad", callback_data="castle:my_squad")]]))
         return
     if action == "my_squad":
+        # Show a squad only when the player is currently its leader or is
+        # explicitly listed in its member_ids. Never expose an old squad code
+        # just because this player originally created/owned that squad.
         party = _find_user_party(user_id)
-        # Fallback for older leader-created records whose member_ids field
-        # may be missing or malformed: always show the leader's saved squad.
-        if not party:
-            party = col("castle_parties").find_one(
-                {"leader_id": user_id, "status": {"$in": ["open", "running"]}},
-                sort=[("updated_at", -1)]
-            )
-            if party:
-                party.pop("_id", None)
         if not party:
             await _safe_castle_edit(
                 query, "👥 You are not in a squad yet. Create one or join using /castle join PARTY_CODE.",
