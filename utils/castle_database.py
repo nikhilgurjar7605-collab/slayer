@@ -351,16 +351,62 @@ def save_castle_encounter(run_id, floor, room_id, enemy_data):
 
 
 def create_castle_party(leader_id):
-    party_id = uuid4().hex[:12]
+    """Return the owner's permanent squad record, creating it only once."""
+    leader_id = int(leader_id)
+    parties = _col("castle_parties")
+    # owner_id is stable even when leadership is temporarily transferred.
+    # leader_id is included for compatibility with older records.
+    party = parties.find_one(
+        {"$or": [
+            {"owner_id": leader_id},
+            {"original_owner_id": leader_id},
+            {"leader_id": leader_id},
+        ]},
+        sort=[("created_at", 1)],
+    )
     now = datetime.utcnow()
-    # The owner is the first squad member automatically; no separate
-    # self-join operation should be required.
+    if party:
+        party_id = str(party["party_id"])
+        if party.get("status") not in ("open", "running"):
+            parties.update_one(
+                {"party_id": party_id},
+                {"$set": {
+                    "owner_id": leader_id,
+                    "original_owner_id": leader_id,
+                    "leader_id": leader_id,
+                    "member_ids": [leader_id],
+                    "status": "open",
+                    "updated_at": now,
+                }},
+            )
+        else:
+            # Backfill stable ownership fields on squads created by older code.
+            parties.update_one(
+                {"party_id": party_id},
+                {"$set": {
+                    "owner_id": leader_id,
+                    "original_owner_id": leader_id,
+                }},
+            )
+        refreshed = parties.find_one({"party_id": party_id})
+        if refreshed:
+            refreshed.pop("_id", None)
+            return refreshed
+        party.pop("_id", None)
+        return party
+
+    party_id = uuid4().hex[:12]
     party = {
-        "party_id": party_id, "leader_id": int(leader_id),
-        "member_ids": [int(leader_id)], "status": "open",
-        "created_at": now, "updated_at": now,
+        "party_id": party_id,
+        "owner_id": leader_id,
+        "original_owner_id": leader_id,
+        "leader_id": leader_id,
+        "member_ids": [leader_id],
+        "status": "open",
+        "created_at": now,
+        "updated_at": now,
     }
-    _col("castle_parties").insert_one(party)
+    parties.insert_one(party)
     return party
 
 
