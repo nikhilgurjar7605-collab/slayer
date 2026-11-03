@@ -379,6 +379,28 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     action = args[0].lower() if args else "status"
 
+
+    if action == "name":
+        party = _find_user_party(user_id)
+        if not party:
+            await update.effective_message.reply_text("You must be in a squad to name it.")
+            return
+        if int(party.get("leader_id", 0)) != user_id:
+            await update.effective_message.reply_text("Only the current squad leader can change its name.")
+            return
+        squad_name = " ".join(args[1:]).strip()
+        if not squad_name or len(squad_name) > 24 or "\n" in squad_name:
+            await update.effective_message.reply_text("Use /castle name Squad Name (maximum 24 characters).")
+            return
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "leader_id": user_id},
+            {"$set": {"squad_name": squad_name, "updated_at": datetime.utcnow()}}
+        )
+        await update.effective_message.reply_text(
+            "Squad name set to <b>" + escape(squad_name) + "</b>.", parse_mode="HTML"
+        )
+        return
+
     if action in ("menu", "hub", "help"):
         await update.effective_message.reply_text(
             "🏯 <b>INFINITY CASTLE</b>\n"
@@ -700,13 +722,20 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "leaderboard":
         mode = "squad" if len(args) > 1 and args[1].lower() == "squad" else "solo"
-        rows = list(col("castle_leaderboards").find({"mode": mode}).sort("highest_floor", -1).limit(10))
-        lines = [f"🏆 <b>CASTLE {mode.upper()} LEADERBOARD</b>"]
-        for i, row in enumerate(rows, 1):
-            member = get_player(int(row["user_id"])) or {}
-            lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {row.get('highest_floor', 0)}")
+        if mode == "squad":
+            rows = list(col("castle_parties").find({"highest_floor": {"$gte": 1}}).sort("highest_floor", -1).limit(10))
+            lines = ["CASTLE SQUAD LEADERBOARD"]
+            for i, row in enumerate(rows, 1):
+                squad_name = escape(str(row.get("squad_name") or "Unnamed Squad"))
+                lines.append(f"{i}. {squad_name} — Floor {int(row.get('highest_floor', 0))}")
+        else:
+            rows = list(col("castle_leaderboards").find({"mode": "solo"}).sort("highest_floor", -1).limit(10))
+            lines = ["CASTLE SOLO LEADERBOARD"]
+            for i, row in enumerate(rows, 1):
+                member = get_player(int(row["user_id"])) or {}
+                lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {int(row.get('highest_floor', 0))}")
         if len(lines) == 1:
-            lines.append("No clears recorded yet.")
+            lines.append("No climbs recorded yet.")
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
         return
 
@@ -1103,6 +1132,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         member_ids = list(dict.fromkeys([leader_id] + [int(uid) for uid in party.get("member_ids", [])]))
         lines = [
             "👥 <b>MY INFINITY CASTLE SQUAD</b>",
+            f"Squad: <b>{escape(str(party.get('squad_name') or 'Unnamed Squad'))}</b>",
             f"Party code: <code>{escape(str(party.get('party_id', '')))}</code>",
             f"Status: <b>{escape(str(party.get('status', 'unknown')).title())}</b>",
             f"Members: <b>{len(member_ids)}/4</b>",
@@ -1119,6 +1149,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Share recovery supplies with a teammate:",
             "<code>/castle gift USER_ID bandage 1</code>",
             "Items: bandage, medkit, tonic (up to 10 at once).",
+            "",
+            "Rename your squad: <code>/castle name Squad Name</code> (leader only).",
         ])
         buttons = []
         if party.get("status") == "open" and leader_id == user_id:
@@ -1188,20 +1220,28 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]])
         )
         return
-    if action == "leaderboard":
-        rows = list(col("castle_leaderboards").find({"mode": "solo"}).sort("highest_floor", -1).limit(10))
-        lines = ["🏆 <b>INFINITY CASTLE — SOLO RANKINGS</b>", "━━━━━━━━━━━━━━━━━━━━"]
-        if not rows:
-            lines.append("No explorers have made a recorded climb yet.")
-        for i, row in enumerate(rows, 1):
-            member = get_player(int(row["user_id"])) or {}
-            lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {int(row.get('highest_floor', 0))}")
-        await _safe_castle_edit(query, 
-            "\n".join(lines), parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
-            ]])
-        )
+    if action in ("leaderboard", "leaderboard_solo", "leaderboard_squad"):
+        mode = "squad" if action == "leaderboard_squad" else "solo"
+        if mode == "squad":
+            rows = list(col("castle_parties").find({"highest_floor": {"$gte": 1}}).sort("highest_floor", -1).limit(10))
+            lines = ["🏆 <b>INFINITY CASTLE — SQUAD RANKINGS</b>", "━━━━━━━━━━━━━━━━━━━━"]
+            for i, row in enumerate(rows, 1):
+                squad_name = escape(str(row.get("squad_name") or "Unnamed Squad"))
+                lines.append(f"{i}. <b>{squad_name}</b> — Floor {int(row.get('highest_floor', 0))}")
+        else:
+            rows = list(col("castle_leaderboards").find({"mode": "solo"}).sort("highest_floor", -1).limit(10))
+            lines = ["🏆 <b>INFINITY CASTLE — SOLO RANKINGS</b>", "━━━━━━━━━━━━━━━━━━━━"]
+            for i, row in enumerate(rows, 1):
+                member = get_player(int(row["user_id"])) or {}
+                lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {int(row.get('highest_floor', 0))}")
+        if len(lines) == 2:
+            lines.append("No climbs recorded yet.")
+        await _safe_castle_edit(query, "\n".join(lines), parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚔️ Solo", callback_data="castle:leaderboard_solo"),
+                 InlineKeyboardButton("👥 Squads", callback_data="castle:leaderboard_squad")],
+                [InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")]
+            ]))
         return
     if action == "start_squad":
         if run:
