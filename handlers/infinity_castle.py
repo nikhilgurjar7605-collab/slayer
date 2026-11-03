@@ -5,6 +5,7 @@ from datetime import datetime
 from html import escape
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from utils.database import get_player, update_player, col
@@ -35,6 +36,28 @@ RARITY_WEIGHT = {
     "common": 45, "uncommon": 30, "rare": 16,
     "epic": 7, "legendary": 1.7, "mythic": 0.3,
 }
+
+
+
+async def _safe_edit_message_text(query, text, **kwargs):
+    """Edit text messages; fall back to a new message for photo/media messages."""
+    rendered = str(text or "").strip()
+    if not rendered:
+        rendered = "⚠️ This Castle screen could not be rendered. Please use /castle to reopen it."
+    try:
+        return await _safe_edit_message_text(query,rendered, **kwargs)
+    except BadRequest as exc:
+        error_text = str(exc).lower()
+        if "there is no text in the message to edit" not in error_text:
+            raise
+        # A photo/video message has a caption, not text. Do not call edit_text
+        # again; send a fresh text message and keep the same inline controls.
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return await query.message.reply_text(rendered, **kwargs)
+
 
 
 def _level(player):
@@ -545,14 +568,14 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     player = get_player(user_id)
     if not player:
-        await query.edit_message_text("Create your character first with /start.")
+        await _safe_edit_message_text(query,"Create your character first with /start.")
         return
     action = query.data.split(":", 1)[1]
     run = _find_run(user_id)
 
     # Lobby actions must work even when the player has no active run.
     if action == "menu":
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             "🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb.",
             parse_mode="HTML", reply_markup=_lobby_keyboard()
         )
@@ -564,7 +587,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         run = create_castle_run(user_id, "solo")
         await _start_floor(run, player, None)
         run = _find_run(user_id)
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             _render_run(run, player), parse_mode="HTML", reply_markup=_keyboard(run)
         )
         return
@@ -573,7 +596,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Finish or retreat from your active run first.")
             return
         party = create_castle_party(user_id)
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             "👥 <b>Squad created</b>\n"
             f"Party code: <code>{escape(str(party['party_id']))}</code>\n\n"
             "Share this code with up to 3 players:\n"
@@ -603,7 +626,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if bonuses:
                     lines.append("  " + " · ".join(bonuses))
             lines.append("\nEquip an item with /castle equip ITEM NAME.")
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             "\n".join(lines), parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
@@ -618,7 +641,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, row in enumerate(rows, 1):
             member = get_player(int(row["user_id"])) or {}
             lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {int(row.get('highest_floor', 0))}")
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             "\n".join(lines), parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
@@ -626,7 +649,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     if not run:
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             "No active Castle run. Choose a mode to begin.",
             reply_markup=_lobby_keyboard()
         )
@@ -634,10 +657,10 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     party = get_castle_party(run.get("party_id")) if run.get("party_id") else None
     members = party.get("member_ids", []) if party else [run["user_id"]]
     if user_id not in members:
-        await query.edit_message_text("You are not a member of this Castle run.")
+        await _safe_edit_message_text(query,"You are not a member of this Castle run.")
         return
     if action == "status":
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             _render_run(run, player, party), parse_mode="HTML", reply_markup=_keyboard(run)
         )
         return
@@ -650,7 +673,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             col("castle_parties").update_one(
                 {"party_id": party["party_id"]}, {"$set": {"status": "open"}}
             )
-        await query.edit_message_text("🏃 You retreated. Your Castle run has ended. Use /castle to begin again.")
+        await _safe_edit_message_text(query,"🏃 You retreated. Your Castle run has ended. Use /castle to begin again.")
         return
     if action == "next":
         enemy = run.get("current_enemy") or {}
@@ -661,7 +684,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_castle_run(run["run_id"], {"floor": floor})
         await _start_floor(run, player, party)
         run = _find_run(user_id)
-        await query.edit_message_text(
+        await _safe_edit_message_text(query,
             _render_run(run, player, party, f"⚔️ Floor {floor}: a new enemy appears!"),
             parse_mode="HTML", reply_markup=_keyboard(run)
         )
@@ -754,14 +777,14 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         run = col("castle_runs").find_one({"run_id": run["run_id"]}) or run
         run.pop("_id", None)
         if run.get("status") == "completed":
-            await query.edit_message_text(
+            await _safe_edit_message_text(query,
                 result, parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
                 ]])
             )
         else:
-            await query.edit_message_text(
+            await _safe_edit_message_text(query,
                 _render_run(run, player, party, f"⚔️ You dealt {damage:,} damage.\n{result}"),
                 parse_mode="HTML", reply_markup=_keyboard(run)
             )
@@ -831,7 +854,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {"party_id": party["party_id"]}, {"$set": {"status": "defeated"}}
             )
             notice += "\nThe whole squad has fallen. The leader can use /castle resume."
-    await query.edit_message_text(
+    await _safe_edit_message_text(query,
         _render_run(run, player, party, notice),
         parse_mode="HTML", reply_markup=_keyboard(run)
     )
