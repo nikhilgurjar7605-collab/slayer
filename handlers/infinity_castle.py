@@ -24,6 +24,7 @@ from utils.castle_database import (
 )
 
 MAX_FLOOR = 100
+CASTLE_BANNER_FILE_ID = "AgACAgUAAxkBAAED-jBq6e0vvMC_8MpP_8SpB41xgBYenwAC2RVrG5hBUFflgk-dKbqs_QEAAwIAA3kAAz0E"
 BOSS_FLOORS = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
 ENEMY_NAMES = [
     "Castle Wraith", "Infinity Guardian", "Upper Moon Shade",
@@ -403,7 +404,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action in ("menu", "hub", "help"):
         await update.effective_message.reply_photo(
-            photo="AgACAgUAAxkBAAED-jBq6e0vvMC_8MpP_8SpB41xgBYenwAC2RVrG5hBUFflgk-dKbqs_QEAAwIAA3kAAz0E",
+            photo=CASTLE_BANNER_FILE_ID,
             caption=(
                 "🏯 <b>INFINITY CASTLE</b>\n"
                 "Climb 100 floors, defeat ranked demons, collect Castle gear, "
@@ -971,7 +972,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         await query.message.chat.send_photo(
-            photo="AgACAgUAAxkBAAED-jBq6e0vvMC_8MpP_8SpB41xgBYenwAC2RVrG5hBUFflgk-dKbqs_QEAAwIAA3kAAz0E",
+            photo=CASTLE_BANNER_FILE_ID,
             caption="🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb.",
             parse_mode="HTML", reply_markup=_lobby_keyboard()
         )
