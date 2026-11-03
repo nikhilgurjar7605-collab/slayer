@@ -255,16 +255,17 @@ def _enemy_for(player, floor, party_players, is_squad=False):
     size = max(1, len(members))
     average_hp = sum(max(1, int(p.get("max_hp", p.get("hp", 1)) or 1)) for p in members) / size
     average_power = calculate_party_power(members)["average"]
-    hp = max(int(average_hp * 1.30), int(average_power * 10))
-    hp = int((hp + floor * 1_800) * (1.70 if is_squad else 1.0))
+    # Slightly softer scaling keeps endless floors challenging without
+    # making high-floor encounters feel like damage sponges.
+    hp = max(int(average_hp * 1.20), int(average_power * 8.5))
+    hp = int((hp + floor * 1_400) * (1.55 if is_squad else 1.0))
     if boss:
-        hp = int(hp * 1.60)
+        hp = int(hp * 1.45)
 
-    # Each demon hit should take a noticeable but survivable share of HP.
-    # Upper Moon ranks and bosses further amplify this in the battle engine.
+    # Reduce incoming damage modestly while retaining floor-based pressure.
     average_def = sum(max(0, int(p.get("def_stat", p.get("defense", 0)) or 0)) for p in members) / size
-    target_hit_fraction = 0.055 + floor * 0.00035
-    atk = max(10, int(average_hp * target_hit_fraction * 3 + average_def / 3))
+    target_hit_fraction = 0.045 + floor * 0.00028
+    atk = max(8, int(average_hp * target_hit_fraction * 2.7 + average_def / 4))
 
     rank = "Upper Moon" if floor >= 30 else ("Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
     rank_abilities = {
@@ -1115,7 +1116,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Solo expeditions are independent of squad membership. Keep the
         # player's squad roster untouched; only block a second active run.
         if run:
-            await query.message.reply_text("You already have an active run. Use /castle status.")
+            await query.message.reply_text("You already have an active run. Use /castle status.\nIf you are stuck, use /unstuck to clear the run.")
             return
         run = create_castle_run(user_id, "solo")
         await _start_floor(run, player, None)
