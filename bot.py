@@ -239,6 +239,7 @@ from handlers.image_checker import checkimages
 from handlers.meditate import meditate, meditate_callback, meditate_react_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
+from handlers.infinity_castle import castle, castle_callback, demonlevel
 
 from handlers.skilltree import (skilltree, skilltree_owned, skillbuy, skilllist,
                                  skillinfo, skills, skilltree_buy_callback,
@@ -1078,6 +1079,13 @@ def main():
     scheduler.add_job(update_stock_prices, 'interval', minutes=5)  # Wall Street style: prices update every 5 min
     scheduler.start()
     # Ensure forge and updates are added only once
+    # Infinity Castle commands and dedicated callback namespace.
+    app.add_handler(CommandHandler('castle', castle))
+    app.add_handler(CommandHandler('demonlevel', demonlevel))
+    # Group 1 prevents the character-creation ConversationHandler fallback
+    # in group 0 from swallowing Castle callbacks.
+    app.add_handler(CallbackQueryHandler(castle_callback, pattern=r'^castle:'), group=1)
+
     app.add_handler(CommandHandler('forge', forge_command))
     app.add_handler(CallbackQueryHandler(forge_callback, pattern=r'^forge_'))
     app.add_handler(CommandHandler('sword', sword_command))
