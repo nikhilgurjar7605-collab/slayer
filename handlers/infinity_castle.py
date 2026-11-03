@@ -866,13 +866,28 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Reuse the leader's existing open squad instead of generating a
         # different invite code whenever Create Squad is tapped again.
         party = col("castle_parties").find_one(
-            {"leader_id": user_id, "status": "open"},
-            sort=[("created_at", -1)]
+            {"owner_id": user_id},
+            sort=[("created_at", 1)]
         )
-        if not party:
-            party = create_castle_party(user_id)
-        else:
+        if party:
             party.pop("_id", None)
+            if party.get("status") not in ("open", "running"):
+                col("castle_parties").update_one(
+                    {"party_id": party["party_id"]},
+                    {"$set": {
+                        "leader_id": user_id, "member_ids": [user_id],
+                        "status": "open", "updated_at": datetime.utcnow()
+                    }}
+                )
+                party = get_castle_party(party["party_id"])
+        else:
+            party = create_castle_party(user_id)
+            col("castle_parties").update_one(
+                {"party_id": party["party_id"]},
+                {"$set": {"owner_id": user_id, "original_owner_id": user_id}}
+            )
+            party["owner_id"] = user_id
+            party["original_owner_id"] = user_id
         await _safe_castle_edit(query,
             "👥 <b>Your Castle Squad</b>\n"
             f"Party code: <code>{escape(str(party['party_id']))}</code>\n\n"
@@ -897,22 +912,62 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if old_party and old_party.get("party_id") == target_id:
             await _safe_castle_edit(query, "✅ You are already in that squad.", parse_mode="HTML", reply_markup=_lobby_keyboard())
             return
-        if old_party:
-            if old_party.get("status") != "open" or int(old_party.get("leader_id", 0)) == user_id:
-                await _safe_castle_edit(query, "⚠️ You cannot switch from a running squad or leave a squad you lead. Your membership is unchanged.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+        # If this is the squad's original owner returning, restore the
+        # owner/leader title and keep the acting leader as a normal member.
+        reclaiming_own_squad = int(target_party.get("owner_id", target_party.get("original_owner_id", 0)) or 0) == user_id
+        if reclaiming_own_squad:
+            if old_party and old_party.get("status") != "open":
+                await _safe_castle_edit(query, "⚠️ Finish the current squad battle before switching squads.", parse_mode="HTML", reply_markup=_lobby_keyboard())
                 return
-            col("castle_parties").update_one(
-                {"party_id": old_party["party_id"], "status": "open"},
-                {"$pull": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
-            )
-        joined = add_castle_party_member(target_id, user_id)
-        if not joined:
-            # Best-effort rollback so a full/closed target does not strand the player.
             if old_party:
                 col("castle_parties").update_one(
                     {"party_id": old_party["party_id"], "status": "open"},
-                    {"$addToSet": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
+                    {"$pull": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
                 )
+            acting_leader = int(target_party.get("leader_id", 0))
+            col("castle_parties").update_one(
+                {"party_id": target_id, "status": "open", "owner_id": user_id},
+                {"$set": {"leader_id": user_id, "updated_at": datetime.utcnow()},
+                 "$addToSet": {"member_ids": acting_leader}}
+            )
+            joined = True
+        else:
+            if old_party:
+                if old_party.get("status") != "open":
+                    await _safe_castle_edit(query, "⚠️ You cannot switch while your current squad is running. Your membership is unchanged.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+                    return
+                if int(old_party.get("leader_id", 0)) == user_id:
+                    eligible = [int(uid) for uid in old_party.get("member_ids", []) if int(uid) != user_id]
+                    if not eligible:
+                        await _safe_castle_edit(query, "⚠️ Add at least one member before transferring squad leadership.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+                        return
+                    new_leader = eligible[0]
+                    col("castle_parties").update_one(
+                        {"party_id": old_party["party_id"], "status": "open", "leader_id": user_id},
+                        {"$set": {"leader_id": new_leader, "owner_id": user_id,
+                                  "original_owner_id": user_id, "updated_at": datetime.utcnow()},
+                         "$pull": {"member_ids": user_id}}
+                    )
+                else:
+                    col("castle_parties").update_one(
+                        {"party_id": old_party["party_id"], "status": "open"},
+                        {"$pull": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
+                    )
+            joined = add_castle_party_member(target_id, user_id)
+        if not joined:
+            # Best-effort rollback so a full/closed target does not strand the player.
+            if old_party:
+                if int(old_party.get("leader_id", 0)) != user_id and int(old_party.get("owner_id", 0) or 0) == user_id:
+                    col("castle_parties").update_one(
+                        {"party_id": old_party["party_id"], "status": "open"},
+                        {"$set": {"leader_id": user_id, "updated_at": datetime.utcnow()},
+                         "$addToSet": {"member_ids": user_id}}
+                    )
+                else:
+                    col("castle_parties").update_one(
+                        {"party_id": old_party["party_id"], "status": "open"},
+                        {"$addToSet": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
+                    )
             await _safe_castle_edit(query, "❌ That squad became full or started. Your previous squad membership was restored.", parse_mode="HTML", reply_markup=_lobby_keyboard())
             return
         new_party = get_castle_party(target_id) or target_party
@@ -957,7 +1012,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         for uid in member_ids:
             member = get_player(uid) or {}
-            role = "Leader" if uid == leader_id else "Member"
+            owner_id = int(party.get("owner_id", party.get("original_owner_id", leader_id)) or leader_id)
+            role = "Owner" if uid == owner_id else ("Acting Leader" if uid == leader_id else "Member")
             lines.append(f"• {escape(str(member.get('name', f'Player {uid}')))} — {role}")
         buttons = []
         if party.get("status") == "open" and leader_id == user_id:
