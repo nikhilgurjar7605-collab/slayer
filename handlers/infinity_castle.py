@@ -1536,12 +1536,15 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     damage = int((player_atk + weapon_bonus + accessory_bonus + demon_bonus + random.randint(0, max(2, player_atk // 3))) * weapon_multiplier * accessory_multiplier * technique_multiplier * (1.5 if critical else 1.0))
     damage = max(1, damage)
     expected_enemy_hp = int(enemy["hp"])
+    enemy_hp_before = expected_enemy_hp
     if not apply_castle_enemy_damage(run["run_id"], expected_enemy_hp, damage):
         await query.message.reply_text("Another squad action updated this enemy first. Tap Status and try again.")
         return
     run = col("castle_runs").find_one({"run_id": run["run_id"]}) or run
     run.pop("_id", None)
     enemy = run.get("current_enemy") or {}
+    enemy_hp_after = max(0, int(enemy.get("hp", 0)))
+    enemy_damage_dealt = min(enemy_hp_before, damage)
     if int(enemy.get("hp", 0)) <= 0:
         result = await _complete_enemy(run, player, party)
         run = col("castle_runs").find_one({"run_id": run["run_id"]}) or run
@@ -1590,7 +1593,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         0.25, 1 - max(0, min(0.60, reduction))
     )
     enemy_damage = max(1, int(base_damage * damage_multiplier))
+    player_hp_before = current_hp
     current_hp = max(0, current_hp - enemy_damage)
+    player_hp_after_hit = current_hp
     regen = 0
     if str(player.get("faction", "")).lower() == "demon" and current_hp > 0:
         regen = min(
@@ -1612,7 +1617,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚡ {escape(str(player.get('style') or 'Special Technique'))}"
         if is_technique else ("🛡️ Guard stance" if is_guard else "⚔️ Basic attack")
     )
-    notice = f"{action_label}: {damage:,} damage. Enemy counterattacked for {enemy_damage:,}."
+    notice = (
+        f"{action_label}\\n"
+        f"🗡️ Damage dealt: <b>{enemy_damage_dealt:,}</b> | Demon HP: "
+        f"<b>{enemy_hp_before:,} → {enemy_hp_after:,}</b>\\n"
+        f"💥 Damage received: <b>{enemy_damage:,}</b> | Your HP: "
+        f"<b>{player_hp_before:,} → {player_hp_after_hit:,}</b>"
+    )
     if is_technique:
         notice += f" Spent {technique_cost} STA."
     if is_guard:
