@@ -364,20 +364,27 @@ def get_castle_party(party_id):
 
 
 def add_castle_party_member(party_id, user_id, max_members=4):
+    """Join only if the player has no other open/running Castle squad."""
     col = _col("castle_parties")
     party = col.find_one({"party_id": str(party_id), "status": "open"})
     if not party:
         return False
-    members = party.get("member_ids", [])
     user_id = int(user_id)
-    if user_id in members:
+    members = [int(uid) for uid in party.get("member_ids", [])]
+    if user_id in members or int(party.get("leader_id", 0)) == user_id:
         return True
-    if len(members) >= max(1, min(4, int(max_members))):
+    # Enforce one squad per player across both open and active co-op parties.
+    existing = col.find_one({
+        "$or": [{"member_ids": user_id}, {"leader_id": user_id}],
+        "status": {"$in": ["open", "running"]},
+    })
+    if existing:
+        return False
+    if len(set(members + [int(party.get("leader_id", 0))])) >= max(1, min(4, int(max_members))):
         return False
     result = col.update_one(
-        {"party_id": str(party_id), "status": "open",
-         "member_ids": members},
-        {"$push": {"member_ids": user_id},
+        {"party_id": str(party_id), "status": "open", "member_ids": party.get("member_ids", [])},
+        {"$addToSet": {"member_ids": user_id},
          "$set": {"updated_at": datetime.utcnow()}},
     )
     return result.modified_count == 1
