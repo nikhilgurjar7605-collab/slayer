@@ -513,7 +513,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🏯 <b>INFINITY CASTLE</b>  ·  <code>THE ENDLESS FORTRESS</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>A labyrinth built to break even the strongest Hashira.</i>\n\n"
-            "⚔️ <b>100 deadly floors</b>\n👹 Ranked demons · Blood Art encounters\n"
+            "⚔️ <b>Endless deadly floors</b>\n👹 Ranked demons · Blood Art encounters\n"
             "🎒 Rare gear · Wisteria supplies\n🤝 Solo climbs or 4-player squad raids\n\n"
             "<b>Choose your path, Slayer.</b>"
         )
