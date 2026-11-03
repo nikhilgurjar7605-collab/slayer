@@ -243,18 +243,24 @@ def combat_status(
         if intel: intel.append("")
         intel.extend(["🐾 PET SUPPORT", pet_detail])
 
-    if intel:
-        quoted = "\n".join(line if line == "" else html.escape(str(line), quote=False) for line in intel)
-        parts.append(f"<blockquote>{quoted}</blockquote>")
-
+    # Keep the live combat feed inside the same native Telegram quote as Battle Intel.
     if log_lines:
         intent = context.user_data.get('enemy_action_description') if context else None
         clean = [
-            line for line in log_lines
+            str(line).replace("*", "").replace("_", "").strip()
+            for line in log_lines
             if "━━━" not in str(line) and "────" not in str(line)
             and (not intent or str(line).replace("*", "").replace("_", "").strip() != str(intent).strip())
         ][-5:]
-        if clean: parts.extend(_html_plain(line) for line in clean)
+        if clean:
+            if intel:
+                intel.append("")
+            intel.append("⚔️ RECENT BATTLE ACTIONS")
+            intel.extend(clean)
+
+    if intel:
+        quoted = "\n".join(line if line == "" else html.escape(str(line), quote=False) for line in intel)
+        parts.append(f"<blockquote>{quoted}</blockquote>")
 
     parts.append("━━━━━━━━━━━━━━━━━━━━")
     parts.append(f"<b>『{_html_plain(player.get('name', 'Slayer'))}』  Lv.{get_level(player['xp'])}</b>")
