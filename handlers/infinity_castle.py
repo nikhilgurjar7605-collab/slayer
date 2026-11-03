@@ -341,11 +341,31 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if _find_run(user_id):
             await update.effective_message.reply_text("Finish or retreat from your active Castle run first.")
             return
+        party_before = get_castle_party(args[1])
         ok = add_castle_party_member(args[1], user_id)
-        await update.effective_message.reply_text(
-            "✅ Joined the squad. The leader can start with /castle start."
-            if ok else "❌ Party not found, already full (4 players), or already started."
-        )
+        if ok:
+            party_after = get_castle_party(args[1])
+            if party_after and int(party_after.get("leader_id", 0)) != user_id:
+                joined_player = player.get("name", f"Player {user_id}")
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(party_after["leader_id"]),
+                        text=(
+                            "👥 <b>New Castle squad member!</b>\\n"
+                            f"<b>{escape(str(joined_player))}</b> joined your squad.\\n"
+                            f"Squad size: <b>{len(party_after.get('member_ids', []))}/4</b>"
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    logger.exception("Could not notify Castle squad leader about join")
+            await update.effective_message.reply_text(
+                "✅ You joined the squad! The leader has been notified."
+            )
+        else:
+            await update.effective_message.reply_text(
+                "❌ Party not found, already full (4 players), or already started."
+            )
         return
 
     if action == "start":
@@ -738,7 +758,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     party = get_castle_party(run.get("party_id")) if run.get("party_id") else None
-    members = party.get("member_ids", []) if party else [run["user_id"]]
+    members = (
+        list(dict.fromkeys(
+            [int(party.get("leader_id", 0))] +
+            [int(uid) for uid in party.get("member_ids", [])]
+        ))
+        if party else [int(run["user_id"])]
+    )
     if user_id not in members:
         await _safe_castle_edit(query, "You are not a member of this Castle run.")
         return
