@@ -157,7 +157,7 @@ from handlers.challenge import (challenge, duel_accept_callback, duel_decline_ca
                                   duel_attack, duel_technique_menu, duel_use_form,
                                   duel_art_callback, duel_view,
                                   duel_items_menu, duel_use_item, duel_surrender, duel_back)
-from handlers.market import market, market_list, unlist, markethistory, market_buy
+from handlers.market import market as player_market, market_list, unlist, markethistory, market_buy
 from handlers.bank import bank, deposit, withdraw, bankupgrade, banktax
 from handlers.bank_interest import setinterest, interestinfo, claiminterest
 from handlers.worldbank import (
@@ -188,7 +188,7 @@ from handlers.broadcast import bcast, handle_broadcast_callback
 from handlers.admin_add import add
 from handlers.blackmarket import blackmarket, bm_buy, bm_auto_open, bm_auto_close, expire_bm_items
 from handlers.stockmarket import (
-    market, stockbuy, stocksell, portfolio, stockhistory,
+    market as stock_market, stockbuy, stocksell, portfolio, stockhistory,
     marketcrash, marketboom, marketreset, update_stock_prices,
     log_stock_event, nudge_price, STOCKS,
     stock_view_callback, stock_buy_callback, stock_sell_callback,
@@ -328,6 +328,9 @@ async def on_startup(app: Application):
         BotCommand("profile", "View your character"),
         BotCommand("inventory", "Open your inventory"),
         BotCommand("shop", "Browse the shop"),
+        BotCommand("market", "Browse player listings"),
+        BotCommand("stockmarket", "Open the stock exchange"),
+        BotCommand("portfolio", "View your stock portfolio"),
         BotCommand("party", "Manage your party"),
         BotCommand("skilltree", "View your skill tree"),
         BotCommand("castle", "Enter the Infinity Castle"),
@@ -861,7 +864,7 @@ def main():
         ('equip',           equip),
         ('use',             use),
         ('inventory',       inventory),
-        ('market',          market),
+        ('market',          player_market),
         ('auction',         auction),
         ('gift',            gift),
         ('give',            give),
@@ -1011,7 +1014,7 @@ def main():
         ('addblackmarket',  addblackmarket),
         ('removeblackmarket', removeblackmarket),
         # ── Stock market ──────────────────────────────────────────────────
-        ('market',        market),
+        ('stockmarket',   stock_market),
         ('stockbuy',      stockbuy),
         ('stocksell',     stocksell),
         ('portfolio',     portfolio),
