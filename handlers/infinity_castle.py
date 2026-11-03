@@ -669,6 +669,9 @@ async def _complete_enemy(run, player, party):
         # Demon progression is faction-only; ordinary XP and Yen are untouched.
         if str(member.get("faction", "")).lower() == "demon":
             add_demon_xp(uid, 20 + floor * 2 + (50 if enemy.get("boss") else 0))
+        castle_coins = 20 + floor * 5 + (100 if enemy.get("boss") else 0)
+        col("players").update_one({"user_id": uid}, {"$inc": {"castle_coins": castle_coins}})
+        rewards.append(f"🪙 {escape(str(member.get('name', 'Player')))}: +{castle_coins} Castle Coins")
         item = _pick_equipment(uid, floor, member, enemy)
         # Equipment is rare on ordinary floors; every tenth-floor boss has a drop.
         chance = 1.0 if enemy.get("boss") else 0.08
