@@ -1,4 +1,5 @@
 import logging
+from html import escape
 from telegram.error import BadRequest, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import ContextTypes
@@ -141,40 +142,32 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"{player['style_emoji']} Techniques", callback_data='profile_techniques'),
+            InlineKeyboardButton(f"{player.get('style_emoji', '⚔️')} Techniques", callback_data='profile_techniques'),
             InlineKeyboardButton("📊 Stats", callback_data='profile_more_info'),
-        ]
+        ],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data='goto_menu')],
     ])
 
     stars = player.get("stars", 0)
     stars_str = f"┣ ✮ 𝙎𝙩𝙖𝙧𝙨 : {stars} ⭐\n" if stars > 0 else ""
 
     text = (
-        f"┏━━━━━━━━━━━━━━━━\n"
-        f"┣ ✮ 𝙉𝙖𝙢𝙚 : {uname_display}\n"
-        f"┣ ✮ 𝙄𝘿 : {user_id}\n"
-        f"┣ ✮ 𝙇𝙚𝙫𝙚𝙡 : {level}\n"
-        f"┣ ✮ 𝙀𝙭𝙥 : {player['xp']:,}\n"
-        f"┣ ✮ 𝙍𝙖𝙣𝙠 : {player['rank']} {player['rank_kanji']}\n"
-        f"┣ ✮ 𝙎𝙩𝙮𝙡𝙚 : {player['style_emoji']} {player['style']}\n"
-        f"{stars_str}"
-        #f"┣ ✮ 𝘽𝙖𝙡𝙖𝙣𝙘𝙚 : {player['yen']:,}¥\n"
-        f"┗━━━━━━━━━━━━━━━━\n"
-        f"╰➤🧭 𝘾𝙪𝙧𝙧𝙚𝙣𝙩 𝙇𝙤𝙘𝙖𝙩𝙞𝙤𝙣 : 「{location}」\n"
-        f"╰➤📖 𝙊𝙧𝙞𝙜𝙞𝙣 : {player.get('story', '—')}\n"
+        "👤 <b>SLAYER PROFILE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>{escape(str(uname_display))}</b>\n"
+        f"🎖️ Rank: <b>{escape(str(player.get('rank', 'Unranked')))} {escape(str(player.get('rank_kanji', '')))}</b>\n"
+        f"⭐ Level: <b>{level}</b>  •  XP: <b>{int(player.get('xp', 0) or 0):,}</b>\n"
+        f"{escape(str(player.get('style_emoji', '⚔️')))} Style: <b>{escape(str(player.get('style', 'Unselected')))}</b>\n"
+        f"📍 Location: <b>{escape(str(location))}</b>\n"
+        f"📖 Origin: <b>{escape(str(player.get('story', '—')))}</b>\n"
         f"{clan_line}"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        #f"❤️ 𝗛𝗣 : {player['hp']}/{player['max_hp']}\n"
-        #f"{p_bar}\n"
-        #f"🌀 𝗦𝗧𝗔 : {player['sta']}/{player['max_sta']}\n"
-       # f"{s_bar}\n"
-       # f"▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁\n"
-        f"╰➤☠️ 𝙎𝙡𝙖𝙞𝙣 : {player['demons_slain']}  |  💀 𝘿𝙚𝙖𝙩𝙝𝙨 : {player['deaths']}\n"
-        f"╰➤📜 𝙈𝙞𝙨𝙨𝙞𝙤𝙣𝙨 : {player['missions_done']}\n"
-        #f"╰➤💠 𝙎𝙠𝙞𝙡𝙡 𝙋𝙩𝙨 : {player.get('skill_points', 0)} SP\n"
-        f"╰➤🍖 𝘿𝙚𝙫𝙤𝙪𝙧 : {player.get('devour_stacks', 0)}/20\n"
-        f"╰➤{mark_label} : {mark}\n"
-        f"▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"☠️ Demons slain: <b>{int(player.get('demons_slain', 0) or 0):,}</b>\n"
+        f"💀 Deaths: <b>{int(player.get('deaths', 0) or 0):,}</b>\n"
+        f"📜 Missions: <b>{int(player.get('missions_done', 0) or 0):,}</b>\n"
+        f"🍖 Devour: <b>{int(player.get('devour_stacks', 0) or 0)}/20</b>\n"
+        f"{mark_label}: <b>{mark}</b>"
+        + (f"\n⭐ Stars: <b>{int(player.get('stars', 0) or 0)}</b>" if int(player.get('stars', 0) or 0) > 0 else "")
     )
 
     banner_media, banner_is_gif = _profile_banner_media(player)

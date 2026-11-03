@@ -286,15 +286,16 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     boss_icon    = " ☠️" if enemy.get('is_boss') else ""
 
     lines = [
-        f"{event_label} // {event_desc}",
-        f"⚠️ Threat: {threat}  •  Rec. Lv. {enemy_level}",
+        f"🌲 *While walking, you encountered {enemy['name']}!*{boss_icon}",
+        f"📜 The people of this area signify it as a *{threat} Threat* of *Level {enemy_level}*.",
+        f"_{event_desc}_",
         "",
         "╭──────────────────────────╮",
         f"│ 👹 *{enemy['name'].upper()}*{boss_icon}",
-        f"│ └─ Lvl: {enemy_level}  |  ❤️ {enemy['hp']:,}/{enemy['hp']:,}",
+        f"│ └─ Threat: {threat}  •  Lv. {enemy_level}",
         "├──────────────────────────┤",
         f"│ 🗡️ *『{player['name']}』*",
-        f"│ └─ Lvl: {player_level}  |  ❤️ {player['hp']:,}/{player['max_hp']:,}",
+        f"│ └─ Lv. {player_level}  |  ❤️ {player['hp']:,}/{player['max_hp']:,}",
         "╰──────────────────────────╯",
         ""
     ]
