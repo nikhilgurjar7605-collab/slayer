@@ -1028,7 +1028,7 @@ async def _complete_enemy(run, player, party):
         "checkpoint_floor": min(MAX_FLOOR, floor + 1),
     })
     message = f"✅ Floor {floor} cleared!"
-    message += f" 🏁 Floor checkpoint saved! Your next resume point is Floor {min(MAX_FLOOR, floor + 1)}.\\n"
+    message += f" 🏁 Floor checkpoint saved! Your next resume point is Floor {min(MAX_FLOOR, floor + 1)}.\n"
     if rewards:
         message += "\n🎁 Equipment earned:\n" + "\n".join(rewards)
     return message + "\nContinue to the next floor when ready."
