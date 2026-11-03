@@ -225,6 +225,9 @@ def _enemy_for(player, floor, party_players):
     hp = min(10_000, floor_hp)
     if boss:
         hp = min(10_000, int(hp * 1.15))
+    # Squad encounters have double demon HP (up to 20,000).
+    if len(party_players) > 1:
+        hp = min(20_000, hp * 2)
 
     # Make demons a little more threatening, without returning to the old
     # excessive attack scaling. Squad size and player level still matter.
@@ -839,6 +842,11 @@ async def _start_floor(run, player, party):
     })
     for member in members:
         record_castle_progress(member["user_id"], floor, run.get("mode", "solo"))
+    if party:
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"]},
+            {"$max": {"highest_floor": floor}, "$set": {"updated_at": datetime.utcnow()}},
+        )
 
 
 def _pick_equipment(user_id, floor, player, enemy):
