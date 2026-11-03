@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 import logging
 from functools import wraps
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +311,15 @@ def _keyboard(run, is_party_member=True, user_id=None):
         InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop"),
     ])
     return InlineKeyboardMarkup(rows)
+
+
+def _squad_share_url(party_id):
+    """Open Telegram's share sheet with a ready-to-send Castle squad invite."""
+    invite_text = (
+        "Join my Infinity Castle squad! Open the Demon Slayer bot and use:\\n"
+        f"/castle join {party_id}"
+    )
+    return "https://t.me/share/url?" + urlencode({"url": "https://t.me", "text": invite_text})
 
 
 def _lobby_keyboard():
@@ -1056,17 +1066,24 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             party["owner_id"] = user_id
             party["original_owner_id"] = user_id
+        members = _party_players(party)
+        total_power = sum(calculate_player_power(member) for member in members)
+        squad_name = escape(str(party.get("squad_name") or "Unnamed Squad"))
         await _safe_castle_edit(query,
-            "👥 <b>Your Castle Squad</b>\n"
-            f"Party code: <code>{escape(str(party['party_id']))}</code>\n\n"
-            "This invite code stays the same while this squad is open. "
-            "Share it with up to 3 players:\n"
-            f"<code>/castle join {escape(str(party['party_id']))}</code>\n\n"
-            "When everyone has joined, the leader can start the co-op battle below.",
+            "🏯 <b>INFINITY CASTLE · SQUAD LOBBY</b>\\n"
+            "━━━━━━━━━━━━━━━━━━━━\\n"
+            f"👥 <b>{squad_name}</b>\\n"
+            f"🆔 Invite code: <code>{escape(str(party['party_id']))}</code>\\n"
+            f"⚔️ Squad Power: <b>{total_power:,}</b>\\n"
+            f"🧑‍🤝‍🧑 Members: <b>{len(members)}/4</b>\\n\\n"
+            "<b>HOW TO INVITE</b>\\n"
+            "Share the invite message with up to 3 friends. They can join before the leader starts the expedition.\\n\\n"
+            "💡 The squad code stays the same while this squad is open.",
             parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👥 My Squad", callback_data="castle:my_squad")],
-                [InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")],
-                [InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")]
+                [InlineKeyboardButton("📨 Share Squad Invite", url=_squad_share_url(party["party_id"]))],
+                [InlineKeyboardButton("👥 Squad Dashboard", callback_data="castle:my_squad")],
+                [InlineKeyboardButton("⚔️ Start Expedition", callback_data="castle:start_squad")],
+                [InlineKeyboardButton("🏯 Castle Hub", callback_data="castle:menu")]
             ])
         )
         return
@@ -1155,7 +1172,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "my_squad":
         party = _find_user_party(user_id)
         # Fallback for older leader-created records whose member_ids field
-        # may be missing or malformed: always show the leader's saved open squad.
+        # may be missing or malformed: always show the leader's saved squad.
         if not party:
             party = col("castle_parties").find_one(
                 {"leader_id": user_id, "status": {"$in": ["open", "running"]}},
@@ -1171,38 +1188,53 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         leader_id = int(party.get("leader_id", 0))
         member_ids = list(dict.fromkeys([leader_id] + [int(uid) for uid in party.get("member_ids", [])]))
+        owner_id = int(party.get("owner_id", party.get("original_owner_id", leader_id)) or leader_id)
+        members = {int(member["user_id"]): member for member in _party_players(party)}
+        total_power = sum(calculate_player_power(member) for member in members.values())
+        status = str(party.get("status", "unknown")).lower()
+        status_label = {"open": "🟢 Recruiting", "running": "⚔️ Expedition active",
+                        "completed": "🏆 Completed", "defeated": "💀 Squad defeated"}.get(status, status.title())
         lines = [
-            "👥 <b>MY INFINITY CASTLE SQUAD</b>",
-            f"Squad: <b>{escape(str(party.get('squad_name') or 'Unnamed Squad'))}</b>",
-            f"Party code: <code>{escape(str(party.get('party_id', '')))}</code>",
-            f"Status: <b>{escape(str(party.get('status', 'unknown')).title())}</b>",
-            f"Members: <b>{len(member_ids)}/4</b>",
-            "",
+            "🏯 <b>INFINITY CASTLE · SQUAD</b>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"👥 <b>{escape(str(party.get('squad_name') or 'Unnamed Squad'))}</b>",
+            f"🆔 Code: <code>{escape(str(party.get('party_id', '')))}</code>",
+            f"📍 Status: <b>{status_label}</b>",
+            f"🧑‍🤝‍🧑 Roster: <b>{len(member_ids)}/4</b>  ·  ⚔️ Power: <b>{total_power:,}</b>",
+            "", "<b>YOUR SQUAD MEMBERS</b>",
         ]
-        for uid in member_ids:
-            member = get_player(uid) or {}
-            owner_id = int(party.get("owner_id", party.get("original_owner_id", leader_id)) or leader_id)
-            role = "Owner" if uid == owner_id else ("Acting Leader" if uid == leader_id else "Member")
-            lines.append(f"• {escape(str(member.get('name', f'Player {uid}')))} — {role}")
+        for index, uid in enumerate(member_ids, 1):
+            member = members.get(uid) or get_player(uid) or {}
+            role = "👑 Owner" if uid == owner_id else ("⭐ Leader" if uid == leader_id else "⚔️ Member")
+            level = _level(member) if member else 1
+            power = calculate_player_power(member) if member else 0
+            hp = max(0, int(member.get("hp", 0) or 0))
+            max_hp = max(1, int(member.get("max_hp", hp or 1) or 1))
+            lines.append(
+                f"{index}. <b>{escape(str(member.get('name', f'Player {uid}')))}</b> · {role}\\n"
+                f"   Lv.{level}  |  Power {power:,}  |  HP {hp:,}/{max_hp:,}\\n"
+                f"   <code>{_bar(hp, max_hp, 12)}</code>"
+            )
         lines.extend([
-            "",
-            "🎁 <b>Squad gifting</b>",
-            "Share recovery supplies with a teammate:",
-            "<code>/castle gift USER_ID bandage 1</code>",
-            "Items: bandage, medkit, tonic (up to 10 at once).",
-            "",
-            "Rename your squad: <code>/castle name Squad Name</code> (leader only).",
+            "", "🎁 <b>TEAM SUPPLIES</b>",
+            "Gift recovery items: <code>/castle gift USER_ID bandage 1</code>",
+            "Rename squad: <code>/castle name Squad Name</code> (leader only).",
         ])
         buttons = []
-        if party.get("status") == "open" and leader_id == user_id:
-            buttons.append([InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")])
-            if len(member_ids) == 1:
-                buttons.append([InlineKeyboardButton("🚪 Disband Empty Squad", callback_data="castle:leave_squad")])
-        if party.get("status") == "open" and leader_id != user_id:
-            buttons.append([InlineKeyboardButton("🚪 Leave Squad", callback_data="castle:leave_squad")])
+        if status == "open":
+            buttons.append([InlineKeyboardButton("📨 Share Invite", url=_squad_share_url(party["party_id"]))])
+            if leader_id == user_id:
+                buttons.append([InlineKeyboardButton("⚔️ Start Expedition", callback_data="castle:start_squad")])
+                if len(member_ids) == 1:
+                    buttons.append([InlineKeyboardButton("🚪 Disband Empty Squad", callback_data="castle:leave_squad")])
+            else:
+                buttons.append([InlineKeyboardButton("🚪 Leave Squad", callback_data="castle:leave_squad")])
+        if status == "running":
+            buttons.append([InlineKeyboardButton("⚔️ Open Active Battle", callback_data="castle:status")])
+        buttons.append([InlineKeyboardButton("↻ Refresh Squad", callback_data="castle:my_squad")])
         buttons.append([InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop"),
                         InlineKeyboardButton("🏯 Castle Hub", callback_data="castle:menu")])
-        await _safe_castle_edit(query, "\n".join(lines), parse_mode="HTML",
+        await _safe_castle_edit(query, "\\n".join(lines), parse_mode="HTML",
                                 reply_markup=InlineKeyboardMarkup(buttons))
         return
     if action == "leave_squad":
