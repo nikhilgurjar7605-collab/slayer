@@ -129,6 +129,12 @@ def _apply_timed_recovery(user_id, player):
     )
     player["hp"] = min(max_hp, int(player.get("hp", 0) or 0) + max(0, hp_gain))
     player["sta"] = min(max_sta, int(player.get("sta", 0) or 0) + max(0, sta_gain))
+    if hp_gain > 0:
+        active_run = _find_run(user_id)
+        if active_run:
+            hp_map = active_run.get("player_hp_by_user", {})
+            hp_map[str(user_id)] = player["hp"]
+            save_castle_run(active_run["run_id"], {"player_hp_by_user": hp_map})
     return bool(hp_gain or sta_gain)
 
 
