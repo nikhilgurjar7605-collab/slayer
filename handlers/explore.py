@@ -898,15 +898,14 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data[f'battle_skill_lines_{user_id}'] = skill_lines
     status_text = combat_status(
         player, state, ally, log_lines=opening_log, turn=1, context=context
-            parse_mode='HTML'
     )
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
         text=status_text,
         image_category="enemies",
         image_key=state['enemy_name'],
-        reply_markup=build_combat_keyboard(has_ally=bool(ally))
-            parse_mode='HTML'
+        reply_markup=build_combat_keyboard(has_ally=bool(ally)),
+        parse_mode='HTML'
     )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -991,7 +990,7 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=status_text,
             image_category="enemies",
             image_key=state_s['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_s))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_s)),
             parse_mode='HTML'
         )
         return
@@ -1067,7 +1066,7 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=status_text,
             image_category="enemies",
             image_key=state_upd['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_upd))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_upd)),
             parse_mode='HTML'
         )
         return
@@ -1158,8 +1157,8 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=status_text,
         image_category="enemies",
         image_key=state_updated['enemy_name'],
-        reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
-            parse_mode='HTML'
+        reply_markup=build_combat_keyboard(has_ally=bool(ally_updated)),
+        parse_mode='HTML'
     )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1403,7 +1402,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="Frozen! Cannot use techniques this turn!\n\n" + status_text,
             image_category="enemies",
             image_key=state_fr['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_fr))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_fr)),
             parse_mode='HTML'
         )
         return
@@ -1418,7 +1417,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=status_text,
             image_category="enemies",
             image_key=state_sk['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_sk))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_sk)),
             parse_mode='HTML'
         )
         return
@@ -1498,7 +1497,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=status_text,
             image_category="enemies",
             image_key=state_updated['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_updated)),
             parse_mode='HTML'
         )
         return
@@ -1588,8 +1587,8 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=status_text,
         image_category="enemies",
         image_key=state_updated['enemy_name'],
-        reply_markup=build_combat_keyboard(has_ally=bool(ally_updated))
-            parse_mode='HTML'
+        reply_markup=build_combat_keyboard(has_ally=bool(ally_updated)),
+        parse_mode='HTML'
     )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1653,7 +1652,7 @@ async def use_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_category="items",
         image_key=item_name,
         reply_markup=build_combat_keyboard(has_ally=bool(ally)),
-            parse_mode='HTML'
+        parse_mode='HTML'
     )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1751,7 +1750,7 @@ async def switch_ally(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_category="ui",
         image_key="party",
         reply_markup=build_combat_keyboard(has_ally=True),
-            parse_mode='HTML'
+        parse_mode='HTML'
     )
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1776,7 +1775,7 @@ async def dismiss_ally_callback(update: Update, context: ContextTypes.DEFAULT_TY
         image_category="ui",
         image_key="party",
         reply_markup=build_combat_keyboard(has_ally=False),
-            parse_mode='HTML'
+        parse_mode='HTML'
     )
 
 async def ally_fainted_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1833,7 +1832,7 @@ async def flee(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=status_text,
             image_category="enemies",
             image_key=state['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally)),
             parse_mode='HTML'
         )
 
@@ -2060,7 +2059,7 @@ async def handle_defeat(query, user_id, player, log, context=None):
             text=status_text,
             image_category="enemies",
             image_key=state_r['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_r))
+            reply_markup=build_combat_keyboard(has_ally=bool(ally_r)),
             parse_mode='HTML'
         )
         return
