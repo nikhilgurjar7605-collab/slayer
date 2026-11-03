@@ -758,7 +758,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             image_category="enemies",
             image_key=enemy['name'],
             reply_markup=build_encounter_keyboard(),
-            parse_mode=None
+            parse_mode='HTML'
         )
     else:
         await send_photo_message(
@@ -767,7 +767,7 @@ async def explore(update: Update, context: ContextTypes.DEFAULT_TYPE):
             image_category="enemies",
             image_key=enemy['name'],
             reply_markup=build_encounter_keyboard(),
-            parse_mode=None
+            parse_mode='HTML'
         )
 
 # ─────────────────────────────────────────────────────────────────────────
