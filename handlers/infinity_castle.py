@@ -519,9 +519,8 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action in ("solo", "enter"):
-        if _find_user_party(user_id):
-            await update.effective_message.reply_text("You are already in a Castle squad. Use /castle my_squad or open the Castle Hub and tap My Squad.")
-            return
+        # Solo mode is available even while the player belongs to a squad.
+        # Squad membership is left unchanged; only an existing active run blocks it.
         if _find_run(user_id):
             await update.effective_message.reply_text("You already have an active Castle run. Use /castle status.")
             return
