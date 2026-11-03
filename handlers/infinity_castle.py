@@ -218,21 +218,19 @@ def _enemy_for(player, floor, party_players):
     floor = max(1, min(MAX_FLOOR, int(floor)))
     boss = floor in BOSS_FLOORS
     name = BOSS_NAMES.get(floor) if boss else random.choice(ENEMY_NAMES)
-    size = max(1, len(party_players))
 
-    # Floor 5 starts at 1,000 HP; every following floor adds exactly 500.
-    # Floors 1-4 scale gently so the progression reaches the requested value.
-    floor_hp = 1000 + (floor - 5) * 500 if floor >= 5 else floor * 200
-    # Small co-op bonus only; preserve the requested floor progression as the
-    # base value. Bosses get a modest premium without excessive multipliers.
-    hp = int(floor_hp * (1 + 0.08 * max(0, size - 1)))
+    # Exact floor progression requested: floor 5 = 1,000 HP, +500 per
+    # floor thereafter. The hard 10,000 HP cap is reached at floor 23.
+    floor_hp = floor * 200 if floor < 5 else 1000 + (floor - 5) * 500
+    hp = min(10_000, floor_hp)
     if boss:
-        hp = int(hp * 1.15)
+        hp = min(10_000, int(hp * 1.15))
 
-    # Slightly stronger enemy attacks than the previous balance, while keeping
-    # adaptive player-level scaling and a modest boss advantage.
+    # Make demons a little more threatening, without returning to the old
+    # excessive attack scaling. Squad size and player level still matter.
+    size = max(1, len(party_players))
     base_atk = 12 + level * 1.8 + floor * 0.22
-    atk = max(6, int(base_atk * (1 + 0.12 * (size - 1)) * 0.95))
+    atk = max(6, int(base_atk * (1 + 0.12 * (size - 1)) * 1.10))
     if boss:
         atk = int(atk * 1.30)
 
@@ -441,7 +439,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _start_floor(run, player, None)
         run = _find_run(user_id)
         await update.effective_message.reply_text(
-            _render_run(run, player), parse_mode="HTML", reply_markup=_keyboard(run)
+            _render_run(run, player), parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
         )
         return
 
@@ -634,7 +632,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         run = _find_run(user_id)
         await update.effective_message.reply_text(
             _render_run(run, player, party, "The squad run has begun! Any squad member can take a turn."),
-            parse_mode="HTML", reply_markup=_keyboard(run)
+            parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
         )
         return
 
@@ -944,7 +942,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _start_floor(run, player, None)
         run = _find_run(user_id)
         await _safe_castle_edit(query, 
-            _render_run(run, player), parse_mode="HTML", reply_markup=_keyboard(run)
+            _render_run(run, player), parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
         )
         return
     if action == "squad":
@@ -1232,7 +1230,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_castle_edit(
             query,
             _render_run(run, player, party, "🤝 Co-op battle started! Every squad member can take a turn."),
-            parse_mode="HTML", reply_markup=_keyboard(run)
+            parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
         )
         notified_ids = []
         dm_failed_ids = []
@@ -1412,7 +1410,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if action == "status":
         await _safe_castle_edit(query, 
-            _render_run(run, player, party), parse_mode="HTML", reply_markup=_keyboard(run)
+            _render_run(run, player, party), parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
         )
         return
     if action == "retreat":
@@ -1458,7 +1456,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_castle_edit(
             query,
             _render_run(run, player, party, f"⚔️ Floor {floor}: the next chamber opens!"),
-            parse_mode="HTML", reply_markup=_keyboard(run)
+            parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
         )
         return
     if action not in ("attack", "technique", "guard"):
@@ -1645,7 +1643,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             notice += "\nThe whole squad has fallen. The leader can use /castle resume."
     await _safe_castle_edit(query, 
         _render_run(run, player, party, notice),
-        parse_mode="HTML", reply_markup=_keyboard(run)
+        parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
     )
 
 
