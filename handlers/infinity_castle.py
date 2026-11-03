@@ -864,7 +864,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         player = get_player(user_id) or player
         shop_text, supplies = _castle_shop_text(user_id)
         await _safe_castle_edit(
-            query, shop_text + f"\\n\\n✅ Purchased <b>{item['name']}</b>.",
+            query, shop_text + f"\n\n✅ Purchased <b>{item['name']}</b>.",
             parse_mode="HTML", reply_markup=_castle_shop_keyboard(supplies)
         )
         return
@@ -904,7 +904,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         player = get_player(user_id) or player
         shop_text, supplies = _castle_shop_text(user_id)
         await _safe_castle_edit(
-            query, shop_text + f"\\n\\n✅ Used <b>{item['name']}</b>: +{restored} {field.upper()}.",
+            query, shop_text + f"\n\n✅ Used <b>{item['name']}</b>: +{restored} {field.upper()}.",
             parse_mode="HTML", reply_markup=_castle_shop_keyboard(supplies)
         )
         return
