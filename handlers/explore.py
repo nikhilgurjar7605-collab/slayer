@@ -285,30 +285,23 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     event_desc   = preview['event_description'] or "The area is quiet..."
     boss_icon    = " ☠️" if enemy.get('is_boss') else ""
 
-    # Telegram encounter caption: plain text because this card is sent with parse_mode=None.
-    lines = [
-        f"🌲 WHILE WALKING, YOU ENCOUNTERED {enemy['name']}!{boss_icon}",
-        "",
-        f"📜 The people of this area signify it as a {threat} Threat of Level {enemy_level}.",
-        f"{event_desc}",
-        "",
-        "╭──────────────────────────╮",
-        f"│ 👹 {enemy['name'].upper()}{boss_icon}",
-        f"│ └─ Threat: {threat}  •  Level {enemy_level}",
-        "├──────────────────────────┤",
-        f"│ 🗡️ 『{player['name']}』",
-        f"│ └─ Lv. {player_level}  |  ❤️ {player['hp']:,}/{player['max_hp']:,}",
-        "╰──────────────────────────╯",
-        ""
-    ]
+    # Compact Telegram HTML caption. Escape dynamic names to keep HTML valid.
+    from html import escape
+    enemy_name = escape(str(enemy['name']))
+    player_name = escape(str(player['name']))
+    threat_text = escape(str(threat))
+    event_text = escape(str(event_desc))
+    pet_name = escape(str(active_pet['name'])) if active_pet else ""
+    pet_emoji = PETS.get(active_pet['name'], {}).get('emoji', '🐾') if active_pet else "🐾"
 
-    # ── Footer: active pet status + reward preview ───────────────────────
-    if active_pet:
-        pet_emoji = PETS.get(active_pet['name'], {}).get('emoji', '🐾')
-        pet_line = f"{pet_emoji} {active_pet['name']}: Active"
-    else:
-        pet_line = "🐾 No pet active"
-    lines.append(f"{pet_line}  //  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥")
+    lines = [
+        f"🌲 <b>You encountered {enemy_name}!</b>{boss_icon}",
+        f"📜 {threat_text} Threat • Level {enemy_level}",
+        event_text,
+        f"👹 <b>{enemy_name.upper()}</b>  |  🗡️ {player_name}",
+        f"❤️ {player['hp']:,}/{player['max_hp']:,} HP  •  Lv. {player_level}",
+        f"{pet_emoji} {pet_name + ' • Active' if active_pet else 'No pet'}  |  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥"
+    ]
     return "\n".join(lines)
 
 # ─────────────────────────────────────────────────────────────────────────
