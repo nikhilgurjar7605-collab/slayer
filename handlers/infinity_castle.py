@@ -402,10 +402,13 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action in ("menu", "hub", "help"):
-        await update.effective_message.reply_text(
-            "🏯 <b>INFINITY CASTLE</b>\n"
-            "Climb 100 floors, defeat ranked demons, collect Castle gear, "
-            "and face Muzan at the summit.\n\nChoose your expedition:",
+        await update.effective_message.reply_photo(
+            photo="AgACAgUAAxkBAAED-jBq6e0vvMC_8MpP_8SpB41xgBYenwAC2RVrG5hBUFflgk-dKbqs_QEAAwIAA3kAAz0E",
+            caption=(
+                "🏯 <b>INFINITY CASTLE</b>\n"
+                "Climb 100 floors, defeat ranked demons, collect Castle gear, "
+                "and face Muzan at the summit.\n\nChoose your expedition:"
+            ),
             parse_mode="HTML", reply_markup=_lobby_keyboard()
         )
         return
@@ -963,8 +966,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Lobby actions must work even when the player has no active run.
     if action == "menu":
-        await _safe_castle_edit(query, 
-            "🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb.",
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.chat.send_photo(
+            photo="AgACAgUAAxkBAAED-jBq6e0vvMC_8MpP_8SpB41xgBYenwAC2RVrG5hBUFflgk-dKbqs_QEAAwIAA3kAAz0E",
+            caption="🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb.",
             parse_mode="HTML", reply_markup=_lobby_keyboard()
         )
         return
