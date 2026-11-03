@@ -216,7 +216,7 @@ def combat_status(
         if effects:
             intel.append(" | ".join(effects))
         if pressure.get('region_flavor'):
-            intel.append(_html_plain(pressure['region_flavor']))
+            intel.append(str(pressure['region_flavor']))
 
     if state.get('is_boss'):
         if intel:
@@ -227,18 +227,18 @@ def combat_status(
     if event_label:
         if intel:
             intel.append("")
-        intel.append(_html_plain(event_label))
+        intel.append(str(event_label))
         intent = context.user_data.get('enemy_action_description') if context else None
         event_detail = intent or state.get('event_description')
         if event_detail:
-            intel.append(_html_plain(event_detail))
+            intel.append(str(event_detail))
 
     user_id = player.get('user_id')
     skill_lines = context.user_data.get(f"battle_skill_lines_{user_id}", []) if context else []
     if skill_lines:
         if intel:
             intel.append("")
-        intel.extend(_html_plain(line) for line in skill_lines)
+        intel.extend(str(line) for line in skill_lines)
 
     active_pet = get_active_pet(user_id) if user_id else None
     if active_pet:
@@ -248,7 +248,7 @@ def combat_status(
             pet_parts.append(f"ATK +{int(pet_bonuses['atk_pct'] * 100)}%")
         if pet_bonuses.get('def_pct'):
             pet_parts.append(f"DEF +{int(pet_bonuses['def_pct'] * 100)}%")
-        pet_detail = f"{_html_plain(active_pet.get('name', 'Active Pet'))} is active"
+        pet_detail = f"{active_pet.get('name', 'Active Pet')} is active"
         if pet_parts:
             pet_detail += " • " + " | ".join(pet_parts)
         if intel:
@@ -258,9 +258,9 @@ def combat_status(
     if intel:
         quoted = "\n".join(line if line == "" else html.escape(str(line), quote=False) for line in intel)
         parts.append(f"<blockquote>{quoted}</blockquote>")
-
     if log_lines:
-        clean = [line for line in log_lines if "━━━" not in str(line) and "────" not in str(line)][-5:]
+        intent = context.user_data.get('enemy_action_description') if context else None
+        clean = [line for line in log_lines if "━━━" not in str(line) and "────" not in str(line) and (not intent or str(line).replace('*', '').replace('_', '').strip() != str(intent).strip())][-5:]
         if clean:
             parts.extend(_html_plain(line) for line in clean)
 
@@ -557,8 +557,7 @@ def _safe_get_skills(user_id):
         from handlers.skilltree import get_player_skills as _gps_safe
         result = _gps_safe(user_id)
         return result if isinstance(result, list) else []
-    except Exception:
-        return []
+    except Exception:        return []
 
 def _safe_get_bonuses(user_id, context=None):
     try:
@@ -858,7 +857,6 @@ async def prize(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=build_encounter_keyboard(),
         parse_mode='HTML'
     )
-
 # ─────────────────────────────────────────────────────────────────────────
 #  FIGHT (start combat)
 # ─────────────────────────────────────────────────────────────────────────
@@ -916,7 +914,7 @@ async def fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await edit_photo_caption(
         context, query.message.chat_id, query.message.message_id,
-        text=intro + status_text,
+        text=status_text,
         image_category="enemies",
         image_key=state['enemy_name'],
         reply_markup=build_combat_keyboard(has_ally=bool(ally)),
@@ -1157,8 +1155,7 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await handle_victory(query, user_id, get_player(user_id), get_battle_state(user_id), log, context)
             return
     new_player_hp = _apply_turn_end_player_sustain(user_id, player, new_player_hp, bonuses, context, log)
-    update_player(user_id, hp=max(0, new_player_hp))
-    append_battle_log(user_id, log)
+    update_player(user_id, hp=max(0, new_player_hp))    append_battle_log(user_id, log)
     if new_player_hp <= 0:
         await handle_defeat(query, user_id, player, log, context)
         return
@@ -1457,8 +1454,7 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ally and state.get('ally_hp', 0) > 0:
         ally_dmg = ally['str_stat'] + random.randint(5, 12)
         current_hp = max(0, current_hp - ally_dmg)
-        update_battle_enemy_hp(user_id, current_hp)
-        log.append(f"{ally['name']} follows up - {ally_dmg} damage!")
+        update_battle_enemy_hp(user_id, current_hp)        log.append(f"{ally['name']} follows up - {ally_dmg} damage!")
         if current_hp <= 0:
             await handle_victory(query, user_id, player, get_battle_state(user_id), log, context)
             return
@@ -1757,8 +1753,7 @@ async def switch_ally(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{fe} {ally['name']} | Lv.{get_level(ally['xp'])}\n"
         f"❤️ HP: {ally['hp']}/{ally['max_hp']}\n"
         f"💨 Style: {ally['style_emoji']} {ally['style']}\n\n"
-        f"_Your ally fights alongside you!_"
-    )
+        f"_Your ally fights alongside you!_"    )
     turn = context.user_data.get('turn', 1)
     status_text = combat_status(player, state, ally, log_lines=None, turn=turn, context=context)
     await edit_photo_caption(
@@ -2058,56 +2053,3 @@ async def handle_victory(query, user_id, player, state, log, context=None):
     )
 
 # ─────────────────────────────────────────────────────────────────────────
-#  DEFEAT
-# ─────────────────────────────────────────────────────────────────────────
-async def handle_defeat(query, user_id, player, log, context=None):
-    if context and context.user_data.get(f'pet_rebirth_{user_id}'):
-        context.user_data.pop(f'pet_rebirth_{user_id}')
-        revive_hp = int(player['max_hp'] * 0.30)
-        update_player(user_id, hp=revive_hp)
-        player = get_player(user_id)
-        log.append(f'🔥 *PHOENIX REBIRTH!* Survived with {revive_hp} HP!')
-        state_r = get_battle_state(user_id)
-        ally_r = get_active_ally(state_r)
-        append_battle_log(user_id, log)
-        turn = context.user_data.get('turn', 1)
-        status_text = combat_status(player, state_r, ally_r, log_lines=log, turn=turn, context=context)
-        await edit_photo_caption(
-            context, query.message.chat_id, query.message.message_id,
-            text=status_text,
-            image_category="enemies",
-            image_key=state_r['enemy_name'],
-            reply_markup=build_combat_keyboard(has_ally=bool(ally_r)),
-            parse_mode='HTML'
-        )
-        return
-    log.append(f"💀 *{player['name']}* has fallen...")
-    xp_loss = max(0, player['xp'] - 200)
-    new_deaths = player['deaths'] + 1
-    new_hp = int(player['max_hp'] * 0.5)
-    update_player(user_id, hp=new_hp, sta=player['max_sta'], xp=xp_loss, deaths=new_deaths)
-    append_battle_log(user_id, log)
-    clear_battle_state(user_id)
-    clear_status_effects(user_id)
-    if hasattr(context, 'user_data'):
-        context.user_data.pop(f'battle_ctx_{user_id}', None)
-        context.user_data.pop('_counter_ready', None)
-        context.user_data.pop('pressure', None)
-        context.user_data.pop('enemy_action_description', None)
-        context.user_data.pop(f'battle_skill_lines_{user_id}', None)
-        context.user_data['combo'] = 0
-        context.user_data['boss_enraged'] = False
-    defeat_text = (
-        f"💔 *DEFEATED*\n"
-        f"`{'-' * 30}`\n"
-        f"❌ *Penalties*\n"
-        f"   ⭐ XP: `-200`\n"
-        f"   💀 Deaths: `{new_deaths}`\n\n"
-        f"✅ *Recovery*\n"
-        f"   ❤️ HP: `50%` restored\n"
-        f"   🌀 STA: fully restored\n"
-        f"`{'-' * 30}`\n\n"
-        f"_You wake up at the safe house..._\n"
-        f"✨ Use `/explore` to try again!"
-    )
-    await edit_photo_caption(
