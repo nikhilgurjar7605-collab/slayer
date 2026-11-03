@@ -791,6 +791,27 @@ async def _start_floor(run, player, party):
             hp_map[str(uid)] = min(max_hp, int(hp_map.get(str(uid), member.get("hp", 1))) + restored)
             update_player(uid, hp=hp_map[str(uid)])
             room_notice += f"\n{member.get('name', 'Player')} recovered HP."
+    # Recovery caches can appear unexpectedly while exploring. A found cache
+    # is shared fairly: every active expedition member receives the same drop.
+    if floor not in BOSS_FLOORS and random.random() < 0.18:
+        item_key = random.choices(
+            ["bandage", "medkit", "tonic"], weights=[50, 15, 35], k=1
+        )[0]
+        item = CASTLE_RECOVERY_ITEMS[item_key]
+        quantity = random.choices([1, 2], weights=[85, 15], k=1)[0]
+        room_notice += (
+            f"\\n\\n🎁 <b>HIDDEN SUPPLY CACHE!</b> "
+            f"The squad discovered {quantity} × {item['name']}!"
+        )
+        for member in members:
+            uid = int(member["user_id"])
+            col("castle_supplies").update_one(
+                {"user_id": uid, "item_id": item_key},
+                {"$inc": {"quantity": quantity},
+                 "$set": {"updated_at": datetime.utcnow()}},
+                upsert=True,
+            )
+
     if room_type == "combat":
         enemy = _enemy_for(player, floor, members)
         chapter = (floor - 1) // 10 + 1
