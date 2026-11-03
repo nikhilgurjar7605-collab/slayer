@@ -122,15 +122,16 @@ def _enemy_for(player, floor, party_players):
     level = difficulty["enemy_level"]
     boss = floor in BOSS_FLOORS
     name = BOSS_NAMES.get(floor) if boss else random.choice(ENEMY_NAMES)
-    base_hp = 65 + level * 17 + floor * 9
-    base_atk = 8 + level * 2 + floor // 3
+    # Castle encounters should feel like boss-rush RPG fights, not one-hit mobs.
+    # Player level and floor both matter, while co-op enemies scale for the full team.
+    base_hp = 95 + level * 25 + floor * 13
+    base_atk = 16 + level * 3 + floor // 2
     size = max(1, len(party_players))
-    # Team scaling increases enemy durability and attack gently, not 4x.
-    hp = int(base_hp * (1 + 0.48 * (size - 1)))
-    atk = int(base_atk * (1 + 0.12 * (size - 1)))
+    hp = int(base_hp * (1 + 0.58 * (size - 1)))
+    atk = int(base_atk * (1 + 0.22 * (size - 1)))
     if boss:
-        hp = int(hp * 2.2)
-        atk = int(atk * 1.35)
+        hp = int(hp * 2.5)
+        atk = int(atk * 1.55)
     # Rank is a separate enemy classification, not the enemy's Demon Level.
     # Floor 10 begins the Lower Moon encounters; Floor 30 introduces Upper Moons.
     rank = "Upper Moon" if floor >= 30 else ("Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
@@ -325,8 +326,11 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Party code: <code>{party['party_id']}</code>\n"
             "Share this code. Up to 4 players can join with:\n"
             f"<code>/castle join {party['party_id']}</code>\n"
-            "Leader starts the run using <code>/castle start</code>.",
+            "The leader can start the co-op battle using the button below.",
             parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")
+            ]]),
         )
         return
 
@@ -643,10 +647,44 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Party code: <code>{escape(str(party['party_id']))}</code>\n\n"
             "Share this code with up to 3 players:\n"
             f"<code>/castle join {escape(str(party['party_id']))}</code>\n\n"
-            "When everyone has joined, start the run with /castle start.",
-            parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
-            ]])
+            "When everyone has joined, the leader can start the co-op battle below.",
+            parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")],
+                [InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")]
+            ])
+        )
+        return
+    if action == "start_squad":
+        party = col("castle_parties").find_one({"leader_id": user_id, "status": "open"})
+        if not party:
+            await _safe_castle_edit(query, "You don't have an open squad to start. Create one from the Castle Hub.")
+            return
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open"},
+            {"$addToSet": {"member_ids": user_id},
+             "$set": {"updated_at": datetime.utcnow()}}
+        )
+        party = get_castle_party(party["party_id"])
+        members = _party_players(party)
+        if not members:
+            await _safe_castle_edit(query, "No valid squad members found. Ask everyone to join again.")
+            return
+        run = create_castle_run(user_id, "squad", party["party_id"])
+        hp_map = {
+            str(member["user_id"]): int(member.get("hp", member.get("max_hp", 100)))
+            for member in members
+        }
+        save_castle_run(run["run_id"], {"player_hp_by_user": hp_map})
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open"},
+            {"$set": {"status": "running", "updated_at": datetime.utcnow()}}
+        )
+        await _start_floor(run, player, party)
+        run = _find_run(user_id)
+        await _safe_castle_edit(
+            query,
+            _render_run(run, player, party, "🤝 Co-op battle started! Every squad member can take a turn."),
+            parse_mode="HTML", reply_markup=_keyboard(run)
         )
         return
     if action == "equipment":
