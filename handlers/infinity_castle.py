@@ -281,11 +281,12 @@ def _enemy_for(player, floor, party_players, is_squad=False):
     }
 
 
-def _bar(value, maximum, width=12):
+def _bar(value, maximum, width=10):
+    """Return a compact, consistent HP bar for Telegram messages."""
     maximum = max(1, int(maximum or 1))
     value = max(0, min(maximum, int(value or 0)))
     filled = int(round((value / maximum) * width))
-    return "█" * filled + "░" * (width - filled)
+    return "▰" * filled + "▱" * (width - filled)
 
 
 def _keyboard(run, is_party_member=True, user_id=None):
