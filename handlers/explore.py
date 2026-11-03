@@ -277,32 +277,33 @@ def _threat_emoji(threat: str) -> str:
 
 def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
                           active_pet: Optional[Dict] = None) -> str:
-    """Render the compact wild-encounter card shown on /explore."""
-    enemy_level  = max(1, int(preview.get('recommended_level', 1) or 1))
-    player_level = get_level(player['xp'])
-    threat       = preview['threat']
-    event_label  = preview['event_label'] or "🌲 *WILD ENCOUNTER*"
-    event_desc   = preview['event_description'] or "The area is quiet..."
-    boss_icon    = " ☠️" if enemy.get('is_boss') else ""
-
-    # Compact Telegram HTML caption. Escape dynamic names to keep HTML valid.
+    """Render a compact Telegram HTML wild-encounter caption."""
     from html import escape
-    enemy_name = escape(str(enemy['name']))
-    player_name = escape(str(player['name']))
-    threat_text = escape(str(threat))
-    event_text = escape(str(event_desc))
-    pet_name = escape(str(active_pet['name'])) if active_pet else ""
-    pet_emoji = PETS.get(active_pet['name'], {}).get('emoji', '🐾') if active_pet else "🐾"
+
+    enemy_level = max(1, int(preview.get('recommended_level', 1) or 1))
+    player_level = get_level(player['xp'])
+    threat = escape(str(preview.get('threat', 'UNKNOWN')))
+    enemy_name = escape(str(enemy.get('name', 'Unknown Enemy')))
+    player_name = escape(str(player.get('name', 'Slayer')))
+    event_desc = escape(str(preview.get('event_description') or 'The area is quiet...'))
+    boss_icon = " ☠️" if enemy.get('is_boss') else ""
+
+    if active_pet:
+        pet_name = escape(str(active_pet.get('name', 'Pet')))
+        pet_emoji = PETS.get(active_pet.get('name'), {}).get('emoji', '🐾')
+        pet_line = f"{pet_emoji} {pet_name} Active"
+    else:
+        pet_line = "🐦‍⬛ Kasugai Crow: Active"
 
     lines = [
-        f"🌲 <b>You encountered {enemy_name}!</b>{boss_icon}",
-        f"📜 {threat_text} Threat • Level {enemy_level}",
-        event_text,
-        f"👹 <b>{enemy_name.upper()}</b>  |  🗡️ {player_name}",
-        f"❤️ {player['hp']:,}/{player['max_hp']:,} HP  •  Lv. {player_level}",
-        f"{pet_emoji} {pet_name + ' • Active' if active_pet else 'No pet'}  |  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥"
+        f"🌲 <b>While walking, you encountered {enemy_name}!</b>{boss_icon}",
+        f"📜 <b>{threat} Threat • Level {enemy_level}</b>",
+        event_desc,
+        f"👹 <b>{enemy_name.upper()}</b>  ⚔️ {player_name}",
+        f"❤️ {player['hp']:,}/{player['max_hp']:,} HP • Lv. {player_level}",
+        f"{pet_line} • ⭐ {enemy['xp']:,} XP • 💰 {enemy['yen']:,}¥",
     ]
-    return "\n".join(lines)
+    return "\\n".join(lines)
 
 # ─────────────────────────────────────────────────────────────────────────
 #  YOUR EXISTING HELPER FUNCTIONS (unchanged)
