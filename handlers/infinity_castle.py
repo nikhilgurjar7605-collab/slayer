@@ -215,73 +215,35 @@ def _find_run(user_id):
 def _enemy_for(player, floor, party_players):
     difficulty = calculate_difficulty(player, floor, party_players)
     level = difficulty["enemy_level"]
+    floor = max(1, min(MAX_FLOOR, int(floor)))
     boss = floor in BOSS_FLOORS
     name = BOSS_NAMES.get(floor) if boss else random.choice(ENEMY_NAMES)
-    # Castle encounters should feel like boss-rush RPG fights, not one-hit mobs.
-    # Player level and floor both matter, while co-op enemies scale for the full team.
-    base_hp = 95 + level * 25 + floor * 13
-    base_atk = 16 + level * 3 + floor // 2
     size = max(1, len(party_players))
 
-    # Scale HP against the actual squad's damage output as well as level.
-    # This stops high-stat/equipped players from deleting ordinary demons in
-    # one hit, while keeping larger squads facing a meaningfully tougher pool.
-    attack_values = []
-    for member in (party_players or [player]):
-        member_atk = max(1, int(member.get("str_stat", member.get("atk", member.get("attack", 10))) or 10))
-        member_uid = member.get("user_id")
-        if member_uid is not None:
-            try:
-                from handlers.skilltree import get_player_skills, get_active_skill_bonuses
-                bonuses = get_active_skill_bonuses(
-                    get_player_skills(int(member_uid)), user_id=int(member_uid)
-                )
-                member_atk = int(member_atk * (1 + float(bonuses.get("atk_pct", 0) or 0)))
-            except Exception:
-                pass
-        try:
-            for sword in SHOP_ITEMS.get("swords", []):
-                if sword.get("name") == member.get("equipped_sword"):
-                    member_atk += int(sword.get("atk_bonus", 0))
-                    break
-        except Exception:
-            pass
-        for slot in ("castle_equipped_weapon", "castle_equipped_accessory"):
-            equipped_name = member.get(slot)
-            if equipped_name and member_uid is not None:
-                gear = col("castle_equipment").find_one({
-                    "user_id": int(member_uid), "name": equipped_name, "equipped": True
-                })
-                if gear:
-                    member_atk += int(gear.get("stats", {}).get("atk_bonus", 0))
-        if str(member.get("faction", "")).lower() == "demon":
-            member_atk += int(member_atk * float(member.get("demon_art_bonus", 0) or 0))
-        attack_values.append(max(1, member_atk))
+    # Use an arithmetic progression across the 100 Castle floors.
+    # HP(floor) = a + (floor - 1)d, where a=250 and the final term is 10,000.
+    # The AP sum identity is S_n = n/2(a + l); for an individual floor we
+    # use its AP term, not the sum of all floor HP values.
+    first_floor_hp = 250
+    final_floor_hp = 10_000
+    step = (final_floor_hp - first_floor_hp) / max(1, MAX_FLOOR - 1)
+    floor_hp = int(round(first_floor_hp + (floor - 1) * step))
 
-    strongest_attack = max(attack_values or [10])
-    squad_attack = sum(attack_values or [10])
-
-    # Target roughly 3-4 ordinary hits from the strongest member, or a
-    # coordinated 2-3 hits per squad member in total. The adaptive enemy level
-    # already incorporates level, HP, defence, stamina, skills and gear power.
-    # This avoids one-shot kills without making low-stat players face endgame HP.
-    hit_target_hp = int(strongest_attack * 3.5)
-    squad_target_hp = int(squad_attack * (2.25 + 0.15 * max(0, size - 1)))
-    hp = max(
-        int(base_hp * (1 + 0.58 * (size - 1))),
-        hit_target_hp,
-        squad_target_hp,
-    )
-    # Raise the Castle's baseline threat: enemies hit harder and have
-    # more endurance, while adaptive stats still protect low-level players.
-    hp = int(hp * 1.35)
-    atk = int(base_atk * (1 + 0.22 * (size - 1)) * 1.20)
+    # Keep co-op scaling modest and preserve the hard 10k cap, including bosses.
+    squad_scale = 1 + 0.12 * max(0, size - 1)
+    hp = min(final_floor_hp, max(100, int(floor_hp * squad_scale)))
     if boss:
-        hp = int(hp * 2.5)
-        atk = int(atk * 1.55)
+        hp = min(final_floor_hp, int(hp * 1.35))
+
+    # Adaptive level still considers player stats/gear, but enemy damage is
+    # deliberately reduced to avoid overwhelming players on higher floors.
+    base_atk = 10 + level * 1.6 + floor * 0.18
+    atk = max(5, int(base_atk * (1 + 0.10 * (size - 1)) * 0.80))
+    if boss:
+        atk = int(atk * 1.25)
+
     # Rank is a separate enemy classification, not the enemy's Demon Level.
-    # Floor 10 begins the Lower Moon encounters; Floor 30 introduces Upper Moons.
-    rank = "Upper Moon" if floor >= 30 else ("Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
+    rank = "Upper Moon" if floor >= 30 else ( "Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
     rank_abilities = {
         "Demon": "Savage Claws",
         "Elite": "Blood Art Strike",
@@ -291,7 +253,7 @@ def _enemy_for(player, floor, party_players):
     return {
         "name": name, "level": level, "demon_level": level, "hp": hp, "max_hp": hp,
         "atk": atk, "boss": boss, "difficulty": difficulty["tier"],
-        "rank": rank, "ability": "Muzan's Final Judgment" if floor == 100 else (rank_abilities.get(rank) if boss else rank_abilities.get(rank)),
+        "rank": rank, "ability": "Muzan's Final Judgment" if floor == 100 else rank_abilities.get(rank),
     }
 
 
