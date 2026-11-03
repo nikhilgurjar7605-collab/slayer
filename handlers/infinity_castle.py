@@ -24,9 +24,7 @@ from utils.castle_database import (
     grant_castle_equipment, record_castle_clear, record_castle_progress,
 )
 
-MAX_FLOOR = None  # Infinity Castle has no final floor.
 CASTLE_BANNER_FILE_ID = "AgACAgUAAxkBAAED-jBq6e0vvMC_8MpP_8SpB41xgBYenwAC2RVrG5hBUFflgk-dKbqs_QEAAwIAA3kAAz0E"
-BOSS_FLOORS = set()  # Boss floors are generated dynamically every 10 floors.
 ENEMY_NAMES = [
     "Castle Wraith", "Infinity Guardian", "Upper Moon Shade",
     "Void Stalker", "Demon General",
@@ -943,7 +941,7 @@ async def _start_floor(run, player, party):
             room_notice += f"\n{member.get('name', 'Player')} recovered HP."
     # Recovery caches can appear unexpectedly while exploring. A found cache
     # is shared fairly: every active expedition member receives the same drop.
-    if floor not in BOSS_FLOORS and random.random() < 0.18:
+    if floor % 10 != 0 and random.random() < 0.18:
         item_key = random.choices(
             ["bandage", "medkit", "tonic"], weights=[50, 15, 35], k=1
         )[0]
