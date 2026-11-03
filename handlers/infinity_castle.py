@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 from utils.database import get_player, update_player, col
 from utils.helpers import get_level
-from config import SHOP_ITEMS, BOT_USERNAME
+from config import SHOP_ITEMS, BOT_USERNAME, OWNER_ID
 from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from utils.castle_database import (
     create_castle_run, get_active_castle_run, save_castle_run, apply_castle_enemy_damage,
@@ -249,25 +249,24 @@ def _enemy_for(player, floor, party_players, is_squad=False):
     boss = floor in BOSS_FLOORS
     name = BOSS_NAMES.get(floor) if boss else random.choice(ENEMY_NAMES)
 
-    # Exact floor progression requested: floor 5 = 1,000 HP, +500 per
-    # floor thereafter. The hard 10,000 HP cap is reached at floor 23.
-    floor_hp = floor * 200 if floor < 5 else 1000 + (floor - 5) * 500
-    hp = min(10_000, floor_hp)
+    # Scale demon durability to the actual expedition roster. The old 10k
+    # solo / 20k squad caps became trivial once players reached 20k-30k HP.
+    # Power and average max HP keep the challenge relevant to geared accounts;
+    # floor pressure adds a steady climb all the way to Floor 100.
+    members = [p for p in (party_players or [player]) if p]
+    size = max(1, len(members))
+    average_hp = sum(max(1, int(p.get("max_hp", p.get("hp", 1)) or 1)) for p in members) / size
+    average_power = calculate_party_power(members)["average"]
+    hp = max(int(average_hp * 1.30), int(average_power * 10))
+    hp = int((hp + floor * 1_800) * (1.70 if is_squad else 1.0))
     if boss:
-        hp = min(10_000, int(hp * 1.15))
-    # Squad encounters have double demon HP (up to 20,000).
-    if is_squad:
-        hp = min(20_000, hp * 2)
+        hp = int(hp * 1.60)
 
-    # Make demons a little more threatening, without returning to the old
-    # excessive attack scaling. Squad size and player level still matter.
-    size = max(1, len(party_players))
-    # Enemy attack scales with Castle depth as well as demon level.
-    # Early floors stay manageable; late floors become substantially more dangerous.
-    base_atk = 12 + level * 1.8 + floor * 0.75
-    atk = max(6, int(base_atk * (1 + 0.12 * (size - 1)) * 1.10))
-    if boss:
-        atk = int(atk * 1.30)
+    # Each demon hit should take a noticeable but survivable share of HP.
+    # Upper Moon ranks and bosses further amplify this in the battle engine.
+    average_def = sum(max(0, int(p.get("def_stat", p.get("defense", 0)) or 0)) for p in members) / size
+    target_hit_fraction = 0.055 + floor * 0.00035
+    atk = max(10, int(average_hp * target_hit_fraction * 3 + average_def / 3))
 
     rank = "Upper Moon" if floor >= 30 else ("Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
     rank_abilities = {
@@ -439,12 +438,54 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     logger.info("Castle command received: user_id=%s args=%s", user_id, context.args or [])
+    args = context.args or []
+
+    # Owner-only seasonal reset. Preserve gear, Castle Coins, supplies and ordinary progress.
+    if args and args[0].lower() in ("resetleaderboard", "clearleaderboard"):
+        if user_id != OWNER_ID:
+            await update.effective_message.reply_text("❌ Owner only.")
+            return
+        if len(args) < 2 or args[1].lower() != "confirm":
+            await update.effective_message.reply_text(
+                "⚠️ <b>RESET INFINITY CASTLE SEASON?</b>\n\n"
+                "This clears solo and squad leaderboard records, Castle highest-floor "
+                "and clear counters, and all active/checkpointed Castle runs. "
+                "Squad rosters stay intact and return to the lobby.\n\n"
+                "Castle equipment, Castle Coins, supplies, player levels and all "
+                "non-Castle progress are preserved.\n\n"
+                "To confirm, send: <code>/castle resetleaderboard confirm</code>",
+                parse_mode="HTML",
+            )
+            return
+        leaderboard_count = col("castle_leaderboards").count_documents({})
+        run_count = col("castle_runs").count_documents({})
+        col("castle_leaderboards").delete_many({})
+        col("castle_runs").delete_many({})
+        col("castle_encounters").delete_many({})
+        col("players").update_many(
+            {},
+            {"$set": {"castle_highest_floor": 0, "castle_total_clears": 0}},
+        )
+        col("castle_parties").update_many(
+            {},
+            {"$set": {"highest_floor": 0, "status": "open", "ready_ids": [],
+                      "updated_at": datetime.utcnow()}},
+        )
+        await update.effective_message.reply_text(
+            "✅ <b>INFINITY CASTLE SEASON RESET</b>\n\n"
+            f"🏆 Leaderboard records cleared: <b>{leaderboard_count}</b>\n"
+            f"⚔️ Castle runs/checkpoints cleared: <b>{run_count}</b>\n"
+            "📍 Every player starts again from Floor 1.\n"
+            "🎒 Gear, Castle Coins and supplies were preserved.",
+            parse_mode="HTML",
+        )
+        return
+
     player = get_player(user_id)
     if not player:
         await update.effective_message.reply_text("Create your character first with /start.")
         return
     _apply_timed_recovery(user_id, player)
-    args = context.args or []
     action = args[0].lower() if args else "menu"
 
 
