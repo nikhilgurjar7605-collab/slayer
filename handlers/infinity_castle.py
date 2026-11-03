@@ -95,8 +95,17 @@ def _party_players(party):
         [int(party.get("leader_id", 0))] +
         [int(uid) for uid in party.get("member_ids", [])]
     ))
-    return [p for uid in member_ids if uid and
-            (p := get_player(uid)) is not None]
+    # Read the latest player documents directly so enemy scaling uses current
+    # stats/equipment rather than a possibly stale in-memory player cache.
+    players = []
+    for uid in member_ids:
+        if not uid:
+            continue
+        member = col("players").find_one({"user_id": uid})
+        if member:
+            member.pop("_id", None)
+            players.append(member)
+    return players
 
 
 CASTLE_RECOVERY_ITEMS = {
@@ -251,10 +260,17 @@ def _enemy_for(player, floor, party_players):
 
     strongest_attack = max(attack_values or [10])
     squad_attack = sum(attack_values or [10])
+
+    # Target roughly 3-4 ordinary hits from the strongest member, or a
+    # coordinated 2-3 hits per squad member in total. The adaptive enemy level
+    # already incorporates level, HP, defence, stamina, skills and gear power.
+    # This avoids one-shot kills without making low-stat players face endgame HP.
+    hit_target_hp = int(strongest_attack * 3.5)
+    squad_target_hp = int(squad_attack * (2.25 + 0.15 * max(0, size - 1)))
     hp = max(
         int(base_hp * (1 + 0.58 * (size - 1))),
-        int(strongest_attack * 5),
-        int(squad_attack * 2.5),
+        hit_target_hp,
+        squad_target_hp,
     )
     atk = int(base_atk * (1 + 0.22 * (size - 1)))
     if boss:
@@ -646,7 +662,15 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _start_floor(run, player, party):
     floor = int(run.get("floor", 1))
-    members = _party_players(party) if party else [player]
+    # Always use fresh DB data when generating an enemy, including solo runs.
+    if party:
+        members = _party_players(party)
+    else:
+        fresh_player = col("players").find_one({"user_id": int(player["user_id"])})
+        if fresh_player:
+            fresh_player.pop("_id", None)
+            player = fresh_player
+        members = [player]
     hp_map = run.get("player_hp_by_user") or {
         str(p["user_id"]): int(p.get("hp", p.get("max_hp", 100))) for p in members
     }
