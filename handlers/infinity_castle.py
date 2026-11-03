@@ -187,15 +187,13 @@ def _render_run(run, player, party=None, notice=None):
     player_max_sta = max(1, int(player.get("max_sta", max(1, player_sta))))
 
     lines = [
-        "🏯 <b>INFINITY CASTLE</b>",
-        f"FLOOR <b>{floor}/{MAX_FLOOR}</b>  <code>{_bar(floor, MAX_FLOOR, 12)}</code>",
-        f"⚔️ {run.get('mode', 'solo').title()}  ·  👥 {len(members)}/4",
-        f"⭐ Lv. <b>{_level(player)}</b>  ·  Power <b>{calculate_player_power(player):,}</b>",
+        "🏯 <b>INFINITY CASTLE</b>  <code>EXPEDITION</code>",
+        f"Floor <b>{floor}/{MAX_FLOOR}</b>  <code>{_bar(floor, MAX_FLOOR, 10)}</code>",
+        f"⚔️ {run.get('mode', 'solo').title()}  ·  👥 {len(members)}/4  ·  ⭐ Lv.{_level(player)}",
+        f"Power <b>{calculate_player_power(player):,}</b>",
         "",
-        f"❤️ <b>{max(0, player_hp):,}/{player_max_hp:,}</b> HP",
-        f"<code>{_bar(player_hp, player_max_hp, 12)}</code>",
-        f"⚡ <b>{player_sta:,}/{player_max_sta:,}</b> STA",
-        f"<code>{_bar(player_sta, player_max_sta, 12)}</code>",
+        f"❤️ <b>{max(0, player_hp):,}/{player_max_hp:,}</b>  <code>{_bar(player_hp, player_max_hp, 10)}</code>",
+        f"⚡ <b>{player_sta:,}/{player_max_sta:,}</b>  <code>{_bar(player_sta, player_max_sta, 10)}</code>",
     ]
     if notice:
         lines.extend(["", f"💬 {escape(str(notice))}"])
@@ -212,14 +210,11 @@ def _render_run(run, player, party=None, notice=None):
         enemy_max_hp = max(1, int(enemy.get("max_hp", 1)))
         enemy_label = "FINAL BOSS" if floor == MAX_FLOOR else ("BOSS" if enemy.get("boss") else "ENEMY")
         lines.extend([
-            "", "━━━━━━━━━━━━━━━━",
-            f"{'☠️' if enemy.get('boss') else '👹'} <b>{enemy_label}</b>",
-            f"<b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b>",
-            f"{escape(str(enemy.get('rank', 'Unknown')))}  ·  Demon Lv. <b>{enemy.get('demon_level', enemy.get('level', 1))}</b>",
-            f"🩸 {escape(str(enemy.get('ability', 'Basic Attack')))}",
-            f"Enemy HP  <b>{enemy_hp:,}/{enemy_max_hp:,}</b>",
-            f"<code>{_bar(enemy_hp, enemy_max_hp, 12)}</code>",
-            "━━━━━━━━━━━━━━━━",
+            "", "⚔️ <b>OPPONENT</b>",
+            f"{'☠️' if enemy.get('boss') else '👹'} <b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b>  ·  {escape(str(enemy.get('rank', 'Unknown')))}",
+            f"Demon Lv. <b>{enemy.get('demon_level', enemy.get('level', 1))}</b>  ·  {escape(str(enemy.get('ability', 'Basic Attack')))}",
+            f"🩸 <b>{enemy_hp:,}/{enemy_max_hp:,}</b>  <code>{_bar(enemy_hp, enemy_max_hp, 10)}</code>",
+            "",
             "<b>YOUR SQUAD</b>",
         ])
         for uid in members:
@@ -602,7 +597,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not player:
         await _safe_castle_edit(query, "Create your character first with /start.")
         return
-    action = query.data.split(":", 1)[1]
+    action = query.data.split(":", 1)[1] if ":" in (query.data or "") else (query.data or "")
     run = _find_run(user_id)
 
     # Lobby actions must work even when the player has no active run.
