@@ -272,7 +272,10 @@ def _enemy_for(player, floor, party_players):
         hit_target_hp,
         squad_target_hp,
     )
-    atk = int(base_atk * (1 + 0.22 * (size - 1)))
+    # Raise the Castle's baseline threat: enemies hit harder and have
+    # more endurance, while adaptive stats still protect low-level players.
+    hp = int(hp * 1.35)
+    atk = int(base_atk * (1 + 0.22 * (size - 1)) * 1.20)
     if boss:
         hp = int(hp * 2.5)
         atk = int(atk * 1.55)
@@ -369,6 +372,8 @@ def _render_run(run, player, party=None, notice=None):
             f"{'☠️' if enemy.get('boss') else '👹'} <b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b>  ·  {escape(str(enemy.get('rank', 'Unknown')))}",
             f"Demon Lv. <b>{enemy.get('demon_level', enemy.get('level', 1))}</b>  ·  {escape(str(enemy.get('ability', 'Basic Attack')))}",
             f"🩸 <b>{enemy_hp:,}/{enemy_max_hp:,}</b>  <code>{_bar(enemy_hp, enemy_max_hp, 10)}</code>",
+            "",
+            f"📖 <b>Chapter {int(enemy.get('chapter', (floor - 1) // 10 + 1))}</b> — {escape(str(enemy.get('story', 'The demon blocks your path.')))}",
             "",
             "<b>YOUR SQUAD</b>",
         ])
@@ -491,6 +496,52 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if action == "gift":
+        if len(args) < 3:
+            await update.effective_message.reply_text(
+                "🎁 Usage: /castle gift USER_ID bandage|medkit|tonic [quantity]"
+            )
+            return
+        try:
+            recipient_id = int(args[1])
+            quantity = max(1, min(10, int(args[3]) if len(args) > 3 else 1))
+        except (TypeError, ValueError):
+            await update.effective_message.reply_text("❌ Enter a valid numeric USER_ID and quantity.")
+            return
+        item_key = args[2].lower()
+        item = CASTLE_RECOVERY_ITEMS.get(item_key)
+        party = _find_user_party(user_id)
+        if not item or not party or recipient_id == user_id:
+            await update.effective_message.reply_text("❌ You and the recipient must be different members of the same Castle squad. Valid gifts: bandage, medkit, tonic.")
+            return
+        party_members = set([int(party.get("leader_id", 0))] + [int(uid) for uid in party.get("member_ids", [])])
+        if recipient_id not in party_members or not get_player(recipient_id):
+            await update.effective_message.reply_text("❌ That player is not a member of your squad.")
+            return
+        consumed = col("castle_supplies").update_one(
+            {"user_id": user_id, "item_id": item_key, "quantity": {"$gte": quantity}},
+            {"$inc": {"quantity": -quantity}, "$set": {"updated_at": datetime.utcnow()}}
+        )
+        if consumed.modified_count != 1:
+            await update.effective_message.reply_text(f"❌ You don't have {quantity} {item['name']}(s).")
+            return
+        col("castle_supplies").update_one(
+            {"user_id": recipient_id, "item_id": item_key},
+            {"$inc": {"quantity": quantity}, "$set": {"updated_at": datetime.utcnow()}},
+            upsert=True
+        )
+        await update.effective_message.reply_text(
+            f"🎁 Gift sent! You gave {quantity} × {item['name']} to your squad member."
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=recipient_id,
+                text=f"🎁 You received {quantity} × {item['name']} from your Castle squad member!"
+            )
+        except Exception:
+            logger.info("Could not DM Castle gift recipient %s", recipient_id)
+        return
+
     if action == "join":
         if len(args) < 2:
             await update.effective_message.reply_text("Usage: /castle join PARTY_CODE")
@@ -504,8 +555,13 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if existing_party.get("party_id") == args[1]:
                 await update.effective_message.reply_text("✅ You are already in this squad. Open /castle and tap My Squad.")
                 return
-            if existing_party.get("status") != "open" or int(existing_party.get("leader_id", 0)) == user_id:
-                await update.effective_message.reply_text("⚠️ You cannot switch squads while your current squad is running, or while you are its leader. Ask the leader to close/recreate the squad first.")
+            if existing_party.get("status") != "open":
+                await update.effective_message.reply_text("⚠️ You cannot switch squads while your current squad is running.")
+                return
+            if int(existing_party.get("leader_id", 0)) == user_id and not [
+                int(uid) for uid in existing_party.get("member_ids", []) if int(uid) != user_id
+            ]:
+                await update.effective_message.reply_text("⚠️ Add at least one squad member first so leadership can be transferred before you join another squad.")
                 return
             await update.effective_message.reply_text(
                 "👥 <b>Switch Castle Squad?</b>\n\n"
@@ -692,7 +748,10 @@ async def _start_floor(run, player, party):
         str(p["user_id"]): int(p.get("hp", p.get("max_hp", 100))) for p in members
     }
     room_type = "combat"
-    room_notice = "An enemy blocks your path."
+    room_notice = (
+        f"Chapter {(floor - 1) // 10 + 1}: The Infinity Castle twists around you. "
+        "A demon's presence emerges from the darkness."
+    )
     if floor % 10 != 0 and floor % 10 == 5:
         room_type = "treasure"
         room_notice = "A hidden chamber contains Castle equipment."
@@ -734,6 +793,21 @@ async def _start_floor(run, player, party):
             room_notice += f"\n{member.get('name', 'Player')} recovered HP."
     if room_type == "combat":
         enemy = _enemy_for(player, floor, members)
+        chapter = (floor - 1) // 10 + 1
+        story_beats = [
+            "The wooden corridors groan as the castle rearranges itself. A cold presence is watching your every move.",
+            "A distant biwa note echoes. The walls fold inward, sealing the path behind your squad.",
+            "Wisteria petals drift through the air, but the scent is quickly swallowed by demonic blood.",
+            "A wounded Kakushi's warning reaches you: the next chamber is guarded by a demon that hunts in silence.",
+            "The castle lights fade. Your footsteps awaken something that has waited here for centuries.",
+            "A blood-red moon appears beyond the impossible windows. The enemy knows your names.",
+            "The floor trembles as the castle shifts. Every step forward feels like walking into a trap.",
+            "A broken Nichirin blade lies at the doorway. Its owner never made it to the next room.",
+            "The air grows heavy with Muzan's presence. Even the demons ahead seem afraid.",
+            "A final biwa note rings out. The path to the next Kizuki is open—but survival is not promised.",
+        ]
+        enemy["story"] = story_beats[(floor - 1) % len(story_beats)]
+        enemy["chapter"] = chapter
     else:
         enemy = {
             "name": f"{room_type.title()} Chamber", "level": 0,
@@ -866,7 +940,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Reuse the leader's existing open squad instead of generating a
         # different invite code whenever Create Squad is tapped again.
         party = col("castle_parties").find_one(
-            {"owner_id": user_id},
+            {"$or": [{"owner_id": user_id}, {"original_owner_id": user_id}, {"leader_id": user_id}]},
             sort=[("created_at", 1)]
         )
         if party:
