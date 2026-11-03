@@ -99,6 +99,76 @@ def _party_players(party):
             (p := get_player(uid)) is not None]
 
 
+CASTLE_RECOVERY_ITEMS = {
+    "bandage": {"name": "Field Bandage", "price": 120, "effect": "hp", "amount": 0.35},
+    "medkit": {"name": "Wisteria Medkit", "price": 300, "effect": "hp", "amount": 0.80},
+    "tonic": {"name": "Stamina Tonic", "price": 100, "effect": "sta", "amount": 0.60},
+}
+
+
+def _apply_timed_recovery(user_id, player):
+    """Restore 10% HP and stamina for every completed 30-minute rest interval."""
+    now = datetime.utcnow()
+    last = player.get("castle_last_recovery_at")
+    if not isinstance(last, datetime):
+        update_player(user_id, castle_last_recovery_at=now)
+        player["castle_last_recovery_at"] = now
+        return False
+    intervals = int(max(0, (now - last).total_seconds()) // 1800)
+    if intervals <= 0:
+        return False
+    max_hp = max(1, int(player.get("max_hp", player.get("hp", 1)) or 1))
+    max_sta = max(1, int(player.get("max_sta", player.get("sta", 1)) or 1))
+    hp_gain = min(max_hp - int(player.get("hp", 0) or 0), max(1, int(max_hp * 0.10)) * intervals)
+    sta_gain = min(max_sta - int(player.get("sta", 0) or 0), max(1, int(max_sta * 0.10)) * intervals)
+    update_player(
+        user_id,
+        hp=min(max_hp, int(player.get("hp", 0) or 0) + max(0, hp_gain)),
+        sta=min(max_sta, int(player.get("sta", 0) or 0) + max(0, sta_gain)),
+        castle_last_recovery_at=last.replace() if intervals == 0 else last + __import__("datetime").timedelta(seconds=1800 * intervals),
+    )
+    player["hp"] = min(max_hp, int(player.get("hp", 0) or 0) + max(0, hp_gain))
+    player["sta"] = min(max_sta, int(player.get("sta", 0) or 0) + max(0, sta_gain))
+    return bool(hp_gain or sta_gain)
+
+
+def _castle_shop_text(user_id):
+    player = get_player(user_id) or {}
+    supplies = {
+        row.get("item_id"): int(row.get("quantity", 0))
+        for row in col("castle_supplies").find({"user_id": int(user_id)})
+    }
+    lines = [
+        "🏪 <b>INFINITY CASTLE — RECOVERY SHOP</b>",
+        f"🪙 Castle Coins: <b>{int(player.get('castle_coins', 0) or 0):,}</b>",
+        "",
+    ]
+    for key, item in CASTLE_RECOVERY_ITEMS.items():
+        lines.append(
+            f"• <b>{item['name']}</b> — {item['price']} coins"
+            f"\n  Owned: <b>{supplies.get(key, 0)}</b>"
+        )
+    lines.append("\nBuy supplies, then use them when your team needs recovery.")
+    return "\n".join(lines), supplies
+
+
+def _castle_shop_keyboard(supplies):
+    rows = [
+        [InlineKeyboardButton("🩹 Buy Bandage · 120", callback_data="castle:buy_bandage"),
+         InlineKeyboardButton("🧪 Buy Medkit · 300", callback_data="castle:buy_medkit")],
+        [InlineKeyboardButton("⚡ Buy Tonic · 100", callback_data="castle:buy_tonic")],
+    ]
+    use = []
+    for key, label in (("bandage", "Use Bandage"), ("medkit", "Use Medkit"), ("tonic", "Use Tonic")):
+        if supplies.get(key, 0) > 0:
+            use.append(InlineKeyboardButton(f"➕ {label}", callback_data=f"castle:use_{key}"))
+    if use:
+        rows.append(use)
+    rows.append([InlineKeyboardButton("↻ Refresh Shop", callback_data="castle:shop"),
+                 InlineKeyboardButton("🏯 Castle Hub", callback_data="castle:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
 def _find_run(user_id):
     user_id = int(user_id)
     run = get_active_castle_run(user_id)
