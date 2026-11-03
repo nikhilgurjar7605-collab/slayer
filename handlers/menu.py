@@ -58,9 +58,10 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Choose an action below."
     )
 
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("  E X P L O R E  ", callback_data="goto_explore")]]
-    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("  E X P L O R E  ", callback_data="goto_explore")],
+        [InlineKeyboardButton("🏯 INFINITY CASTLE", callback_data="castle:menu")],
+    ])
 
     reply_kb = ReplyKeyboardMarkup(
         [
