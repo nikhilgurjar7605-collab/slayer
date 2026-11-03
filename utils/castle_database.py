@@ -230,7 +230,7 @@ def calculate_enemy_level(player, floor, party_players=None):
     """
     player = player or {}
     level = _player_level(player)
-    floor = max(1, min(100, int(floor or 1)))
+    floor = max(1, int(floor or 1))
     own_power = calculate_player_power(player)
     # A fresh level-1 character with starter gear is roughly 125 power.
     # Raise the expected baseline gradually with player level; this prevents
@@ -522,7 +522,7 @@ def add_demon_xp(user_id, amount):
 
 def record_castle_progress(user_id, floor, mode="solo"):
     """Track the best reached floor without counting it as a full clear."""
-    floor = max(1, min(100, int(floor)))
+    floor = max(1, int(floor))
     _col("players").update_one(
         {"user_id": int(user_id)}, {"$max": {"castle_highest_floor": floor}}
     )
@@ -536,7 +536,7 @@ def record_castle_progress(user_id, floor, mode="solo"):
 
 def record_castle_clear(user_id, floor, mode="solo"):
     """Update best floor and clear totals without changing normal XP or Yen."""
-    floor = max(1, min(100, int(floor)))
+    floor = max(1, int(floor))
     _col("players").update_one(
         {"user_id": int(user_id)},
         {"$max": {"castle_highest_floor": floor},
