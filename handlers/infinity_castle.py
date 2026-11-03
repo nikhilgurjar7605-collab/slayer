@@ -172,16 +172,26 @@ def _castle_shop_text(user_id):
         for row in col("castle_supplies").find({"user_id": int(user_id)})
     }
     lines = [
-        "🏪 <b>INFINITY CASTLE — RECOVERY SHOP</b>",
-        f"🪙 Castle Coins: <b>{int(player.get('castle_coins', 0) or 0):,}</b>",
+        "🏪 <b>WISTERIA SUPPLY EXCHANGE</b>",
+        "<i>Prepare before descending deeper into the Castle.</i>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🪙 <b>YOUR BALANCE</b>  ·  {int(player.get('castle_coins', 0) or 0):,} Castle Coins",
         "",
+        "🩹 <b>FIELD BANDAGE</b>  ·  120 coins",
+        "Restores <b>35%</b> of your maximum HP.",
+        f"   In inventory: <b>{supplies.get('bandage', 0)}</b>",
+        "",
+        "🧪 <b>WISTERIA MEDKIT</b>  ·  300 coins",
+        "Restores <b>80%</b> of your maximum HP.",
+        f"   In inventory: <b>{supplies.get('medkit', 0)}</b>",
+        "",
+        "⚡ <b>STAMINA TONIC</b>  ·  100 coins",
+        "Restores <b>60%</b> of your maximum stamina.",
+        f"   In inventory: <b>{supplies.get('tonic', 0)}</b>",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "<i>Use supplies from this screen or during an active battle.</i>",
     ]
-    for key, item in CASTLE_RECOVERY_ITEMS.items():
-        lines.append(
-            f"• <b>{item['name']}</b> — {item['price']} coins"
-            f"\n  Owned: <b>{supplies.get(key, 0)}</b>"
-        )
-    lines.append("\nBuy supplies, then use them when your team needs recovery.")
     return "\n".join(lines), supplies
 
 
@@ -194,10 +204,12 @@ def _castle_shop_keyboard(supplies):
     use = []
     for key, label in (("bandage", "Use Bandage"), ("medkit", "Use Medkit"), ("tonic", "Use Tonic")):
         if supplies.get(key, 0) > 0:
-            use.append(InlineKeyboardButton(f"➕ {label}", callback_data=f"castle:use_{key}"))
+            use.append(InlineKeyboardButton(f"➕ {label} ×{supplies[key]}", callback_data=f"castle:use_{key}"))
     if use:
-        rows.append(use)
-    rows.append([InlineKeyboardButton("↻ Refresh Shop", callback_data="castle:shop"),
+        rows.append(use[:2])
+        if len(use) > 2:
+            rows.append(use[2:])
+    rows.append([InlineKeyboardButton("↻ Refresh", callback_data="castle:shop"),
                  InlineKeyboardButton("🏯 Castle Hub", callback_data="castle:menu")])
     return InlineKeyboardMarkup(rows)
 
@@ -323,75 +335,74 @@ def _squad_share_url(party_id):
 
 
 def _lobby_keyboard():
-    """Main Castle hub with direct access to squad management and recovery."""
+    """Premium Castle navigation, grouped by the player's next decision."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚔️ Enter Solo", callback_data="castle:solo"),
-         InlineKeyboardButton("👥 Create Squad", callback_data="castle:squad")],
-        [InlineKeyboardButton("👥 My Squad", callback_data="castle:my_squad"),
-         InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop")],
-        [InlineKeyboardButton("🎒 Equipment", callback_data="castle:equipment"),
-         InlineKeyboardButton("🏆 Leaderboard", callback_data="castle:leaderboard")],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="goto_menu")],
+        [InlineKeyboardButton("⚔️  SOLO EXPEDITION", callback_data="castle:solo")],
+        [InlineKeyboardButton("👥  CREATE SQUAD", callback_data="castle:squad"),
+         InlineKeyboardButton("🧭  MY SQUAD", callback_data="castle:my_squad")],
+        [InlineKeyboardButton("🎒  ARMOURY", callback_data="castle:equipment"),
+         InlineKeyboardButton("🏪  SUPPLY SHOP", callback_data="castle:shop")],
+        [InlineKeyboardButton("🏆  HALL OF FAME", callback_data="castle:leaderboard")],
+        [InlineKeyboardButton("🏠  Main Menu", callback_data="goto_menu")],
     ])
 
 
 def _render_run(run, player, party=None, notice=None):
-    """Compact Telegram battle panel with clear hierarchy and less visual noise."""
+    """Unified Castle battle HUD with clear expedition, enemy and team panels."""
     floor = int(run.get("floor", 1))
     enemy = run.get("current_enemy") or {}
-    members = party.get("member_ids", []) if party else [run.get("user_id")]
+    members = list(dict.fromkeys(
+        ([int(party.get("leader_id", 0))] + [int(uid) for uid in party.get("member_ids", [])])
+        if party else [int(run.get("user_id", player.get("user_id", 0)))]
+    ))
     hp_map = run.get("player_hp_by_user", {})
     player_hp = int(hp_map.get(str(player.get("user_id")), player.get("hp", 1)))
     player_max_hp = max(1, int(player.get("max_hp", max(1, player_hp))))
     player_sta = int(player.get("sta", 0))
     player_max_sta = max(1, int(player.get("max_sta", max(1, player_sta))))
-
+    mode = "SQUAD RAID" if party else "SOLO RAID"
     lines = [
-        "🏯 <b>INFINITY CASTLE</b>  <code>EXPEDITION</code>",
-        f"Floor <b>{floor}/{MAX_FLOOR}</b>  <code>{_bar(floor, MAX_FLOOR, 10)}</code>",
-        f"⚔️ {run.get('mode', 'solo').title()}  ·  👥 {len(members)}/4  ·  ⭐ Lv.{_level(player)}",
-        f"Power <b>{calculate_player_power(player):,}</b>",
-        "",
-        f"❤️ <b>{max(0, player_hp):,}/{player_max_hp:,}</b>  <code>{_bar(player_hp, player_max_hp, 10)}</code>",
-        f"⚡ <b>{player_sta:,}/{player_max_sta:,}</b>  <code>{_bar(player_sta, player_max_sta, 10)}</code>",
+        "🏯 <b>INFINITY CASTLE</b>  ·  <code>EXPEDITION</code>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🧭 <b>FLOOR {floor:02d} / {MAX_FLOOR}</b>  ·  {mode}",
+        f"<code>{_bar(floor, MAX_FLOOR, 18)}</code>  <b>{int(floor / MAX_FLOOR * 100)}%</b>",
+        f"⭐ Slayer Lv.{_level(player)}  ·  ⚔️ Power <b>{calculate_player_power(player):,}</b>",
+        "", "🧬 <b>YOUR VITALS</b>",
+        f"❤️ HP  <b>{max(0, player_hp):,}/{player_max_hp:,}</b>",
+        f"<code>{_bar(player_hp, player_max_hp, 18)}</code>",
+        f"⚡ STA <b>{player_sta:,}/{player_max_sta:,}</b>",
+        f"<code>{_bar(player_sta, player_max_sta, 18)}</code>",
     ]
     if notice:
-        lines.extend(["", f"💬 {escape(str(notice))}"])
-
+        lines.extend(["", "💬 <b>COMBAT LOG</b>", escape(str(notice))])
     if enemy and enemy.get("room_type"):
-        lines.extend([
-            "", "━━━━━━━━━━━━━━━━",
-            f"🧭 <b>{escape(str(enemy.get('room_type')).title())} Chamber</b>",
-            escape(str(run.get("room_notice", "The room is clear. Move to the next floor."))),
-            "━━━━━━━━━━━━━━━━",
-        ])
+        lines.extend(["", "━━━━━━━━━━━━━━━━━━━━",
+            f"🌀 <b>{escape(str(enemy.get('room_type')).upper())} CHAMBER</b>",
+            escape(str(run.get("room_notice", "The chamber is clear. Move onward.")))])
     elif enemy:
         enemy_hp = max(0, int(enemy.get("hp", 0)))
         enemy_max_hp = max(1, int(enemy.get("max_hp", 1)))
-        enemy_label = "FINAL BOSS" if floor == MAX_FLOOR else ("BOSS" if enemy.get("boss") else "ENEMY")
-        lines.extend([
-            "", "⚔️ <b>OPPONENT</b>",
-            f"{'☠️' if enemy.get('boss') else '👹'} <b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b>  ·  {escape(str(enemy.get('rank', 'Unknown')))}",
-            f"Demon Lv. <b>{enemy.get('demon_level', enemy.get('level', 1))}</b>  ·  {escape(str(enemy.get('ability', 'Basic Attack')))}",
-            f"🩸 <b>{enemy_hp:,}/{enemy_max_hp:,}</b>  <code>{_bar(enemy_hp, enemy_max_hp, 10)}</code>",
-            "",
-            f"📖 <b>Chapter {int(enemy.get('chapter', (floor - 1) // 10 + 1))}</b> — {escape(str(enemy.get('story', 'The demon blocks your path.')))}",
-            "",
-            "<b>YOUR SQUAD</b>",
-        ])
+        enemy_label = "FINAL BOSS" if floor == MAX_FLOOR else ("BOSS ENCOUNTER" if enemy.get("boss") else "HOSTILE DEMON")
+        lines.extend(["", "━━━━━━━━━━━━━━━━━━━━", f"☠️ <b>{enemy_label}</b>",
+            f"👹 <b>{escape(str(enemy.get('name', 'Unknown Demon')))}</b>",
+            f"{escape(str(enemy.get('rank', 'Demon')))}  ·  Demon Lv.{enemy.get('demon_level', enemy.get('level', 1))}",
+            f"🩸 HP <b>{enemy_hp:,}/{enemy_max_hp:,}</b>",
+            f"<code>{_bar(enemy_hp, enemy_max_hp, 18)}</code>",
+            f"🩸 Blood Art: <i>{escape(str(enemy.get('ability', 'Unknown technique')))}</i>",
+            "", "📜 <b>ENCOUNTER INTEL</b>",
+            escape(str(enemy.get("story", "The demon blocks your path. Stay alert.")))])
+    if len(members) > 1 or party:
+        lines.extend(["", "━━━━━━━━━━━━━━━━━━━━", f"🤝 <b>YOUR SQUAD</b>  ·  {len(members)}/4"])
         for uid in members:
             member = get_player(int(uid))
             if member:
                 hp = max(0, int(hp_map.get(str(uid), member.get("hp", 1))))
                 maximum = max(1, int(member.get("max_hp", 1)))
-                lines.append(
-                    f"• {escape(str(member.get('name', 'Slayer')))}  "
-                    f"<b>{hp:,}/{maximum:,}</b> HP"
-                )
-                lines.append(f"  <code>{_bar(hp, maximum, 10)}</code>")
-
+                lines.append(f"• <b>{escape(str(member.get('name', 'Slayer')))}</b>  ·  {hp:,}/{maximum:,} HP")
+                lines.append(f"  <code>{_bar(hp, maximum, 12)}</code>")
     if floor == MAX_FLOOR and enemy.get("boss"):
-        lines.append("\n⚠️ <b>FINAL BATTLE</b> — defeat Muzan to clear the Castle.")
+        lines.extend(["", "⚠️ <b>FINAL CONFRONTATION</b>",
+                      "Defeat Muzan Kibutsuji and end the Castle's reign of terror."])
     return "\n".join(lines)
 
 @_castle_guard
@@ -430,9 +441,12 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action in ("menu", "hub", "help"):
         caption = (
-            "🏯 <b>INFINITY CASTLE</b>\n"
-            "Climb 100 floors, defeat ranked demons, collect Castle gear, "
-            "and face Muzan at the summit.\n\nChoose your expedition:"
+            "🏯 <b>INFINITY CASTLE</b>  ·  <code>THE ENDLESS FORTRESS</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>A labyrinth built to break even the strongest Hashira.</i>\n\n"
+            "⚔️ <b>100 deadly floors</b>\n👹 Ranked demons · Blood Art encounters\n"
+            "🎒 Rare gear · Wisteria supplies\n🤝 Solo climbs or 4-player squad raids\n\n"
+            "<b>Choose your path, Slayer.</b>"
         )
         try:
             await update.effective_message.reply_photo(
@@ -771,7 +785,8 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines = ["CASTLE SOLO LEADERBOARD"]
             for i, row in enumerate(rows, 1):
                 member = get_player(int(row["user_id"])) or {}
-                lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {int(row.get('highest_floor', 0))}")
+                medal = ("🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"<b>{i:02d}.</b>")))
+                lines.append(f"{medal} <b>{escape(str(member.get('name', 'Unknown')))}</b>\n   <code>FLOOR {int(row.get('highest_floor', 0))}</code>")
         if len(lines) == 1:
             lines.append("No climbs recorded yet.")
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -1005,7 +1020,12 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.delete()
         except Exception:
             pass
-        caption = "🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb."
+        caption = (
+            "🏯 <b>INFINITY CASTLE</b>  ·  <code>THE ENDLESS FORTRESS</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n<i>100 floors stand between you and Muzan.</i>\n\n"
+            "⚔️ Solo expedition  ·  🤝 Squad raid\n🎒 Armoury  ·  🏪 Recovery supplies\n"
+            "🏆 Hall of Fame\n\n<b>Choose your path, Slayer.</b>"
+        )
         try:
             await query.message.chat.send_photo(
                 photo=CASTLE_BANNER_FILE_ID,
@@ -1269,23 +1289,28 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if action == "equipment":
         owned = list(col("castle_equipment").find({"user_id": user_id}).sort("obtained_at", -1).limit(30))
-        lines = ["🎒 <b>YOUR CASTLE ARMOURY</b>", "━━━━━━━━━━━━━━━━━━━━"]
+        lines = [
+            "🎒 <b>INFINITY CASTLE · ARMOURY</b>",
+            "<i>Your collected weapons, armour and relics.</i>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"📦 <b>{len(owned)}/30</b> latest pieces shown", "",
+        ]
         if not owned:
-            lines.append("Your armoury is empty. Defeat enemies and bosses to earn gear.")
+            lines.extend(["🕯️ <b>Your armoury is silent.</b>",
+                          "Defeat Castle demons and bosses to claim your first relic."])
         else:
-            for item in owned:
+            for index, item in enumerate(owned, 1):
                 slot = item.get("slot", item.get("item_type", "gear"))
-                equipped = "  <b>✓ EQUIPPED</b>" if item.get("equipped") else ""
-                lines.append(
-                    f"• <b>{escape(str(item.get('name', 'Unknown gear')))}</b> "
-                    f"[{escape(str(item.get('rarity', 'common')).title())}] — "
-                    f"{escape(str(slot).title())}{equipped}"
-                )
+                equipped = "  <b>✦ EQUIPPED</b>" if item.get("equipped") else ""
+                rarity = escape(str(item.get("rarity", "common")).title())
+                lines.append(f"<b>{index:02d} · {escape(str(item.get('name', 'Unknown gear')))}</b>{equipped}")
+                lines.append(f"   <code>{rarity.upper()}</code>  ·  {escape(str(slot).title())}")
                 stats = item.get("stats", {})
-                bonuses = [f"+{int(v)} {k.replace('_bonus', '').upper()}" for k, v in stats.items() if v]
+                bonuses = [f"+{int(v)} {k.replace('_bonus', '').replace('_', ' ').upper()}" for k, v in stats.items() if v]
                 if bonuses:
-                    lines.append("  " + " · ".join(bonuses))
-            lines.append("\nEquip an item with /castle equip ITEM NAME.")
+                    lines.append("   " + "  |  ".join(bonuses))
+                lines.append("")
+            lines.append("<i>Equip a piece with /castle equip ITEM NAME.</i>")
         await _safe_castle_edit(query, 
             "\n".join(lines), parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
@@ -1297,16 +1322,18 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mode = "squad" if action == "leaderboard_squad" else "solo"
         if mode == "squad":
             rows = list(col("castle_parties").find({"highest_floor": {"$gte": 1}}).sort("highest_floor", -1).limit(10))
-            lines = ["🏆 <b>INFINITY CASTLE — SQUAD RANKINGS</b>", "━━━━━━━━━━━━━━━━━━━━"]
+            lines = ["🏆 <b>HALL OF FAME</b>  ·  <code>SQUAD RANKINGS</code>", "<i>The strongest teams to challenge the fortress.</i>", "━━━━━━━━━━━━━━━━━━━━"]
             for i, row in enumerate(rows, 1):
                 squad_name = escape(str(row.get("squad_name") or "Unnamed Squad"))
-                lines.append(f"{i}. <b>{squad_name}</b> — Floor {int(row.get('highest_floor', 0))}")
+                medal = ("🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"<b>{i:02d}.</b>")))
+                lines.append(f"{medal} <b>{squad_name}</b>\n   <code>FLOOR {int(row.get('highest_floor', 0))}</code>")
         else:
             rows = list(col("castle_leaderboards").find({"mode": "solo"}).sort("highest_floor", -1).limit(10))
-            lines = ["🏆 <b>INFINITY CASTLE — SOLO RANKINGS</b>", "━━━━━━━━━━━━━━━━━━━━"]
+            lines = ["🏆 <b>HALL OF FAME</b>  ·  <code>SOLO RANKINGS</code>", "<i>Legends who climbed alone.</i>", "━━━━━━━━━━━━━━━━━━━━"]
             for i, row in enumerate(rows, 1):
                 member = get_player(int(row["user_id"])) or {}
-                lines.append(f"{i}. {escape(str(member.get('name', 'Unknown')))} — Floor {int(row.get('highest_floor', 0))}")
+                medal = ("🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"<b>{i:02d}.</b>")))
+                lines.append(f"{medal} <b>{escape(str(member.get('name', 'Unknown')))}</b>\n   <code>FLOOR {int(row.get('highest_floor', 0))}</code>")
         if len(lines) == 2:
             lines.append("No climbs recorded yet.")
         await _safe_castle_edit(query, "\n".join(lines), parse_mode="HTML",
