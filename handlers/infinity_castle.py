@@ -24,9 +24,9 @@ from utils.castle_database import (
     grant_castle_equipment, record_castle_clear, record_castle_progress,
 )
 
-MAX_FLOOR = 100
+MAX_FLOOR = None  # Infinity Castle has no final floor.
 CASTLE_BANNER_FILE_ID = "AgACAgUAAxkBAAED-jBq6e0vvMC_8MpP_8SpB41xgBYenwAC2RVrG5hBUFflgk-dKbqs_QEAAwIAA3kAAz0E"
-BOSS_FLOORS = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
+BOSS_FLOORS = set()  # Boss floors are generated dynamically every 10 floors.
 ENEMY_NAMES = [
     "Castle Wraith", "Infinity Guardian", "Upper Moon Shade",
     "Void Stalker", "Demon General",
@@ -245,14 +245,14 @@ def _find_run(user_id):
 def _enemy_for(player, floor, party_players, is_squad=False):
     difficulty = calculate_difficulty(player, floor, party_players)
     level = difficulty["enemy_level"]
-    floor = max(1, min(MAX_FLOOR, int(floor)))
-    boss = floor in BOSS_FLOORS
-    name = BOSS_NAMES.get(floor) if boss else random.choice(ENEMY_NAMES)
+    floor = max(1, int(floor))
+    boss = floor % 10 == 0
+    name = (BOSS_NAMES.get(floor) or f'Infinity Ascendant · Floor {floor}') if boss else random.choice(ENEMY_NAMES)
 
     # Scale demon durability to the actual expedition roster. The old 10k
     # solo / 20k squad caps became trivial once players reached 20k-30k HP.
     # Power and average max HP keep the challenge relevant to geared accounts;
-    # floor pressure adds a steady climb all the way to Floor 100.
+    # floor pressure continues increasing without a final floor.
     members = [p for p in (party_players or [player]) if p]
     size = max(1, len(members))
     average_hp = sum(max(1, int(p.get("max_hp", p.get("hp", 1)) or 1)) for p in members) / size
@@ -278,7 +278,7 @@ def _enemy_for(player, floor, party_players, is_squad=False):
     return {
         "name": name, "level": level, "demon_level": level, "hp": hp, "max_hp": hp,
         "atk": atk, "boss": boss, "difficulty": difficulty["tier"],
-        "rank": rank, "ability": "Muzan's Final Judgment" if floor == 100 else rank_abilities.get(rank),
+        "rank": rank, "ability": ("Muzan's Final Judgment" if floor == 100 else (f"Infinite Blood Art · Floor {floor}" if boss and floor > 100 else rank_abilities.get(rank))),
     }
 
 
@@ -361,7 +361,7 @@ def _render_run(run, player, party=None, notice=None):
     mode_label = f"Squad: {len(members)}/4" if party else "Solo Expedition"
 
     lines = [
-        f"🏯 <b>INFINITY CASTLE</b> · Floor <code>{floor:02d}/{MAX_FLOOR}</code>",
+        f"🏯 <b>INFINITY CASTLE</b> · Floor <code>{floor:02d}/∞</code>",
         f"⚔️ {mode_label} · ⭐ Lv.{_level(player)} · Power: <b>{calculate_player_power(player):,}</b>",
     ]
 
@@ -414,9 +414,9 @@ def _render_run(run, player, party=None, notice=None):
         "<blockquote>📖 " + escape(str(chapter)) + "</blockquote>",
     ])
 
-    if floor == MAX_FLOOR and enemy.get("boss"):
-        lines.extend(["", "⚠️ <b>FINAL CONFRONTATION</b>",
-                      "Defeat Muzan Kibutsuji and end the Castle's reign of terror."])
+    if floor % 100 == 0 and enemy.get("boss"):
+        lines.extend(["", "⚠️ <b>ENDLESS CASTLE MILESTONE</b>",
+                      "A legendary demon guards this hundred-floor milestone. The climb continues beyond it."])
     return "\n".join(lines)
 
 @_castle_guard
@@ -867,9 +867,9 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             "🏯 <b>INFINITY CASTLE</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "100 floors. One climb. No second chances.\n\n"
+            "Endless floors. One climb. No second chances.\n\n"
             "Fight through shifting chambers, defeat the Twelve Kizuki, "
-            "collect Castle equipment and reach Muzan on Floor 100.\n\n"
+            "collect Castle equipment and face increasingly powerful demons forever.\n\n"
             "<b>Choose your path:</b>\n"
             "⚔️ Solo — fight alone\n"
             "👥 Squad — team up with up to 3 other slayers\n\n"
@@ -1053,23 +1053,14 @@ async def _complete_enemy(run, player, party):
             )
             if granted:
                 rewards.append(f"{escape(str(member.get('name', 'Player')))}: {escape(str(granted['name']))} ({escape(str(granted['rarity']))})")
-    if floor == MAX_FLOOR:
-        for member in recipients:
-            record_castle_clear(member["user_id"], floor, run.get("mode", "solo"))
-        save_castle_run(run["run_id"], {"status": "completed", "current_enemy": enemy})
-        if party:
-            col("castle_parties").update_one(
-                {"party_id": party["party_id"]}, {"$set": {"status": "completed"}}
-            )
-        return "🏆 <b>INFINITY CASTLE CLEARED!</b> Muzan has fallen.\n" + ("\n".join(rewards) if rewards else "No equipment drop this time.")
     # Save a checkpoint immediately after every cleared floor. Resume starts
     # on the next floor, even if the player leaves before tapping Continue.
     save_castle_run(run["run_id"], {
         "current_enemy": dict(enemy, hp=0), "room_id": "cleared",
-        "checkpoint_floor": min(MAX_FLOOR, floor + 1),
+        "checkpoint_floor": floor + 1,
     })
     message = f"✅ Floor {floor} cleared!"
-    message += f" 🏁 Floor checkpoint saved! Your next resume point is Floor {min(MAX_FLOOR, floor + 1)}.\n"
+    message += f" 🏁 Floor checkpoint saved! Your next resume point is Floor {floor + 1}.\n"
     if rewards:
         message += "\n🎁 Equipment earned:\n" + "\n".join(rewards)
     return message + "\nContinue to the next floor when ready."
@@ -1105,7 +1096,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         caption = (
             "🏯 <b>INFINITY CASTLE</b>  ·  <code>THE ENDLESS FORTRESS</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n<i>100 floors stand between you and Muzan.</i>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n<i>An endless fortress. Every tenth floor hides a boss.</i>\n\n"
             "⚔️ Solo expedition  ·  🤝 Squad raid\n🎒 Armoury  ·  🏪 Recovery supplies\n"
             "🏆 Hall of Fame\n\n<b>Choose your path, Slayer.</b>"
         )
@@ -1803,9 +1794,6 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Defeat the current enemy first.", show_alert=True)
             return
         current_floor = int(fresh_run.get("floor", 1))
-        if current_floor >= MAX_FLOOR:
-            await _safe_castle_edit(query, "🏆 The Castle is complete. Return to the Castle Hub.")
-            return
         floor = current_floor + 1
         # Use the latest party roster so newly joined squad members are included.
         party = get_castle_party(fresh_run.get("party_id")) if fresh_run.get("party_id") else None
