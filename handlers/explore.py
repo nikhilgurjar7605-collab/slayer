@@ -242,9 +242,8 @@ def build_combat_keyboard(has_ally: bool = False):
 
 def build_encounter_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚔️ Fight!", callback_data='fight'),
-         InlineKeyboardButton("🏆 Rewards", callback_data='prize')],
-        [InlineKeyboardButton("🔍 Different Enemy", callback_data='goto_explore')]
+        [InlineKeyboardButton("⚔️ Fight", callback_data='fight'),
+         InlineKeyboardButton("🏆 Rewards", callback_data='prize')]
     ])
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -277,31 +276,41 @@ def _threat_emoji(threat: str) -> str:
 
 def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
                           active_pet: Optional[Dict] = None) -> str:
-    """Build a compact Telegram HTML exploration encounter message."""
+    """Create an immersive, compact Telegram HTML encounter panel."""
     from html import escape
 
     enemy_level = max(1, int(preview.get('recommended_level', 1) or 1))
     player_level = get_level(player['xp'])
-    threat = escape(str(preview.get('threat', 'UNKNOWN')))
+    threat_raw = str(preview.get('threat', 'UNKNOWN'))
+    threat = escape(threat_raw.title())
     enemy_name = escape(str(enemy.get('name', 'Unknown Enemy')))
     player_name = escape(str(player.get('name', 'Slayer')))
-    event_desc = escape(str(preview.get('event_description') or 'The enemy watches your every move.'))
+    event_desc = escape(str(preview.get('event_description') or 'It senses your presence and prepares to attack.'))
     boss_icon = " ☠️" if enemy.get('is_boss') else ""
+    threat_icon = _threat_emoji(threat_raw)
+
+    enemy_hp = max(0, int(enemy.get('hp', 0) or 0))
+    enemy_hp_bar = _enc_bar(enemy_hp, enemy_hp, 12)
 
     if active_pet:
         pet_name = escape(str(active_pet.get('name', 'Pet')))
         pet_emoji = PETS.get(active_pet.get('name'), {}).get('emoji', '🐾')
-        pet_line = f"{pet_emoji} {pet_name} • Active"
+        companion = f"{pet_emoji} {pet_name} • Active"
     else:
-        pet_line = "🐦‍⬛ Kasugai Crow • Active"
+        companion = "🐦‍⬛ Kasugai Crow • Active"
 
     lines = [
-        f"🌲 <b>While walking, you encountered {enemy_name}!</b>{boss_icon}",
-        f"📜 People of this area signify it as a <b>{threat} Threat of Level {enemy_level}</b>.",
-        event_desc,
-        f"👹 <b>{enemy_name.upper()}</b>  |  🗡️ {player_name}",
-        f"❤️ {player['hp']:,}/{player['max_hp']:,} HP  •  Lv. {player_level}",
-        f"{pet_line}  |  ⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥",
+        f"🌲 <b>While travelling, you encountered {enemy_name}!</b>{boss_icon}",
+        f"{threat_icon} <b>{threat} THREAT</b>  ·  Recommended Level <b>{enemy_level}</b>",
+        f"<i>{event_desc}</i>",
+        "",
+        f"👹 <b>{enemy_name.upper()}</b>",
+        f"❤️ {enemy_hp:,} HP  {enemy_hp_bar}",
+        "━━━━━━━━━━━━━━━━━━",
+        f"⚔️ <b>{player_name}</b>  ·  Level {player_level}",
+        f"💚 HP  <b>{player['hp']:,}/{player['max_hp']:,}</b>",
+        f"{companion}",
+        f"🎁 Victory: ⭐ {enemy['xp']:,} XP  ·  💰 {enemy['yen']:,}¥",
     ]
     return "\n".join(lines)
 
