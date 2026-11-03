@@ -107,6 +107,14 @@ def initialize_castle_database(db):
     db.castle_reward_claims.create_index("claim_key", unique=True)
     db.castle_supplies.create_index([("user_id", 1), ("item_id", 1)], unique=True)
 
+    # One-time 500 Castle Coin welcome grant for every existing player.
+    # The marker prevents repeat grants on later bot restarts.
+    db.players.update_many(
+        {"castle_starting_coins_granted": {"$ne": True}},
+        {"$inc": {"castle_coins": 500},
+         "$set": {"castle_starting_coins_granted": True}}
+    )
+
     # Only fill missing fields. Never reset existing progress in other fields.
     for field, default in PLAYER_DEFAULTS.items():
         db.players.update_many(
