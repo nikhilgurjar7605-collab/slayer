@@ -175,16 +175,26 @@ def _castle_shop_keyboard(supplies):
     return InlineKeyboardMarkup(rows)
 
 
+def _find_user_party(user_id):
+    """Return the one open/running squad this player belongs to, if any."""
+    user_id = int(user_id)
+    party = col("castle_parties").find_one(
+        {"$or": [{"member_ids": user_id}, {"leader_id": user_id}],
+         "status": {"$in": ["open", "running"]}},
+        sort=[("updated_at", -1)]
+    )
+    if party:
+        party.pop("_id", None)
+    return party
+
+
 def _find_run(user_id):
     user_id = int(user_id)
     run = get_active_castle_run(user_id)
     if run:
         return run
-    party = col("castle_parties").find_one(
-        {"$or": [{"member_ids": user_id}, {"leader_id": user_id}],
-         "status": "running"}
-    )
-    if party:
+    party = _find_user_party(user_id)
+    if party and party.get("status") == "running":
         run = col("castle_runs").find_one(
             {"party_id": party["party_id"], "status": "active"}
         )
@@ -250,13 +260,14 @@ def _keyboard(run, is_party_member=True):
 
 
 def _lobby_keyboard():
-    """Main Castle hub: every major mode is reachable without memorising commands."""
+    """Main Castle hub with direct access to squad management and recovery."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚔️ Enter Solo", callback_data="castle:solo"),
          InlineKeyboardButton("👥 Create Squad", callback_data="castle:squad")],
-        [InlineKeyboardButton("🎒 Equipment", callback_data="castle:equipment"),
+        [InlineKeyboardButton("👥 My Squad", callback_data="castle:my_squad"),
          InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop")],
-        [InlineKeyboardButton("🏆 Leaderboard", callback_data="castle:leaderboard")],
+        [InlineKeyboardButton("🎒 Equipment", callback_data="castle:equipment"),
+         InlineKeyboardButton("🏆 Leaderboard", callback_data="castle:leaderboard")],
         [InlineKeyboardButton("🏠 Main Menu", callback_data="goto_menu")],
     ])
 
@@ -395,6 +406,13 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action in ("squad", "party"):
+        existing_party = _find_user_party(user_id)
+        if existing_party:
+            await update.effective_message.reply_text(
+                f"You are already in a squad ({'leader' if int(existing_party.get('leader_id', 0)) == user_id else 'member'}). "
+                "Open /castle and tap My Squad."
+            )
+            return
         if _find_run(user_id):
             await update.effective_message.reply_text("Finish or retreat from your active Castle run before creating a squad.")
             return
@@ -416,10 +434,16 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(args) < 2:
             await update.effective_message.reply_text("Usage: /castle join PARTY_CODE")
             return
+        existing_party = _find_user_party(user_id)
+        if existing_party:
+            if existing_party.get("party_id") == args[1]:
+                await update.effective_message.reply_text("✅ You are already in this squad. Open /castle and tap My Squad.")
+            else:
+                await update.effective_message.reply_text("❌ You can belong to only one Castle squad at a time. Leave your current squad first.")
+            return
         if _find_run(user_id):
             await update.effective_message.reply_text("Finish or retreat from your active Castle run first.")
             return
-        party_before = get_castle_party(args[1])
         ok = add_castle_party_member(args[1], user_id)
         if ok:
             party_after = get_castle_party(args[1])
@@ -743,6 +767,10 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     if action == "squad":
+        existing_party = _find_user_party(user_id)
+        if existing_party:
+            await _safe_castle_edit(query, "You are already in a squad. Open My Squad to view its members and status.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+            return
         if run:
             await query.message.reply_text("Finish or retreat from your active run first.")
             return
@@ -758,6 +786,49 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")]
             ])
         )
+        return
+    if action == "my_squad":
+        party = _find_user_party(user_id)
+        if not party:
+            await _safe_castle_edit(
+                query, "👥 You are not in a squad yet. Create one or join using /castle join PARTY_CODE.",
+                parse_mode="HTML", reply_markup=_lobby_keyboard()
+            )
+            return
+        leader_id = int(party.get("leader_id", 0))
+        member_ids = list(dict.fromkeys([leader_id] + [int(uid) for uid in party.get("member_ids", [])]))
+        lines = [
+            "👥 <b>MY INFINITY CASTLE SQUAD</b>",
+            f"Party code: <code>{escape(str(party.get('party_id', '')))}</code>",
+            f"Status: <b>{escape(str(party.get('status', 'unknown')).title())}</b>",
+            f"Members: <b>{len(member_ids)}/4</b>",
+            "",
+        ]
+        for uid in member_ids:
+            member = get_player(uid) or {}
+            role = "Leader" if uid == leader_id else "Member"
+            lines.append(f"• {escape(str(member.get('name', f'Player {uid}')))} — {role}")
+        buttons = []
+        if party.get("status") == "open" and leader_id == user_id:
+            buttons.append([InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")])
+        if party.get("status") == "open" and leader_id != user_id:
+            buttons.append([InlineKeyboardButton("🚪 Leave Squad", callback_data="castle:leave_squad")])
+        buttons.append([InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop"),
+                        InlineKeyboardButton("🏯 Castle Hub", callback_data="castle:menu")])
+        await _safe_castle_edit(query, "\n".join(lines), parse_mode="HTML",
+                                reply_markup=InlineKeyboardMarkup(buttons))
+        return
+    if action == "leave_squad":
+        party = _find_user_party(user_id)
+        if not party or int(party.get("leader_id", 0)) == user_id or party.get("status") != "open":
+            await query.answer("Only squad members can leave an open squad.", show_alert=True)
+            return
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open"},
+            {"$pull": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
+        )
+        await _safe_castle_edit(query, "🚪 You left the squad. You can now join or create another one.",
+                                parse_mode="HTML", reply_markup=_lobby_keyboard())
         return
     if action == "equipment":
         owned = list(col("castle_equipment").find({"user_id": user_id}).sort("obtained_at", -1).limit(30))
