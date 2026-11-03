@@ -240,6 +240,7 @@ from handlers.meditate import meditate, meditate_callback, meditate_react_callba
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
 
+from handlers.infinity_castle import castle, castle_callback, demonlevel
 from handlers.skilltree import (skilltree, skilltree_owned, skillbuy, skilllist,
                                  skillinfo, skills, skilltree_buy_callback,
                                  skilltree_page_callback, myskills_callback,
@@ -279,17 +280,32 @@ logger = logging.getLogger(__name__)
 log = logger  # alias used in some handlers
 
 async def post_init(application):
-    """Called after app starts — log webhook info."""
+    """Restore optional background systems without preventing bot startup."""
     import os
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+
+    WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("WEBHOOK_URL", "")
     BOT_TOKEN_ENV = os.environ.get("BOT_TOKEN", "")
-    await resume_bank_giveaways(application)
-    await resume_sp_features(application)
-    schedule_daily_bank_tax(application)
+
+    for label, startup_task in (
+        ("bank giveaways", lambda: resume_bank_giveaways(application)),
+        ("SP features", lambda: resume_sp_features(application)),
+        ("daily bank tax", lambda: schedule_daily_bank_tax(application)),
+    ):
+        try:
+            result = startup_task()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.exception("Startup task failed: %s", label)
+
     if WEBHOOK_URL and BOT_TOKEN_ENV:
-        info = await application.bot.get_webhook_info()
-        logger.info(f"Webhook active: {info.url}")
-        logger.info(f"Pending updates: {info.pending_update_count}")
+        try:
+            info = await application.bot.get_webhook_info()
+            # Never print the webhook URL: it contains the bot token.
+            logger.info("Webhook active: %s", bool(info.url))
+            logger.info("Pending updates: %s", info.pending_update_count)
+        except Exception:
+            logger.exception("Could not inspect Telegram webhook status.")
     else:
         logger.info("Running in polling mode")
 
@@ -297,7 +313,58 @@ PRIVATE = filters.ChatType.PRIVATE
 ANY = filters.ALL  # works everywhere
 
 async def on_startup(app: Application):
-    await app.bot.send_message(chat_id=-1003882841537, text="Bot has been started!")
+    """Run every startup task exactly once and publish Telegram's command menu."""
+    # The builder's original post_init callback was being overwritten below.
+    # Call it here so resumable systems and scheduled jobs are restored.
+    await post_init(app)
+
+    from telegram import BotCommand
+    commands = [
+        BotCommand("start", "Create or open your Slayer"),
+        BotCommand("menu", "Open the game hub"),
+        BotCommand("explore", "Explore and battle demons"),
+        BotCommand("mission", "View and accept missions"),
+        BotCommand("travel", "Travel between regions"),
+        BotCommand("profile", "View your character"),
+        BotCommand("inventory", "Open your inventory"),
+        BotCommand("shop", "Browse the shop"),
+        BotCommand("party", "Manage your party"),
+        BotCommand("skilltree", "View your skill tree"),
+        BotCommand("castle", "Enter the Infinity Castle"),
+        BotCommand("demonlevel", "View Demon progression"),
+        BotCommand("daily", "Claim your daily reward"),
+        BotCommand("rankings", "View global rankings"),
+        BotCommand("help", "Show game commands"),
+    ]
+    try:
+        await app.bot.set_my_commands(commands)
+        logger.info("Telegram command menu registered (%d commands).", len(commands))
+    except Exception:
+        logger.exception("Could not publish Telegram command menu.")
+
+    try:
+        await app.bot.send_message(chat_id=-1003882841537, text="🗡️ Demon Slayer RPG is online.")
+    except Exception:
+        logger.exception("Startup notification could not be delivered.")
+
+
+async def _global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log handler failures and give the player a useful, non-sensitive response."""
+    error = context.error
+    logger.error(
+        "Unhandled update failure (update_id=%s)",
+        getattr(update, "update_id", "unknown"),
+        exc_info=(type(error), error, error.__traceback__) if error else None,
+    )
+    message = getattr(update, "effective_message", None)
+    if message:
+        try:
+            await message.reply_text(
+                "⚠️ That action hit a game error. Your progress has not intentionally been reset. "
+                "Please try again in a moment."
+            )
+        except Exception:
+            logger.exception("Could not send the player-facing error notice.")
 
 
 
@@ -1078,6 +1145,13 @@ def main():
     scheduler.add_job(update_stock_prices, 'interval', minutes=5)  # Wall Street style: prices update every 5 min
     scheduler.start()
     # Ensure forge and updates are added only once
+    # Infinity Castle — commands and dedicated callback namespace
+    app.add_handler(CommandHandler('castle', castle))
+    app.add_handler(CommandHandler('demonlevel', demonlevel))
+    # Group 1 is intentional: ConversationHandler's catch-all fallback in group 0
+    # must not swallow Castle buttons while a player is in character creation.
+    app.add_handler(CallbackQueryHandler(castle_callback, pattern=r'^castle:'), group=1)
+
     app.add_handler(CommandHandler('forge', forge_command))
     app.add_handler(CallbackQueryHandler(forge_callback, pattern=r'^forge_'))
     app.add_handler(CommandHandler('sword', sword_command))
@@ -1092,6 +1166,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
+    app.add_error_handler(_global_error_handler)
 
     logger.info("🗡️ Demon Slayer RPG Bot starting...")
     app.post_init = on_startup
@@ -1107,46 +1182,11 @@ def main():
         webhook_path = f"/{BOT_TOKEN}"
         full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
         
-        logger.info(f"🌐 Running on Render with webhook: {full_webhook_url}")
+        # Do not log full_webhook_url because its path contains the bot token.
+        logger.info("🌐 Running on Render webhook mode.")
         
-        async def setup_webhook():
-            await app.bot.set_webhook(full_webhook_url)
-            info = await app.bot.get_webhook_info()
-            logger.info(f"✅ Webhook set: {info.url}")
-            logger.info(f"📊 Pending updates: {info.pending_update_count}")
-        
-        # Start the health server thread first
-        import time as _time
-        import urllib.request as _urllib_req
-        import urllib.error as _urllib_err
-        
-        _PING_TARGET = (WEBHOOK_URL + "/healthz") if WEBHOOK_URL else f"http://127.0.0.1:{PORT}/healthz"
-        _PING_INTERVAL = 8 * 60
-        _PING_TIMEOUT = 15
-        
-        def _keep_alive():
-            """Pings the public URL on a fixed cadence with back-off on failure."""
-            print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
-            _time.sleep(20)
-            failures = 0
-            while True:
-                try:
-                    with _urllib_req.urlopen(_PING_TARGET, timeout=_PING_TIMEOUT) as r:
-                        print(f"[KEEP-ALIVE] ✅ {r.status} OK", flush=True)
-                        failures = 0
-                except _urllib_err.URLError as exc:
-                    failures += 1
-                    print(f"[KEEP-ALIVE] ⚠️  attempt {failures} failed: {exc.reason}", flush=True)
-                except Exception as exc:
-                    failures += 1
-                    log.error("[KEEP-ALIVE] %s", exc)
-
-                wait = min(_PING_INTERVAL, _PING_INTERVAL * (2 ** max(0, failures - 1)))
-                wait = min(wait, 13 * 60)
-                _time.sleep(wait)
-
-        _ka_thread = threading.Thread(target=_keep_alive, daemon=True, name="keep-alive")
-        _ka_thread.start()
+        # Application.run_webhook manages the webhook lifecycle and update queue.
+        # The separate local diagnostic server is started once in __main__.
         
         # Run the app with webhook
         app.run_webhook(
@@ -1155,7 +1195,7 @@ def main():
             url_path=webhook_path,
             webhook_url=full_webhook_url,
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
+            drop_pending_updates=False,
         )
     else:
         # Running locally or without webhook - use polling mode
@@ -1163,7 +1203,7 @@ def main():
         try:
             app.run_polling(
                 allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
+                drop_pending_updates=False,
                 close_loop=False,  # Don't close the loop - we're in a restart loop
             )
         finally:
@@ -1269,9 +1309,11 @@ if __name__ == '__main__':
             srv = ThreadingHTTPServer((HOST, HEALTH_PORT), _H)
             _health_started.set()
             print(f"[HEALTH] Listening on {HOST}:{HEALTH_PORT}", flush=True)
-            if RENDER_URL:
-                print(f"[HEALTH] Render URL: {RENDER_URL}", flush=True)
-                print(f"[HEALTH] Health check: {RENDER_URL}/healthz", flush=True)
+            print(
+                f"[HEALTH] Local diagnostic endpoint: http://127.0.0.1:{HEALTH_PORT}/healthz "
+                "(internal only; Render routes public traffic to the webhook port).",
+                flush=True,
+            )
             srv.serve_forever()
         except Exception as e:
             log.error("[HEALTH ERROR] %s", e)
@@ -1287,12 +1329,12 @@ if __name__ == '__main__':
     import urllib.error   as _urllib_err
 
     # Ping the health endpoint on the separate health port
-    _PING_TARGET   = (RENDER_URL + "/healthz") if RENDER_URL else f"http://127.0.0.1:{HEALTH_PORT}/healthz"
+    _PING_TARGET   = f"http://127.0.0.1:{HEALTH_PORT}/healthz"
     _PING_INTERVAL = 8 * 60
     _PING_TIMEOUT  = 15
 
     def _keep_alive():
-        """Pings the public URL on a fixed cadence with back-off on failure."""
+        """Pings the local diagnostic health server; this does not prevent Render sleep."""
         print(f"[KEEP-ALIVE] target={_PING_TARGET}  interval={_PING_INTERVAL//60}min", flush=True)
         _time.sleep(20)
         failures = 0
