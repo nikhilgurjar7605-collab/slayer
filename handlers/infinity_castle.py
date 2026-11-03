@@ -654,39 +654,6 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         )
         return
-    if action == "start_squad":
-        party = col("castle_parties").find_one({"leader_id": user_id, "status": "open"})
-        if not party:
-            await _safe_castle_edit(query, "You don't have an open squad to start. Create one from the Castle Hub.")
-            return
-        col("castle_parties").update_one(
-            {"party_id": party["party_id"], "status": "open"},
-            {"$addToSet": {"member_ids": user_id},
-             "$set": {"updated_at": datetime.utcnow()}}
-        )
-        party = get_castle_party(party["party_id"])
-        members = _party_players(party)
-        if not members:
-            await _safe_castle_edit(query, "No valid squad members found. Ask everyone to join again.")
-            return
-        run = create_castle_run(user_id, "squad", party["party_id"])
-        hp_map = {
-            str(member["user_id"]): int(member.get("hp", member.get("max_hp", 100)))
-            for member in members
-        }
-        save_castle_run(run["run_id"], {"player_hp_by_user": hp_map})
-        col("castle_parties").update_one(
-            {"party_id": party["party_id"], "status": "open"},
-            {"$set": {"status": "running", "updated_at": datetime.utcnow()}}
-        )
-        await _start_floor(run, player, party)
-        run = _find_run(user_id)
-        await _safe_castle_edit(
-            query,
-            _render_run(run, player, party, "🤝 Co-op battle started! Every squad member can take a turn."),
-            parse_mode="HTML", reply_markup=_keyboard(run)
-        )
-        return
     if action == "equipment":
         owned = list(col("castle_equipment").find({"user_id": user_id}).sort("obtained_at", -1).limit(30))
         lines = ["🎒 <b>YOUR CASTLE ARMOURY</b>", "━━━━━━━━━━━━━━━━━━━━"]
@@ -726,6 +693,39 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")
             ]])
+        )
+        return
+    if action == "start_squad":
+        party = col("castle_parties").find_one({"leader_id": user_id, "status": "open"})
+        if not party:
+            await _safe_castle_edit(query, "You don't have an open squad to start. Create one from the Castle Hub.")
+            return
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open"},
+            {"$addToSet": {"member_ids": user_id},
+             "$set": {"updated_at": datetime.utcnow()}}
+        )
+        party = get_castle_party(party["party_id"])
+        members = _party_players(party)
+        if not members:
+            await _safe_castle_edit(query, "No valid squad members found. Ask everyone to join again.")
+            return
+        run = create_castle_run(user_id, "squad", party["party_id"])
+        hp_map = {
+            str(member["user_id"]): int(member.get("hp", member.get("max_hp", 100)))
+            for member in members
+        }
+        save_castle_run(run["run_id"], {"player_hp_by_user": hp_map})
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open"},
+            {"$set": {"status": "running", "updated_at": datetime.utcnow()}}
+        )
+        await _start_floor(run, player, party)
+        run = _find_run(user_id)
+        await _safe_castle_edit(
+            query,
+            _render_run(run, player, party, "🤝 Co-op battle started! Every squad member can take a turn."),
+            parse_mode="HTML", reply_markup=_keyboard(run)
         )
         return
     if not run:
