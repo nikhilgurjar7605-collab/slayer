@@ -279,34 +279,21 @@ def _threat_emoji(threat: str) -> str:
 
 def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
                           active_pet: Optional[Dict] = None) -> str:
-    """Build a compact, polished Telegram HTML exploration encounter caption."""
+    """Build a concise Telegram HTML exploration encounter message."""
     from html import escape
 
     enemy_level = max(1, int(preview.get('recommended_level', 1) or 1))
     player_level = get_level(player['xp'])
     threat = escape(str(preview.get('threat', 'UNKNOWN')))
     enemy_name = escape(str(enemy.get('name', 'Unknown Enemy')))
-    player_name = escape(str(player.get('name', 'Slayer')))
     event_desc = escape(str(preview.get('event_description') or 'The enemy watches your every move.'))
     boss_icon = " ☠️" if enemy.get('is_boss') else ""
 
-    if active_pet:
-        pet_name = escape(str(active_pet.get('name', 'Pet')))
-        pet_emoji = PETS.get(active_pet.get('name'), {}).get('emoji', '🐾')
-        companion_line = f"{pet_emoji} {pet_name} • Active"
-    else:
-        companion_line = "🐦‍⬛ Kasugai Crow • Active"
-
     return "\n".join([
-        f"🌲 <b>While walking, you encountered {enemy_name}!</b>{boss_icon}",
-        f"📜 People of this area signify it as a <b>{threat} Threat of Level {enemy_level}</b>.",
+        f"🌲 <b>You encountered {enemy_name}!</b>{boss_icon}",
+        f"📜 <b>{threat} Threat • Level {enemy_level}</b>",
         f"<i>{event_desc}</i>",
-        "",
-        f"👹 <b>{enemy_name.upper()}</b>  •  🗡️ {player_name}",
-        f"❤️ <b>{player['hp']:,}/{player['max_hp']:,}</b> HP  •  Lv. {player_level}",
-        "",
-        f"{companion_line}",
-        f"⭐ {enemy['xp']:,} XP  •  💰 {enemy['yen']:,}¥",
+        f"❤️ {player['hp']:,}/{player['max_hp']:,} HP • Lv. {player_level}",
     ])
 
 # ─────────────────────────────────────────────────────────────────────────
