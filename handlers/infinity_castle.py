@@ -420,6 +420,21 @@ def _render_run(run, player, party=None, notice=None):
 
 @_castle_guard
 async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Infinity Castle is a private-chat feature. Keep the check server-side so
+    # group commands cannot create runs, squads, spend supplies, or change state.
+    if not update.effective_chat or update.effective_chat.type != "private":
+        bot_url = f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else None
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💬 Open Bot DM", url=bot_url)
+        ]]) if bot_url else None
+        await update.effective_message.reply_text(
+            "🔒 <b>Infinity Castle is available only in the bot's private chat.</b>\n"
+            "Open my DM and send /castle to continue your expedition.",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        return
+
     user_id = update.effective_user.id
     logger.info("Castle command received: user_id=%s args=%s", user_id, context.args or [])
     player = get_player(user_id)
@@ -1015,6 +1030,13 @@ async def _complete_enemy(run, player, party):
 async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     logger.info("Castle callback received: user_id=%s data=%s", query.from_user.id, query.data)
+    # Reject stale or manually triggered Castle buttons in group chats too.
+    if not query.message or query.message.chat.type != "private":
+        await query.answer(
+            "🔒 Infinity Castle can only be played in the bot's private chat.",
+            show_alert=True,
+        )
+        return
     await query.answer()
     user_id = query.from_user.id
     player = get_player(user_id)
