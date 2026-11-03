@@ -825,6 +825,82 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML", reply_markup=_keyboard(run)
         )
         return
+    if action == "shop":
+        shop_text, supplies = _castle_shop_text(user_id)
+        await _safe_castle_edit(
+            query, shop_text, parse_mode="HTML",
+            reply_markup=_castle_shop_keyboard(supplies)
+        )
+        return
+    if action.startswith("buy_"):
+        item_key = action[4:]
+        item = CASTLE_RECOVERY_ITEMS.get(item_key)
+        if not item:
+            await query.answer("Unknown supply.", show_alert=True)
+            return
+        balance = int(player.get("castle_coins", 0) or 0)
+        if balance < item["price"]:
+            await query.answer(f"Need {item['price']} Castle Coins.", show_alert=True)
+            return
+        result = col("players").update_one(
+            {"user_id": user_id, "castle_coins": {"$gte": item["price"]}},
+            {"$inc": {"castle_coins": -item["price"]}}
+        )
+        if result.modified_count != 1:
+            await query.answer("Not enough Castle Coins.", show_alert=True)
+            return
+        col("castle_supplies").update_one(
+            {"user_id": user_id, "item_id": item_key},
+            {"$inc": {"quantity": 1}, "$set": {"updated_at": datetime.utcnow()}},
+            upsert=True
+        )
+        player = get_player(user_id) or player
+        shop_text, supplies = _castle_shop_text(user_id)
+        await _safe_castle_edit(
+            query, shop_text + f"\\n\\n✅ Purchased <b>{item['name']}</b>.",
+            parse_mode="HTML", reply_markup=_castle_shop_keyboard(supplies)
+        )
+        return
+    if action.startswith("use_"):
+        item_key = action[4:]
+        item = CASTLE_RECOVERY_ITEMS.get(item_key)
+        if not item:
+            await query.answer("Unknown supply.", show_alert=True)
+            return
+        consumed = col("castle_supplies").update_one(
+            {"user_id": user_id, "item_id": item_key, "quantity": {"$gt": 0}},
+            {"$inc": {"quantity": -1}, "$set": {"updated_at": datetime.utcnow()}}
+        )
+        if consumed.modified_count != 1:
+            await query.answer("You don't own this recovery item.", show_alert=True)
+            return
+        if item["effect"] == "hp":
+            field = "hp"
+            maximum = max(1, int(player.get("max_hp", player.get("hp", 1)) or 1))
+        else:
+            field = "sta"
+            maximum = max(1, int(player.get("max_sta", player.get("sta", 1)) or 1))
+        current = max(0, int(player.get(field, 0) or 0))
+        restored = min(maximum - current, max(1, int(maximum * item["amount"])))
+        if restored <= 0:
+            col("castle_supplies").update_one(
+                {"user_id": user_id, "item_id": item_key}, {"$inc": {"quantity": 1}}
+            )
+            await query.answer(f"Your {field.upper()} is already full.", show_alert=True)
+            return
+        update_player(user_id, **{field: current + restored})
+        if run:
+            hp_map = run.get("player_hp_by_user", {})
+            if field == "hp" and str(user_id) in hp_map:
+                hp_map[str(user_id)] = min(maximum, int(hp_map.get(str(user_id), current)) + restored)
+                save_castle_run(run["run_id"], {"player_hp_by_user": hp_map})
+        player = get_player(user_id) or player
+        shop_text, supplies = _castle_shop_text(user_id)
+        await _safe_castle_edit(
+            query, shop_text + f"\\n\\n✅ Used <b>{item['name']}</b>: +{restored} {field.upper()}.",
+            parse_mode="HTML", reply_markup=_castle_shop_keyboard(supplies)
+        )
+        return
     if not run:
         await _safe_castle_edit(query, 
             "No active Castle run. Choose a mode to begin.",
