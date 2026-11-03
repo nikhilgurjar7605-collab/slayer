@@ -800,7 +800,7 @@ async def _start_floor(run, player, party):
         item = CASTLE_RECOVERY_ITEMS[item_key]
         quantity = random.choices([1, 2], weights=[85, 15], k=1)[0]
         room_notice += (
-            f"\\n\\n🎁 <b>HIDDEN SUPPLY CACHE!</b> "
+            f"\n\n🎁 HIDDEN SUPPLY CACHE! "
             f"The squad discovered {quantity} × {item['name']}!"
         )
         for member in members:
