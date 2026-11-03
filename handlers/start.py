@@ -113,6 +113,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await gifstore_handle_deeplink(update, context)
         return ConversationHandler.END
 
+    if player and context.args and context.args[0].startswith("castle_"):
+        party_code = context.args[0][7:]
+        try:
+            from utils.castle_database import get_castle_party, add_castle_party_member
+            target_party = get_castle_party(party_code)
+            if not target_party or target_party.get("status") != "open":
+                await msg.reply_text("❌ This Infinity Castle squad is no longer recruiting. Ask the leader for a fresh invite.")
+            elif add_castle_party_member(party_code, user_id):
+                await msg.reply_text(
+                    "🏯 <b>Squad joined successfully!</b>\n"
+                    "You are now part of the Infinity Castle party. Open the Castle Hub and mark yourself ready.",
+                    parse_mode="HTML"
+                )
+            else:
+                await msg.reply_text("❌ This squad is full or has already started.")
+        except Exception:
+            logging.getLogger(__name__).exception("Castle deep-link join failed")
+            await msg.reply_text("⚠️ I couldn't join that squad right now. Use /castle join CODE instead.")
+        return ConversationHandler.END
+
     if player:
         if msg:
             await msg.reply_text(
