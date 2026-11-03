@@ -239,7 +239,7 @@ def _keyboard(run, is_party_member=True):
         ])
     else:
         rows.append([InlineKeyboardButton("➡️ Continue to Next Floor", callback_data="castle:next")])
-    rows.append([InlineKeyboardButton("📊 Battle Status", callback_data="castle:status")])
+    rows.append([InlineKeyboardButton("📊 Battle Status", callback_data="castle:status"), InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop")])
     return InlineKeyboardMarkup(rows)
 
 
