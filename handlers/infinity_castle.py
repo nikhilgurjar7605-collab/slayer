@@ -496,6 +496,29 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if action == "leave":
+        party = _find_user_party(user_id)
+        if not party or party.get("status") != "open":
+            await update.effective_message.reply_text("You are not in an open Castle squad.")
+            return
+        leader_id = int(party.get("leader_id", 0))
+        members = list(dict.fromkeys([leader_id] + [int(uid) for uid in party.get("member_ids", [])]))
+        if leader_id != user_id or len(members) > 1:
+            await update.effective_message.reply_text(
+                "Only the owner/leader of an empty squad can disband it. "
+                "A squad with members must transfer leadership first."
+            )
+            return
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open", "leader_id": user_id},
+            {"$set": {"status": "disbanded", "member_ids": [],
+                      "disbanded_at": datetime.utcnow(), "updated_at": datetime.utcnow()}}
+        )
+        await update.effective_message.reply_text(
+            "🚪 Your empty squad has been disbanded. You can create or join another squad."
+        )
+        return
+
     if action == "gift":
         if len(args) < 3:
             await update.effective_message.reply_text(
@@ -1120,6 +1143,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons = []
         if party.get("status") == "open" and leader_id == user_id:
             buttons.append([InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")])
+            if len(member_ids) == 1:
+                buttons.append([InlineKeyboardButton("🚪 Disband Empty Squad", callback_data="castle:leave_squad")])
         if party.get("status") == "open" and leader_id != user_id:
             buttons.append([InlineKeyboardButton("🚪 Leave Squad", callback_data="castle:leave_squad")])
         buttons.append([InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop"),
@@ -1129,6 +1154,24 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if action == "leave_squad":
         party = _find_user_party(user_id)
+        if party and int(party.get("leader_id", 0)) == user_id and party.get("status") == "open":
+            members = list(dict.fromkeys(
+                [int(party.get("leader_id", 0))] +
+                [int(uid) for uid in party.get("member_ids", [])]
+            ))
+            if len(members) != 1:
+                await query.answer("Your squad has members. Transfer leadership before leaving.", show_alert=True)
+                return
+            col("castle_parties").update_one(
+                {"party_id": party["party_id"], "status": "open", "leader_id": user_id},
+                {"$set": {"status": "disbanded", "member_ids": [],
+                          "disbanded_at": datetime.utcnow(), "updated_at": datetime.utcnow()}}
+            )
+            await _safe_castle_edit(
+                query, "🚪 Your empty squad has been disbanded. You can now create or join another squad.",
+                parse_mode="HTML", reply_markup=_lobby_keyboard()
+            )
+            return
         if not party or int(party.get("leader_id", 0)) == user_id or party.get("status") != "open":
             await query.answer("Only squad members can leave an open squad.", show_alert=True)
             return
