@@ -1276,7 +1276,20 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if target_id not in roster or target_id == user_id:
             await query.answer("That player is not eligible.", show_alert=True)
             return
-        col("castle_parties").update_one({"party_id": party["party_id"], "status": "open", "leader_id": user_id}, {"$set": {"leader_id": target_id, "updated_at": datetime.utcnow()}, "$addToSet": {"member_ids": user_id}, "$pull": {"member_ids": target_id}})
+        # Build the new roster once. Do not combine $addToSet and $pull on
+        # member_ids in one Mongo update: MongoDB rejects that path conflict.
+        new_member_ids = list(dict.fromkeys(
+            uid for uid in roster if uid not in (target_id, user_id)
+        ))
+        new_member_ids.append(user_id)
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "open", "leader_id": user_id},
+            {"$set": {
+                "leader_id": target_id,
+                "member_ids": new_member_ids,
+                "updated_at": datetime.utcnow(),
+            }}
+        )
         await _safe_castle_edit(query, "👑 Leadership transferred. The new leader can now manage the squad and start the expedition.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👥 Refresh Squad", callback_data="castle:my_squad")]]))
         return
     if action.startswith("kick_member:"):
