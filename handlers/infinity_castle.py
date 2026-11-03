@@ -495,12 +495,29 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(args) < 2:
             await update.effective_message.reply_text("Usage: /castle join PARTY_CODE")
             return
+        target_party = get_castle_party(args[1])
+        if not target_party or target_party.get("status") != "open":
+            await update.effective_message.reply_text("❌ Squad not found or it has already started.")
+            return
         existing_party = _find_user_party(user_id)
         if existing_party:
             if existing_party.get("party_id") == args[1]:
                 await update.effective_message.reply_text("✅ You are already in this squad. Open /castle and tap My Squad.")
-            else:
-                await update.effective_message.reply_text("❌ You can belong to only one Castle squad at a time. Leave your current squad first.")
+                return
+            if existing_party.get("status") != "open" or int(existing_party.get("leader_id", 0)) == user_id:
+                await update.effective_message.reply_text("⚠️ You cannot switch squads while your current squad is running, or while you are its leader. Ask the leader to close/recreate the squad first.")
+                return
+            await update.effective_message.reply_text(
+                "👥 <b>Switch Castle Squad?</b>\\n\\n"
+                "You are already in another open squad. If you continue, you will leave your current squad and join the new one.\\n"
+                f"New squad: <code>{escape(str(args[1]))}</code>\\n"
+                "Do you want to switch?",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Confirm & Join", callback_data=f"castle:transfer_confirm:{args[1]}"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="castle:transfer_cancel"),
+                ]]),
+            )
             return
         if _find_run(user_id):
             await update.effective_message.reply_text("Finish or retreat from your active Castle run first.")
@@ -858,6 +875,48 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")]
             ])
         )
+        return
+    if action.startswith("transfer_confirm:"):
+        target_id = action.split(":", 1)[1]
+        old_party = _find_user_party(user_id)
+        target_party = get_castle_party(target_id)
+        if not target_party or target_party.get("status") != "open":
+            await _safe_castle_edit(query, "❌ That squad is no longer available. Your current squad has not been changed.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+            return
+        if old_party and old_party.get("party_id") == target_id:
+            await _safe_castle_edit(query, "✅ You are already in that squad.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+            return
+        if old_party:
+            if old_party.get("status") != "open" or int(old_party.get("leader_id", 0)) == user_id:
+                await _safe_castle_edit(query, "⚠️ You cannot switch from a running squad or leave a squad you lead. Your membership is unchanged.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+                return
+            col("castle_parties").update_one(
+                {"party_id": old_party["party_id"], "status": "open"},
+                {"$pull": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
+            )
+        joined = add_castle_party_member(target_id, user_id)
+        if not joined:
+            # Best-effort rollback so a full/closed target does not strand the player.
+            if old_party:
+                col("castle_parties").update_one(
+                    {"party_id": old_party["party_id"], "status": "open"},
+                    {"$addToSet": {"member_ids": user_id}, "$set": {"updated_at": datetime.utcnow()}}
+                )
+            await _safe_castle_edit(query, "❌ That squad became full or started. Your previous squad membership was restored.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+            return
+        new_party = get_castle_party(target_id) or target_party
+        try:
+            await context.bot.send_message(
+                chat_id=int(new_party["leader_id"]),
+                text=f"👥 <b>Squad member joined!</b>\\n{escape(str(player.get('name', f'Player {user_id}')))} joined your squad.\\nSquad size: <b>{len(new_party.get('member_ids', []))}/4</b>",
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.exception("Could not notify new Castle squad leader about transferred member")
+        await _safe_castle_edit(query, "✅ You left your previous squad and joined the new squad. The new leader has been notified.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+        return
+    if action == "transfer_cancel":
+        await _safe_castle_edit(query, "↩️ Squad switch cancelled. You are still in your previous squad.", parse_mode="HTML", reply_markup=_lobby_keyboard())
         return
     if action == "my_squad":
         party = _find_user_party(user_id)
