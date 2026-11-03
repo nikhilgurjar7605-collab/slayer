@@ -6,6 +6,57 @@ from utils.guards import dm_only
 from handlers.admin import has_admin_access
 
 
+def _clear_castle_state(user_id):
+    """Release a player from a stuck Castle run without deleting squad progress.
+
+    If the player is in a running co-op squad, the shared expedition is safely
+    abandoned and the squad returns to its open lobby so the team can retry.
+    Open squad membership and its invite code are preserved.
+    """
+    from datetime import datetime
+
+    user_id = int(user_id)
+    fixed = []
+
+    # Clear stale or stuck Infinity Castle solo/co-op run state.
+    fixed.extend(_clear_castle_state(user_id))
+    party = col("castle_parties").find_one({
+        "$or": [{"member_ids": user_id}, {"leader_id": user_id}],
+        "status": {"$in": ["open", "running"]},
+    }, sort=[("updated_at", -1)])
+
+    run_query = {"user_id": user_id, "status": "active"}
+    if party and party.get("status") == "running":
+        party_id = str(party.get("party_id", ""))
+        if party_id:
+            run_query = {"party_id": party_id, "status": "active"}
+
+    result = col("castle_runs").update_many(
+        run_query,
+        {"$set": {
+            "status": "abandoned",
+            "abandoned_at": datetime.utcnow(),
+            "abandoned_reason": "player_used_unstuck",
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+    if result.modified_count:
+        fixed.append("🏯 Stuck Infinity Castle battle cleared")
+
+    if party and party.get("status") == "running":
+        col("castle_parties").update_one(
+            {"party_id": party["party_id"], "status": "running"},
+            {"$set": {
+                "status": "open",
+                "ready_ids": [],
+                "updated_at": datetime.utcnow(),
+            }},
+        )
+        fixed.append("👥 Squad returned to its lobby; members can ready up and retry")
+
+    return fixed
+
+
 @dm_only
 async def unstuck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -78,6 +129,7 @@ async def forceunstuck(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Same cleanup
+    _clear_castle_state(target_id)
     clear_battle_state(target_id)
     col("duels").update_many({"$or": [{"challenger_id": target_id}, {"target_id": target_id}], "status": "active"}, {"$set": {"status": "abandoned"}})
     col("coop_battles").update_many({"$or": [{"host_id": target_id}, {"guest_id": target_id}], "status": "active"}, {"$set": {"status": "abandoned"}})
