@@ -348,7 +348,8 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     ])
 
 # ─────────────────────────────────────────────────────────────────────────
-#  YOUR EXISTING HELPER FUNCTIONS (unchanged)# ─────────────────────────────────────────────────────────────────────────
+#  YOUR EXISTING HELPER FUNCTIONS (unchanged)
+# ─────────────────────────────────────────────────────────────────────────
 def is_in_battle(user_id) -> bool:
     state = get_battle_state(user_id)
     return bool(state and state.get('in_combat'))
@@ -647,7 +648,8 @@ def _apply_turn_end_player_sustain(user_id, player, current_hp, bonuses, context
     if current_hp <= 0 and bonuses.get('last_stand'):
         if 'Last Stand' not in used_once:
             current_hp = 1
-            used_once.append('Last Stand')            log.append("💀 *LAST STAND!* Survived with 1 HP! _(used for this battle)_")
+            used_once.append('Last Stand')
+            log.append("💀 *LAST STAND!* Survived with 1 HP! _(used for this battle)_")
     if bonuses.get('regen_pct') and current_hp > 0:
         regen_pct_hp = int(player['max_hp'] * bonuses['regen_pct'])
         if regen_pct_hp > 0:
@@ -924,7 +926,8 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ally = get_active_ally(state)
     log = []
     owned_skills = _safe_get_skills(user_id)
-    bonuses = _safe_get_bonuses(user_id, context)    pressure = context.user_data.get('pressure') or calc_pressure(player, player.get('location', 'asakusa'))
+    bonuses = _safe_get_bonuses(user_id, context)
+    pressure = context.user_data.get('pressure') or calc_pressure(player, player.get('location', 'asakusa'))
     combo = context.user_data.get('combo', 0)
     chaos_mod = get_chaos_modifier() if pressure.get('is_chaos') else 1.0
     attack_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
@@ -1226,7 +1229,8 @@ async def technique(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = f"💨 *Techniques — Choose Art:*\n\n{moves_text}"
     await edit_photo_caption(
-        context, query.message.chat_id, query.message.message_id,        text=text,
+        context, query.message.chat_id, query.message.message_id,
+        text=text,
         image_category="skills",
         image_key="default",
         reply_markup=InlineKeyboardMarkup(buttons),
@@ -1528,7 +1532,8 @@ async def use_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
         enemy_dmg = int(enemy_dmg * _phase_mult)
         if state_fresh.get('is_boss'):
             log.append("💢 The boss's phase strike lands with crushing force!")
-    if pressure.get('is_chaos'):        enemy_dmg = int(enemy_dmg * get_chaos_modifier())
+    if pressure.get('is_chaos'):
+        enemy_dmg = int(enemy_dmg * get_chaos_modifier())
     blind_ctx = context.user_data.get(f'battle_ctx_{user_id}', {})
     if blind_ctx.get('enemy_blind') and random.random() < 0.30:
         log.append("Blizzard Veil! Enemy attack missed!")
@@ -1828,7 +1833,8 @@ async def flee(update: Update, context: ContextTypes.DEFAULT_TYPE):
         turn = context.user_data.get('turn', 1) + 1
         context.user_data['turn'] = turn
         status_text = combat_status(player, state, ally, log_lines=log, turn=turn, context=context)
-        await edit_photo_caption(            context, query.message.chat_id, query.message.message_id,
+        await edit_photo_caption(
+            context, query.message.chat_id, query.message.message_id,
             text=status_text,
             image_category="enemies",
             image_key=state['enemy_name'],
