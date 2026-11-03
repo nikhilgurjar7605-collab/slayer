@@ -947,7 +947,9 @@ async def _start_floor(run, player, party):
         "current_enemy": enemy, "player_hp_by_user": hp_map,
         "room_id": f"floor_{floor}", "floor": floor,
         "room_type": room_type, "room_notice": room_notice,
-        "checkpoint_floor": ((floor - 1) // 10) * 10 + 1,
+        # Resume from the start of the current 5-floor segment.
+        # Clearing each fifth floor activates the next segment checkpoint.
+        "checkpoint_floor": ((floor - 1) // 5) * 5 + 1,
     })
     for member in members:
         record_castle_progress(member["user_id"], floor, run.get("mode", "solo"))
@@ -1019,8 +1021,8 @@ async def _complete_enemy(run, player, party):
         return "🏆 <b>INFINITY CASTLE CLEARED!</b> Muzan has fallen.\n" + ("\n".join(rewards) if rewards else "No equipment drop this time.")
     save_castle_run(run["run_id"], {"current_enemy": dict(enemy, hp=0), "room_id": "cleared"})
     message = f"✅ Floor {floor} cleared!"
-    if floor in BOSS_FLOORS:
-        message += f" Checkpoint reached.\n"
+    if floor % 5 == 0:
+        message += f" 🏁 Checkpoint reached! Your next resume point is Floor {floor + 1}.\n"
     if rewards:
         message += "\n🎁 Equipment earned:\n" + "\n".join(rewards)
     return message + "\nContinue to the next floor when ready."
