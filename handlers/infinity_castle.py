@@ -319,6 +319,8 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not player:
         await update.effective_message.reply_text("Create your character first with /start.")
         return
+    _apply_timed_recovery(user_id, player)
+        return
     args = context.args or []
     action = args[0].lower() if args else "status"
 
