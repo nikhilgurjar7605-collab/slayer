@@ -377,7 +377,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     _apply_timed_recovery(user_id, player)
     args = context.args or []
-    action = args[0].lower() if args else "status"
+    action = args[0].lower() if args else "menu"
 
 
     if action == "name":
