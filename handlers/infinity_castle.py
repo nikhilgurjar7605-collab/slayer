@@ -672,6 +672,8 @@ async def _complete_enemy(run, player, party):
             add_demon_xp(uid, 20 + floor * 2 + (50 if enemy.get("boss") else 0))
         castle_coins = 20 + floor * 5 + (100 if enemy.get("boss") else 0)
         col("players").update_one({"user_id": uid}, {"$inc": {"castle_coins": castle_coins}})
+        fresh_wallet = col("players").find_one({"user_id": uid}, {"castle_coins": 1}) or {}
+        update_player(uid, castle_coins=int(fresh_wallet.get("castle_coins", 0)))
         rewards.append(f"🪙 {escape(str(member.get('name', 'Player')))}: +{castle_coins} Castle Coins")
         item = _pick_equipment(uid, floor, member, enemy)
         # Equipment is rare on ordinary floors; every tenth-floor boss has a drop.
@@ -852,6 +854,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result.modified_count != 1:
             await query.answer("Not enough Castle Coins.", show_alert=True)
             return
+        fresh_wallet = col("players").find_one({"user_id": user_id}, {"castle_coins": 1}) or {}
+        update_player(user_id, castle_coins=int(fresh_wallet.get("castle_coins", 0)))
         col("castle_supplies").update_one(
             {"user_id": user_id, "item_id": item_key},
             {"$inc": {"quantity": 1}, "$set": {"updated_at": datetime.utcnow()}},
