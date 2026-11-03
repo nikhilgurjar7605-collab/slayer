@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 from utils.database import get_player, update_player, col
 from utils.helpers import get_level
-from config import SHOP_ITEMS
+from config import SHOP_ITEMS, BOT_USERNAME
 from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from utils.castle_database import (
     create_castle_run, get_active_castle_run, save_castle_run, apply_castle_enemy_damage,
@@ -331,7 +331,7 @@ def _squad_share_url(party_id):
         "Join my Infinity Castle squad! Open the Demon Slayer bot and use:\n"
         f"/castle join {party_id}"
     )
-    return "https://t.me/share/url?" + urlencode({"text": invite_text})
+    return "https://t.me/share/url?" + urlencode({"url": f"https://t.me/{BOT_USERNAME}?start=castle_{party_id}", "text": invite_text})
 
 
 def _lobby_keyboard():
