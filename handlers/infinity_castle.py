@@ -1053,9 +1053,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
     if action == "solo":
-        if _find_user_party(user_id):
-            await _safe_castle_edit(query, "You are already in a Castle squad. Open My Squad to view it.", parse_mode="HTML", reply_markup=_lobby_keyboard())
-            return
+        # Solo expeditions are independent of squad membership. Keep the
+        # player's squad roster untouched; only block a second active run.
         if run:
             await query.message.reply_text("You already have an active run. Use /castle status.")
             return
