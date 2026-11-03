@@ -45,14 +45,19 @@ def _castle_guard(handler):
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             return await handler(update, context)
-        except Exception:
+        except Exception as exc:
             logger.exception("Infinity Castle handler failed: %s", handler.__name__)
             message = update.effective_message
             if message:
                 try:
+                    # Show a short diagnostic so the exact failing operation can
+                    # be identified from Telegram without exposing a traceback.
+                    detail = f"{type(exc).__name__}: {str(exc)[:350]}"
                     await message.reply_text(
-                        "⚠️ Infinity Castle hit an internal error. The error has been logged; "
-                        "please try again in a moment."
+                        "⚠️ Infinity Castle error\\n"
+                        f"<code>{escape(detail)}</code>\\n"
+                        "Please send this error text to the developer.",
+                        parse_mode="HTML"
                     )
                 except Exception:
                     logger.exception("Could not send Infinity Castle error notice")
