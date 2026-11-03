@@ -696,6 +696,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     if action == "start_squad":
+        if run:
+            await _safe_castle_edit(query, "You already have an active Castle run. Use /castle status.")
+            return
         party = col("castle_parties").find_one({"leader_id": user_id, "status": "open"})
         if not party:
             await _safe_castle_edit(query, "You don't have an open squad to start. Create one from the Castle Hub.")
