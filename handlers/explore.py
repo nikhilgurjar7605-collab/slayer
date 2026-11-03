@@ -285,16 +285,19 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
     event_desc   = preview['event_description'] or "The area is quiet..."
     boss_icon    = " ☠️" if enemy.get('is_boss') else ""
 
+    # Telegram encounter caption: plain text because /explore sends this
+    # card with parse_mode=None (avoids Markdown entity parsing failures).
     lines = [
-        f"🌲 *While walking, you encountered {enemy['name']}!*{boss_icon}",
-        f"📜 The people of this area signify it as a *{threat} Threat* of *Level {enemy_level}*.",
-        f"_{event_desc}_",
+        f"🌲 WHILE WALKING, YOU ENCOUNTERED {enemy['name']}!{boss_icon}",
+        "",
+        f"📜 The people of this area know it as a {threat} Threat — Level {enemy_level}.",
+        f"{event_desc}",
         "",
         "╭──────────────────────────╮",
-        f"│ 👹 *{enemy['name'].upper()}*{boss_icon}",
-        f"│ └─ Threat: {threat}  •  Lv. {enemy_level}",
+        f"│ 👹 {enemy['name'].upper()}{boss_icon}",
+        f"│ └─ Threat: {threat}  •  Level {enemy_level}",
         "├──────────────────────────┤",
-        f"│ 🗡️ *『{player['name']}』*",
+        f"│ 🗡️ 『{player['name']}』",
         f"│ └─ Lv. {player_level}  |  ❤️ {player['hp']:,}/{player['max_hp']:,}",
         "╰──────────────────────────╯",
         ""
