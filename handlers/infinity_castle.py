@@ -262,7 +262,9 @@ def _enemy_for(player, floor, party_players, is_squad=False):
     # Make demons a little more threatening, without returning to the old
     # excessive attack scaling. Squad size and player level still matter.
     size = max(1, len(party_players))
-    base_atk = 12 + level * 1.8 + floor * 0.22
+    # Enemy attack scales with Castle depth as well as demon level.
+    # Early floors stay manageable; late floors become substantially more dangerous.
+    base_atk = 12 + level * 1.8 + floor * 0.75
     atk = max(6, int(base_atk * (1 + 0.12 * (size - 1)) * 1.10))
     if boss:
         atk = int(atk * 1.30)
@@ -947,9 +949,8 @@ async def _start_floor(run, player, party):
         "current_enemy": enemy, "player_hp_by_user": hp_map,
         "room_id": f"floor_{floor}", "floor": floor,
         "room_type": room_type, "room_notice": room_notice,
-        # Resume from the start of the current 5-floor segment.
-        # Clearing each fifth floor activates the next segment checkpoint.
-        "checkpoint_floor": ((floor - 1) // 5) * 5 + 1,
+        # Preserve the latest checkpoint; it advances only after a floor is cleared.
+        "checkpoint_floor": max(1, int(run.get("checkpoint_floor", 1))),
     })
     for member in members:
         record_castle_progress(member["user_id"], floor, run.get("mode", "solo"))
@@ -995,7 +996,8 @@ async def _complete_enemy(run, player, party):
         # Demon progression is faction-only; ordinary XP and Yen are untouched.
         if str(member.get("faction", "")).lower() == "demon":
             add_demon_xp(uid, 20 + floor * 2 + (50 if enemy.get("boss") else 0))
-        castle_coins = 20 + floor * 5 + (100 if enemy.get("boss") else 0)
+        # Lower currency inflation while keeping floor and boss rewards meaningful.
+        castle_coins = 8 + floor * 2 + (40 if enemy.get("boss") else 0)
         col("players").update_one({"user_id": uid}, {"$inc": {"castle_coins": castle_coins}})
         fresh_wallet = col("players").find_one({"user_id": uid}, {"castle_coins": 1}) or {}
         update_player(uid, castle_coins=int(fresh_wallet.get("castle_coins", 0)))
@@ -1019,10 +1021,14 @@ async def _complete_enemy(run, player, party):
                 {"party_id": party["party_id"]}, {"$set": {"status": "completed"}}
             )
         return "🏆 <b>INFINITY CASTLE CLEARED!</b> Muzan has fallen.\n" + ("\n".join(rewards) if rewards else "No equipment drop this time.")
-    save_castle_run(run["run_id"], {"current_enemy": dict(enemy, hp=0), "room_id": "cleared"})
+    # Save a checkpoint immediately after every cleared floor. Resume starts
+    # on the next floor, even if the player leaves before tapping Continue.
+    save_castle_run(run["run_id"], {
+        "current_enemy": dict(enemy, hp=0), "room_id": "cleared",
+        "checkpoint_floor": min(MAX_FLOOR, floor + 1),
+    })
     message = f"✅ Floor {floor} cleared!"
-    if floor % 5 == 0:
-        message += f" 🏁 Checkpoint reached! Your next resume point is Floor {floor + 1}.\n"
+    message += f" 🏁 Floor checkpoint saved! Your next resume point is Floor {min(MAX_FLOOR, floor + 1)}.\\n"
     if rewards:
         message += "\n🎁 Equipment earned:\n" + "\n".join(rewards)
     return message + "\nContinue to the next floor when ready."
