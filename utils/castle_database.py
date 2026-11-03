@@ -13,6 +13,7 @@ from uuid import uuid4
 PLAYER_DEFAULTS = {
     "castle_highest_floor": 0,
     "castle_total_clears": 0,
+    "castle_coins": 0,
 }
 DEMON_DEFAULTS = {
     "demon_level": 1,
@@ -104,6 +105,7 @@ def initialize_castle_database(db):
     db.castle_item_catalog.create_index("item_id", unique=True)
     db.castle_leaderboards.create_index([("mode", 1), ("highest_floor", -1)])
     db.castle_reward_claims.create_index("claim_key", unique=True)
+    db.castle_supplies.create_index([("user_id", 1), ("item_id", 1)], unique=True)
 
     # Only fill missing fields. Never reset existing progress in other fields.
     for field, default in PLAYER_DEFAULTS.items():
