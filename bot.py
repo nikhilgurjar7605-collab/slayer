@@ -1148,7 +1148,9 @@ def main():
     # Infinity Castle — commands and dedicated callback namespace
     app.add_handler(CommandHandler('castle', castle))
     app.add_handler(CommandHandler('demonlevel', demonlevel))
-    app.add_handler(CallbackQueryHandler(castle_callback, pattern=r'^castle:'))
+    # Group 1 is intentional: ConversationHandler's catch-all fallback in group 0
+    # must not swallow Castle buttons while a player is in character creation.
+    app.add_handler(CallbackQueryHandler(castle_callback, pattern=r'^castle:'), group=1)
 
     app.add_handler(CommandHandler('forge', forge_command))
     app.add_handler(CallbackQueryHandler(forge_callback, pattern=r'^forge_'))
