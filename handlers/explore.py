@@ -303,7 +303,7 @@ def format_wild_encounter(enemy: Dict, player: Dict, preview: Dict,
         f"❤️ {player['hp']:,}/{player['max_hp']:,} HP • Lv. {player_level}",
         f"{pet_line} • ⭐ {enemy['xp']:,} XP • 💰 {enemy['yen']:,}¥",
     ]
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 # ─────────────────────────────────────────────────────────────────────────
 #  YOUR EXISTING HELPER FUNCTIONS (unchanged)
