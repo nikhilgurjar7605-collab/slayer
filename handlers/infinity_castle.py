@@ -19,7 +19,7 @@ from config import SHOP_ITEMS, BOT_USERNAME, OWNER_ID
 from handlers.skilltree import get_player_skills, get_active_skill_bonuses
 from utils.castle_database import (
     create_castle_run, get_active_castle_run, save_castle_run, apply_castle_enemy_damage,
-    calculate_player_power, calculate_difficulty, create_castle_party,
+    calculate_player_power, calculate_party_power, calculate_difficulty, create_castle_party,
     get_castle_party, add_castle_party_member, add_demon_xp,
     grant_castle_equipment, record_castle_clear, record_castle_progress,
 )
