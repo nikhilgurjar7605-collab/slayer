@@ -230,12 +230,26 @@ def calculate_enemy_level(player, floor, party_players=None):
     floor_bonus = (floor - 1) // 8
     strength_bonus = max(-5, min(10, round((strength_ratio - 1.0) * 6)))
 
-    party_players = party_players or [player]
+    party_players = [p for p in (party_players or [player]) if p]
     party = calculate_party_power(party_players)
-    # Use the squad's average power relative to this player's power.
-    party_ratio = party["average"] / max(1, own_power)
-    party_bonus = min(10, max(0, round((party_ratio - 1) * 6)) + max(0, party["size"] - 1))
-    return max(1, min(500, level + floor_bonus + strength_bonus + party_bonus))
+    # Co-op challenge uses the whole roster: average level, strongest member,
+    # average power and team size. Adding members meaningfully raises enemy level.
+    levels = [_player_level(p) for p in party_players] or [level]
+    average_level = sum(levels) / len(levels)
+    strongest_level = max(levels)
+    average_reference = 125 + max(0, average_level - 1) * 24
+    party_strength_ratio = party["average"] / max(1, average_reference)
+    party_strength_bonus = max(-3, min(16, round((party_strength_ratio - 1.0) * 8)))
+    level_spread_bonus = max(0, strongest_level - round(average_level)) // 3
+    team_bonus = max(0, len(party_players) - 1) * 3
+    return max(
+        1,
+        min(
+            500,
+            round(average_level) + floor_bonus + party_strength_bonus
+            + level_spread_bonus + team_bonus,
+        ),
+    )
 
 
 def calculate_difficulty(player, floor, party_players=None):
