@@ -394,6 +394,9 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action in ("solo", "enter"):
+        if _find_user_party(user_id):
+            await update.effective_message.reply_text("You are already in a Castle squad. Use /castle my_squad or open the Castle Hub and tap My Squad.")
+            return
         if _find_run(user_id):
             await update.effective_message.reply_text("You already have an active Castle run. Use /castle status.")
             return
@@ -756,6 +759,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     if action == "solo":
+        if _find_user_party(user_id):
+            await _safe_castle_edit(query, "You are already in a Castle squad. Open My Squad to view it.", parse_mode="HTML", reply_markup=_lobby_keyboard())
+            return
         if run:
             await query.message.reply_text("You already have an active run. Use /castle status.")
             return
