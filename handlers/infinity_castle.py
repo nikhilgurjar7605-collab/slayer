@@ -863,14 +863,25 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if run:
             await query.message.reply_text("Finish or retreat from your active run first.")
             return
-        party = create_castle_party(user_id)
-        await _safe_castle_edit(query, 
-            "👥 <b>Squad created</b>\n"
+        # Reuse the leader's existing open squad instead of generating a
+        # different invite code whenever Create Squad is tapped again.
+        party = col("castle_parties").find_one(
+            {"leader_id": user_id, "status": "open"},
+            sort=[("created_at", -1)]
+        )
+        if not party:
+            party = create_castle_party(user_id)
+        else:
+            party.pop("_id", None)
+        await _safe_castle_edit(query,
+            "👥 <b>Your Castle Squad</b>\n"
             f"Party code: <code>{escape(str(party['party_id']))}</code>\n\n"
-            "Share this code with up to 3 players:\n"
+            "This invite code stays the same while this squad is open. "
+            "Share it with up to 3 players:\n"
             f"<code>/castle join {escape(str(party['party_id']))}</code>\n\n"
             "When everyone has joined, the leader can start the co-op battle below.",
             parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👥 My Squad", callback_data="castle:my_squad")],
                 [InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")],
                 [InlineKeyboardButton("↻ Castle Hub", callback_data="castle:menu")]
             ])
@@ -920,6 +931,15 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if action == "my_squad":
         party = _find_user_party(user_id)
+        # Fallback for older leader-created records whose member_ids field
+        # may be missing or malformed: always show the leader's saved open squad.
+        if not party:
+            party = col("castle_parties").find_one(
+                {"leader_id": user_id, "status": {"$in": ["open", "running"]}},
+                sort=[("updated_at", -1)]
+            )
+            if party:
+                party.pop("_id", None)
         if not party:
             await _safe_castle_edit(
                 query, "👥 You are not in a squad yet. Create one or join using /castle join PARTY_CODE.",
