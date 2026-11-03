@@ -711,6 +711,8 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not player:
         await _safe_castle_edit(query, "Create your character first with /start.")
         return
+    _apply_timed_recovery(user_id, player)
+    player = get_player(user_id) or player
     action = query.data.split(":", 1)[1] if ":" in (query.data or "") else (query.data or "")
     run = _find_run(user_id)
 
