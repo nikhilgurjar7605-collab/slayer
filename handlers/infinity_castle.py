@@ -1089,6 +1089,13 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             owner_id = int(party.get("owner_id", party.get("original_owner_id", leader_id)) or leader_id)
             role = "Owner" if uid == owner_id else ("Acting Leader" if uid == leader_id else "Member")
             lines.append(f"• {escape(str(member.get('name', f'Player {uid}')))} — {role}")
+        lines.extend([
+            "",
+            "🎁 <b>Squad gifting</b>",
+            "Share recovery supplies with a teammate:",
+            "<code>/castle gift USER_ID bandage 1</code>",
+            "Items: bandage, medkit, tonic (up to 10 at once).",
+        ])
         buttons = []
         if party.get("status") == "open" and leader_id == user_id:
             buttons.append([InlineKeyboardButton("⚔️ Start Squad Battle", callback_data="castle:start_squad")])
