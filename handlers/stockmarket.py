@@ -3,7 +3,7 @@
 ║           DEMON SLAYER STOCK EXCHANGE — stockmarket.py          ║
 ║                                                                  ║
 ║  Player commands:                                                ║
-║    /market           — Browse all stocks (paginated)            ║
+║    /stockmarket           — Browse all stocks (paginated)            ║
 ║    /stockbuy         — Alias to open market                     ║
 ║    /stocksell        — Open your portfolio to sell              ║
 ║    /portfolio        — View your holdings + P/L                 ║
@@ -48,7 +48,7 @@ HISTORY_COL     = "stock_history"
 COOLDOWN_COL    = "stock_cooldowns"
 LIQUIDITY_COL   = "liquidity_pools"
 
-ITEMS_PER_PAGE      = 6          # stocks shown per page in /market
+ITEMS_PER_PAGE      = 6          # stocks shown per page in /stockmarket
 BUY_COOLDOWN_SECS   = 0          # No cooldown between buying the same stock (instant trades)
 MIN_HOLD_SECONDS    = 0          # No hold requirement - can sell immediately
 MAX_DAILY_BUYS      = 500        # Total buy actions per user per day (increased for better UX)
@@ -749,7 +749,7 @@ async def stocksell(update: Update, context: ContextTypes.DEFAULT_TYPE):
     holdings = _get_portfolio(user_id)
     if not holdings:
         await update.message.reply_text(
-            "💼 *Your Portfolio*\n\n_You own no stocks yet._\n\nUse /market to browse.",
+            "💼 *Your Portfolio*\n\n_You own no stocks yet._\n\nUse /stockmarket to browse.",
             parse_mode="Markdown"
         )
         return
@@ -801,7 +801,7 @@ async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stocks = _load_stocks()
     if not holdings:
         await update.message.reply_text(
-            "💼 *YOUR PORTFOLIO*\n\n_No holdings yet._\n\nUse /market to start investing.",
+            "💼 *YOUR PORTFOLIO*\n\n_No holdings yet._\n\nUse /stockmarket to start investing.",
             parse_mode="Markdown"
         )
         return
