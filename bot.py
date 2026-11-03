@@ -184,7 +184,7 @@ from handlers.sp_bank import (
     spgiveaway,
     spjoin,
 )
-from handlers.broadcast import bcast, handle_broadcast_callback
+from handlers.broadcast import bcast, handle_broadcast_callback, track_group_chat
 from handlers.admin_add import add
 from handlers.blackmarket import blackmarket, bm_buy, bm_auto_open, bm_auto_close, expire_bm_items
 from handlers.stockmarket import (
@@ -1108,6 +1108,7 @@ def main():
     app.add_handler(PreCheckoutQueryHandler(_unified_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT & filters.ChatType.PRIVATE, _unified_successful_payment))
     app.add_handler(CallbackQueryHandler(callback_router))
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS, track_group_chat), group=-3)
     app.add_handler(MessageHandler(filters.COMMAND, _track_user_command_activity), group=2)
     app.add_handler(CallbackQueryHandler(_track_user_callback_activity), group=2)
 
