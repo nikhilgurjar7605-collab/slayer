@@ -220,30 +220,23 @@ def _enemy_for(player, floor, party_players):
     name = BOSS_NAMES.get(floor) if boss else random.choice(ENEMY_NAMES)
     size = max(1, len(party_players))
 
-    # Use an arithmetic progression across the 100 Castle floors.
-    # HP(floor) = a + (floor - 1)d, where a=250 and the final term is 10,000.
-    # The AP sum identity is S_n = n/2(a + l); for an individual floor we
-    # use its AP term, not the sum of all floor HP values.
-    first_floor_hp = 250
-    final_floor_hp = 10_000
-    step = (final_floor_hp - first_floor_hp) / max(1, MAX_FLOOR - 1)
-    floor_hp = int(round(first_floor_hp + (floor - 1) * step))
-
-    # Keep co-op scaling modest and preserve the hard 10k cap, including bosses.
-    squad_scale = 1 + 0.12 * max(0, size - 1)
-    hp = min(final_floor_hp, max(100, int(floor_hp * squad_scale)))
+    # Floor 5 starts at 1,000 HP; every following floor adds exactly 500.
+    # Floors 1-4 scale gently so the progression reaches the requested value.
+    floor_hp = 1000 + (floor - 5) * 500 if floor >= 5 else floor * 200
+    # Small co-op bonus only; preserve the requested floor progression as the
+    # base value. Bosses get a modest premium without excessive multipliers.
+    hp = int(floor_hp * (1 + 0.08 * max(0, size - 1)))
     if boss:
-        hp = min(final_floor_hp, int(hp * 1.35))
+        hp = int(hp * 1.15)
 
-    # Adaptive level still considers player stats/gear, but enemy damage is
-    # deliberately reduced to avoid overwhelming players on higher floors.
-    base_atk = 10 + level * 1.6 + floor * 0.18
-    atk = max(5, int(base_atk * (1 + 0.10 * (size - 1)) * 0.80))
+    # Slightly stronger enemy attacks than the previous balance, while keeping
+    # adaptive player-level scaling and a modest boss advantage.
+    base_atk = 12 + level * 1.8 + floor * 0.22
+    atk = max(6, int(base_atk * (1 + 0.12 * (size - 1)) * 0.95))
     if boss:
-        atk = int(atk * 1.25)
+        atk = int(atk * 1.30)
 
-    # Rank is a separate enemy classification, not the enemy's Demon Level.
-    rank = "Upper Moon" if floor >= 30 else ( "Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
+    rank = "Upper Moon" if floor >= 30 else ("Lower Moon" if floor >= 10 else ("Elite" if floor >= 5 else "Demon"))
     rank_abilities = {
         "Demon": "Savage Claws",
         "Elite": "Blood Art Strike",
@@ -264,7 +257,7 @@ def _bar(value, maximum, width=12):
     return "█" * filled + "░" * (width - filled)
 
 
-def _keyboard(run, is_party_member=True):
+def _keyboard(run, is_party_member=True, user_id=None):
     rows = []
     enemy = run.get("current_enemy") or {}
     if enemy and int(enemy.get("hp", 0)) > 0:
@@ -276,9 +269,28 @@ def _keyboard(run, is_party_member=True):
             InlineKeyboardButton("🛡️ Guard", callback_data="castle:guard"),
             InlineKeyboardButton("🏃 Retreat", callback_data="castle:retreat"),
         ])
+        if user_id is not None:
+            supplies = {
+                row.get("item_id"): int(row.get("quantity", 0))
+                for row in col("castle_supplies").find({"user_id": int(user_id)})
+            }
+            item_buttons = []
+            for key, label in (("bandage", "🩹"), ("medkit", "🧪"), ("tonic", "⚡")):
+                if supplies.get(key, 0) > 0:
+                    item_buttons.append(InlineKeyboardButton(
+                        f"{label} {CASTLE_RECOVERY_ITEMS[key]['name']} ×{supplies[key]}",
+                        callback_data=f"castle:use_{key}",
+                    ))
+            if item_buttons:
+                rows.append(item_buttons[:2])
+                if len(item_buttons) > 2:
+                    rows.append(item_buttons[2:])
     else:
         rows.append([InlineKeyboardButton("➡️ Continue to Next Floor", callback_data="castle:next")])
-    rows.append([InlineKeyboardButton("📊 Battle Status", callback_data="castle:status"), InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop")])
+    rows.append([
+        InlineKeyboardButton("📊 Battle Status", callback_data="castle:status"),
+        InlineKeyboardButton("🏪 Recovery Shop", callback_data="castle:shop"),
+    ])
     return InlineKeyboardMarkup(rows)
 
 
@@ -414,7 +426,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         run = _find_run(user_id)
         await update.effective_message.reply_text(
             _render_run(run, player, party, f"🔁 Resumed from checkpoint floor {floor}. Squad HP restored to 50%."),
-            parse_mode="HTML", reply_markup=_keyboard(run)
+            parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
         )
         return
 
@@ -714,7 +726,7 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     party = get_castle_party(run.get("party_id")) if run.get("party_id") else None
     await update.effective_message.reply_text(
-        _render_run(run, player, party), parse_mode="HTML", reply_markup=_keyboard(run)
+        _render_run(run, player, party), parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
     )
 
 
@@ -1241,7 +1253,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=member_id,
                     text=battle_text,
                     parse_mode="HTML",
-                    reply_markup=_keyboard(run),
+                    reply_markup=_keyboard(run, user_id=member_id),
                 )
                 notified_ids.append(member_id)
             except Exception as exc:
@@ -1319,6 +1331,22 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not item:
             await query.answer("Unknown supply.", show_alert=True)
             return
+        # In a live run, only a living member may use supplies and the battle
+        # panel is refreshed immediately after the recovery.
+        battle_party = get_castle_party(run.get("party_id")) if run and run.get("party_id") else None
+        if run and run.get("status") == "active":
+            battle_members = (
+                list(dict.fromkeys([int(battle_party.get("leader_id", 0))] +
+                                   [int(uid) for uid in battle_party.get("member_ids", [])]))
+                if battle_party else [int(run.get("user_id", user_id))]
+            )
+            if user_id not in battle_members:
+                await query.answer("You are not in this battle.", show_alert=True)
+                return
+            if int((run.get("current_enemy") or {}).get("hp", 0)) <= 0:
+                await query.answer("The battle is over. Continue to the next floor.", show_alert=True)
+                return
+
         consumed = col("castle_supplies").update_one(
             {"user_id": user_id, "item_id": item_key, "quantity": {"$gt": 0}},
             {"$inc": {"quantity": -1}, "$set": {"updated_at": datetime.utcnow()}}
@@ -1326,13 +1354,14 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if consumed.modified_count != 1:
             await query.answer("You don't own this recovery item.", show_alert=True)
             return
-        if item["effect"] == "hp":
-            field = "hp"
-            maximum = max(1, int(player.get("max_hp", player.get("hp", 1)) or 1))
+        field = item["effect"]
+        maximum = max(1, int(player.get("max_hp" if field == "hp" else "max_sta",
+                                      player.get(field, 1)) or 1))
+        if field == "hp" and run and run.get("status") == "active":
+            hp_map = run.get("player_hp_by_user", {})
+            current = max(0, int(hp_map.get(str(user_id), player.get("hp", 0)) or 0))
         else:
-            field = "sta"
-            maximum = max(1, int(player.get("max_sta", player.get("sta", 1)) or 1))
-        current = max(0, int(player.get(field, 0) or 0))
+            current = max(0, int(player.get(field, 0) or 0))
         restored = min(maximum - current, max(1, int(maximum * item["amount"])))
         if restored <= 0:
             col("castle_supplies").update_one(
@@ -1340,18 +1369,29 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await query.answer(f"Your {field.upper()} is already full.", show_alert=True)
             return
-        update_player(user_id, **{field: current + restored})
-        if run:
+        new_value = current + restored
+        update_player(user_id, **{field: new_value})
+        if field == "hp" and run and run.get("status") == "active":
             hp_map = run.get("player_hp_by_user", {})
-            if field == "hp" and str(user_id) in hp_map:
-                hp_map[str(user_id)] = min(maximum, int(hp_map.get(str(user_id), current)) + restored)
-                save_castle_run(run["run_id"], {"player_hp_by_user": hp_map})
+            hp_map[str(user_id)] = new_value
+            save_castle_run(run["run_id"], {"player_hp_by_user": hp_map})
+            run["player_hp_by_user"] = hp_map
         player = get_player(user_id) or player
-        shop_text, supplies = _castle_shop_text(user_id)
-        await _safe_castle_edit(
-            query, shop_text + f"\n\n✅ Used <b>{item['name']}</b>: +{restored} {field.upper()}.",
-            parse_mode="HTML", reply_markup=_castle_shop_keyboard(supplies)
-        )
+        if run and run.get("status") == "active":
+            await query.answer(f"+{restored} {field.upper()} restored.")
+            await _safe_castle_edit(
+                query,
+                _render_run(run, player, battle_party,
+                            f"✅ Used {item['name']}: +{restored} {field.upper()}."),
+                parse_mode="HTML",
+                reply_markup=_keyboard(run, user_id=user_id),
+            )
+        else:
+            shop_text, supplies = _castle_shop_text(user_id)
+            await _safe_castle_edit(
+                query, shop_text + f"\n\n✅ Used <b>{item['name']}</b>: +{restored} {field.upper()}.",
+                parse_mode="HTML", reply_markup=_castle_shop_keyboard(supplies)
+            )
         return
     if not run:
         await _safe_castle_edit(query, 
@@ -1521,7 +1561,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await _safe_castle_edit(query, 
                 _render_run(run, player, party, f"⚔️ You dealt {damage:,} damage.\n{result}"),
-                parse_mode="HTML", reply_markup=_keyboard(run)
+                parse_mode="HTML", reply_markup=_keyboard(run, user_id=user_id)
             )
         return
 
