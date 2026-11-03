@@ -196,6 +196,7 @@ def combat_status(
     player_hp_bar = format_emoji_bar(player['hp'], player['max_hp'], "🟩")
     player_sta_bar = format_emoji_bar(player['sta'], player['max_sta'], "🟦")
     parts, intel = [], []
+    parts.append("<b>⚔️ BATTLE IN PROGRESS</b>")
 
     pressure = context.user_data.get('pressure') if context else None
     if pressure:
@@ -229,7 +230,7 @@ def combat_status(
     skill_lines = context.user_data.get(f"battle_skill_lines_{user_id}", []) if context else []
     if skill_lines:
         if intel: intel.append("")
-        intel.extend(str(line) for line in skill_lines)
+        intel.extend(str(line).replace('*', '').replace('_', '') for line in skill_lines)
 
     active_pet = get_active_pet(user_id) if user_id else None
     if active_pet:
@@ -1806,6 +1807,9 @@ async def flee(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_sta = min(player['max_sta'], player['sta'] + 20)
         update_player(user_id, hp=new_hp, sta=new_sta)
         clear_battle_state(user_id)
+        context.user_data.pop('pressure', None)
+        context.user_data.pop('enemy_action_description', None)
+        context.user_data.pop(f'battle_skill_lines_{user_id}', None)
         flee_text = (
             f"🏃 *Flee attempt...*\n\n✅ Escaped successfully!\n\n"
             f"❤️ +{new_hp - player['hp']} HP  (now {new_hp}/{player['max_hp']})\n"
@@ -1965,6 +1969,9 @@ async def handle_victory(query, user_id, player, state, log, context=None):
         context.user_data['combo'] = 0
         context.user_data.pop(f'battle_ctx_{user_id}', None)
         context.user_data.pop('_counter_ready', None)
+        context.user_data.pop('pressure', None)
+        context.user_data.pop('enemy_action_description', None)
+        context.user_data.pop(f'battle_skill_lines_{user_id}', None)
     if state.get('is_boss'):
         update_player(user_id, explores_since_boss=0)
     result = (
