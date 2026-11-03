@@ -403,15 +403,23 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action in ("menu", "hub", "help"):
-        await update.effective_message.reply_photo(
-            photo=CASTLE_BANNER_FILE_ID,
-            caption=(
-                "🏯 <b>INFINITY CASTLE</b>\n"
-                "Climb 100 floors, defeat ranked demons, collect Castle gear, "
-                "and face Muzan at the summit.\n\nChoose your expedition:"
-            ),
-            parse_mode="HTML", reply_markup=_lobby_keyboard()
+        caption = (
+            "🏯 <b>INFINITY CASTLE</b>\n"
+            "Climb 100 floors, defeat ranked demons, collect Castle gear, "
+            "and face Muzan at the summit.\n\nChoose your expedition:"
         )
+        try:
+            await update.effective_message.reply_photo(
+                photo=CASTLE_BANNER_FILE_ID,
+                caption=caption,
+                parse_mode="HTML", reply_markup=_lobby_keyboard()
+            )
+        except Exception:
+            logger.exception("Castle banner failed to send; using text lobby fallback")
+            await update.effective_message.reply_text(
+                caption + "\n\n🖼️ <i>Banner unavailable; lobby is still ready.</i>",
+                parse_mode="HTML", reply_markup=_lobby_keyboard()
+            )
         return
 
     if action == "resume":
@@ -971,11 +979,19 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.delete()
         except Exception:
             pass
-        await query.message.chat.send_photo(
-            photo=CASTLE_BANNER_FILE_ID,
-            caption="🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb.",
-            parse_mode="HTML", reply_markup=_lobby_keyboard()
-        )
+        caption = "🏯 <b>INFINITY CASTLE</b>\nChoose a mode to begin your climb."
+        try:
+            await query.message.chat.send_photo(
+                photo=CASTLE_BANNER_FILE_ID,
+                caption=caption,
+                parse_mode="HTML", reply_markup=_lobby_keyboard()
+            )
+        except Exception:
+            logger.exception("Castle menu banner failed; using text lobby fallback")
+            await query.message.chat.send_message(
+                text=caption + "\n\n🖼️ <i>Banner unavailable; lobby is still ready.</i>",
+                parse_mode="HTML", reply_markup=_lobby_keyboard()
+            )
         return
     if action == "solo":
         if _find_user_party(user_id):
