@@ -456,6 +456,10 @@ async def _track_user_callback_activity(update: Update, context: ContextTypes.DE
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
+    # Infinity Castle callbacks are handled by castle_callback (registered in group 1).
+    # Do not let this catch-all router answer them as "Unknown action" first.
+    if data and data.startswith('castle:'):
+        return
     # These are handled by ConversationHandler — callback_router must NOT touch them
     conv_callbacks = ('faction_', 'story_')
     if any(data.startswith(p) for p in conv_callbacks):
