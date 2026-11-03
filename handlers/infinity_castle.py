@@ -508,9 +508,9 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.effective_message.reply_text("⚠️ You cannot switch squads while your current squad is running, or while you are its leader. Ask the leader to close/recreate the squad first.")
                 return
             await update.effective_message.reply_text(
-                "👥 <b>Switch Castle Squad?</b>\\n\\n"
-                "You are already in another open squad. If you continue, you will leave your current squad and join the new one.\\n"
-                f"New squad: <code>{escape(str(args[1]))}</code>\\n"
+                "👥 <b>Switch Castle Squad?</b>\n\n"
+                "You are already in another open squad. If you continue, you will leave your current squad and join the new one.\n"
+                f"New squad: <code>{escape(str(args[1]))}</code>\n"
                 "Do you want to switch?",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
@@ -531,8 +531,8 @@ async def castle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(
                         chat_id=int(party_after["leader_id"]),
                         text=(
-                            "👥 <b>New Castle squad member!</b>\\n"
-                            f"<b>{escape(str(joined_player))}</b> joined your squad.\\n"
+                            "👥 <b>New Castle squad member!</b>\n"
+                            f"<b>{escape(str(joined_player))}</b> joined your squad.\n"
                             f"Squad size: <b>{len(party_after.get('member_ids', []))}/4</b>"
                         ),
                         parse_mode="HTML",
@@ -908,7 +908,7 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=int(new_party["leader_id"]),
-                text=f"👥 <b>Squad member joined!</b>\\n{escape(str(player.get('name', f'Player {user_id}')))} joined your squad.\\nSquad size: <b>{len(new_party.get('member_ids', []))}/4</b>",
+                text=f"👥 <b>Squad member joined!</b>\n{escape(str(player.get('name', f'Player {user_id}')))} joined your squad.\nSquad size: <b>{len(new_party.get('member_ids', []))}/4</b>",
                 parse_mode="HTML",
             )
         except Exception:
@@ -1048,9 +1048,9 @@ async def castle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
             member_player = get_player(member_id) or member
             battle_text = (
-                "⚔️ <b>YOUR SQUAD BATTLE HAS STARTED!</b>\\n"
+                "⚔️ <b>YOUR SQUAD BATTLE HAS STARTED!</b>\n"
                 "Your squad leader has entered the Infinity Castle. "
-                "You can now take your own turns using the battle buttons below.\\n\\n"
+                "You can now take your own turns using the battle buttons below.\n\n"
                 + _render_run(run, member_player, party)
             )
             try:
