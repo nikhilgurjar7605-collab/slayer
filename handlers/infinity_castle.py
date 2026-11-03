@@ -212,7 +212,7 @@ def _find_run(user_id):
     return run
 
 
-def _enemy_for(player, floor, party_players):
+def _enemy_for(player, floor, party_players, is_squad=False):
     difficulty = calculate_difficulty(player, floor, party_players)
     level = difficulty["enemy_level"]
     floor = max(1, min(MAX_FLOOR, int(floor)))
@@ -226,7 +226,7 @@ def _enemy_for(player, floor, party_players):
     if boss:
         hp = min(10_000, int(hp * 1.15))
     # Squad encounters have double demon HP (up to 20,000).
-    if len(party_players) > 1:
+    if is_squad:
         hp = min(20_000, hp * 2)
 
     # Make demons a little more threatening, without returning to the old
@@ -840,7 +840,7 @@ async def _start_floor(run, player, party):
             )
 
     if room_type == "combat":
-        enemy = _enemy_for(player, floor, members)
+        enemy = _enemy_for(player, floor, members, is_squad=bool(party))
         chapter = (floor - 1) // 10 + 1
         story_beats = [
             "The wooden corridors groan as the castle rearranges itself. A cold presence is watching your every move.",
