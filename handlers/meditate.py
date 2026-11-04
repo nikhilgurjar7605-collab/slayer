@@ -424,25 +424,25 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
 
     if reaction_duration > reaction_window:
         success = False
-        outcome_text = f"❌ *MISSED THE MOMENT* ({reaction_duration:.2f}s)\\n│ > Your breathing rhythm broke before the signal."
+        outcome_text = f"❌ *MISSED THE MOMENT* ({reaction_duration:.2f}s)\n│ > Your breathing rhythm broke before the signal."
         gain = 0
     elif not success:
-        outcome_text = f"🫥 *FOCUS BROKEN* ({reaction_duration:.2f}s)\\n│ > You reacted, but your concentration slipped."
+        outcome_text = f"🫥 *FOCUS BROKEN* ({reaction_duration:.2f}s)\n│ > You reacted, but your concentration slipped."
         gain = 0
     else:
         if reaction_duration <= 0.70:
             grade = "PERFECT"
             gain = random.randint(min_gain, max_gain)
             bonus_gain = 2
-            outcome_text = f"🌟 *PERFECT FORM!* ({reaction_duration:.2f}s)\\n│ > Your body moved as one. Bonus potential unlocked!"
+            outcome_text = f"🌟 *PERFECT FORM!* ({reaction_duration:.2f}s)\n│ > Your body moved as one. Bonus potential unlocked!"
         elif reaction_duration <= 1.45:
             grade = "GOOD"
             gain = random.randint(min_gain, max_gain)
-            outcome_text = f"✨ *GOOD FORM!* ({reaction_duration:.2f}s)\\n│ > A clean, controlled breath. Your training paid off."
+            outcome_text = f"✨ *GOOD FORM!* ({reaction_duration:.2f}s)\n│ > A clean, controlled breath. Your training paid off."
         else:
             grade = "LATE"
             gain = max(1, random.randint(min_gain, max_gain) // 2)
-            outcome_text = f"🌫️ *LATE FORM* ({reaction_duration:.2f}s)\\n│ > You caught the rhythm late, but salvaged part of the training."
+            outcome_text = f"🌫️ *LATE FORM* ({reaction_duration:.2f}s)\n│ > You caught the rhythm late, but salvaged part of the training."
 
     if success and event_kind == "potential":
         bonus_gain += event_bonus
@@ -489,7 +489,7 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
                   else f"│ ⏳ Next trial unlocks in 1 hour.")
 
     grade_emoji = {"PERFECT": "🌟", "GOOD": "✨", "LATE": "🌫️", "MISS": "❌"}.get(grade, "❔")
-    event_result = f"🎴 *Event:* {event_name}\\n"
+    event_result = f"🎴 *Event:* {event_name}\n"
     reward_lines = [
         f"│ ⭐ XP: *+{xp_total}*",
         f"│ 🔋 Stamina used: *-{sta_cost} STA*" + (f"  ·  Refunded: *+{stamina_refund}*" if stamina_refund else ""),
@@ -499,18 +499,18 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
     ]
 
     await query.edit_message_text(
-        f"╭── 🧘 *TRIAL COMPLETE* ──╮\\n"
-        f"│\\n"
+        f"╭── 🧘 *TRIAL COMPLETE* ──╮\n"
+        f"│\n"
         f"│ {event_result}"
-        f"│ > {outcome_text}\\n"
-        f"│\\n"
-        f"├─ 🎁 *TRIAL REWARDS* ──────────────┤\\n"
-        + "\\n".join(reward_lines) + "\\n"
-        f"│\\n"
-        f"├─ 🔮 *AWAKENING PROGRESS* ─────────┤\\n"
-        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\\n"
-        f"│\\n"
-        f"{status_msg}\\n"
+        f"│ > {outcome_text}\n"
+        f"│\n"
+        f"├─ 🎁 *TRIAL REWARDS* ──────────────┤\n"
+        + "\n".join(reward_lines) + "\n"
+        f"│\n"
+        f"├─ 🔮 *AWAKENING PROGRESS* ─────────┤\n"
+        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\n"
+        f"│\n"
+        f"{status_msg}\n"
         f"╰──────────────────────────────────╯",
         parse_mode="Markdown"
     )
