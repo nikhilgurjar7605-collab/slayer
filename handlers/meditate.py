@@ -245,7 +245,7 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         options = scene[2]
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(label, callback_data=f"meditate_choice_{i}")]
+            [InlineKeyboardButton(label, callback_data=f"meditate_choice_0_{i}")]
             for i, (label, _, _) in enumerate(options)
         ])
         await query.edit_message_text(
@@ -275,7 +275,12 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         try:
-            choice_index = int(action.rsplit("_", 1)[1])
+            _, _, expected_stage, choice_index = action.split("_", 3)
+            expected_stage = int(expected_stage)
+            choice_index = int(choice_index)
+            if int(pending.get("scene_index", 0) or 0) != expected_stage:
+                await query.answer("That choice was already recorded.", show_alert=False)
+                return
             options = pending.get("scene_options", [])
             label, points, xp_bonus = options[choice_index]
         except (ValueError, IndexError, TypeError):
@@ -296,7 +301,7 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 }},
             )
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(opt[0], callback_data=f"meditate_choice_{i}")]
+                [InlineKeyboardButton(opt[0], callback_data=f"meditate_choice_{stage}_{i}")]
                 for i, opt in enumerate(scene[2])
             ])
             faction_word = "blood trial" if is_demon else "breathing trial"
