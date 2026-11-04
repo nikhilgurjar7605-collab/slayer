@@ -6,6 +6,7 @@ and ascend/awaken to next Potential Tiers for permanent max stats boosts.
 import random
 import logging
 import asyncio
+import time
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -63,71 +64,48 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No character found. Use /start to create one.")
         return
 
-    potential = player.get("potential", 0)
-    tier = player.get("potential_tier", 0)
+    potential = max(0, min(100, int(player.get("potential", 0) or 0)))
+    tier = max(0, int(player.get("potential_tier", 0) or 0))
     tier_label = f"\n🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
+
+    pending = col("meditate_pending").find_one({"user_id": user_id})
+    if pending:
+        age = time.time() - float(pending.get("created_at", 0) or 0)
+        if age <= 90:
+            note = ("Your reaction button is waiting. Tap it within 2.5 seconds." if "react_start" in pending else "Your breathing session is being prepared. Wait for the reaction button.")
+            await update.message.reply_text("🧘 *Meditation already in progress*\n\n" + note, parse_mode="Markdown")
+            return
+        col("meditate_pending").delete_one({"user_id": user_id, "created_at": pending.get("created_at")})
+        if "react_start" not in pending:
+            refund = max(0, int(pending.get("sta_cost", 0) or 0))
+            current_sta = int(player.get("sta", 0) or 0)
+            max_sta = int(player.get("max_sta", current_sta) or current_sta)
+            update_player(user_id, sta=min(max_sta, current_sta + refund))
+            col("cooldowns").delete_one({"user_id": user_id, "type": "meditate"})
 
     # If potential is already 100%, offer limit break instantly
     if potential >= 100:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔮 SHATTER LIMITS / AWAKEN", callback_data="meditate_awaken")
-        ]])
-        await update.message.reply_text(
-            f"╭── 🧘 *TOTAL CONCENTRATION BREATHING* ──╮\n"
-            f"│\n"
-            f"│ 🔮 Your potential has reached its peak (*100%*)!{tier_label}\n"
-            f"│\n"
-            f"│ > _You stand at the edge of physical limitations._\n"
-            f"│ > _Unleash your inner spirit and break your_\n"
-            f"│ > _boundaries to ascend to the next tier!_\n"
-            f"│\n"
-            f"├─ ⚡ *Permanent rewards upon Ascension:* ─┤\n"
-            f"│ • ❤️ Max HP:       *+15*\n"
-            f"│ • 🌀 Max Stamina:  *+10*\n"
-            f"│ • 💪 STR:          *+2*\n"
-            f"│ • ⚡ SPD:          *+1*\n"
-            f"│ • 🛡️ DEF:          *+1*\n"
-            f"│ • ⚔️ Combat DMG:   *+5% per tier (stacked)*\n"
-            f"│ • 🔰 DMG Reduce:   *+3% per tier (stacked)*\n"
-            f"╰────────────────────────────────────────╯",
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-        return
-
-    # Check cooldown
-    expire = _get_meditate_cooldown(user_id)
-    if expire:
-        diff = expire - datetime.utcnow()
-        if diff.total_seconds() > 0:
-            mins = int(diff.total_seconds() // 60)
-            secs = int(diff.total_seconds() % 60)
-            await update.message.reply_text(
-                f"⏳ *MEDITATION RECOVERY*\n\n"
-                f"Your spiritual energy is recovering from your last training session.\n\n"
-                f"⌚ Next session available in:  *{mins}m {secs}s*",
-                parse_mode="Markdown"
-            )
-            return
-
-    # Build focus selection panel
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌬️ Focus Breath (20 STA)", callback_data="meditate_breath")],
-        [InlineKeyboardButton("🌊 Clear Mind (20 STA)", callback_data="meditate_mind")],
-        [InlineKeyboardButton("🔥 Ignite Spirit (40 STA)", callback_data="meditate_spirit")]
+        keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌬️ Focus Breath · 3–6% · 20 STA", callback_data="meditate_breath")],
+        [InlineKeyboardButton("🌊 Clear Mind · 2–11% · 20 STA", callback_data="meditate_mind")],
+        [InlineKeyboardButton("🔥 Ignite Spirit · 7–14% · 40 STA", callback_data="meditate_spirit")]
     ])
 
+    remaining = max(0, 100 - potential)
+    filled = min(10, potential // 10)
+    progress = "🟩" * filled + "⬜" * (10 - filled)
     await update.message.reply_text(
-        f"╭── 🧘 *TOTAL CONCENTRATION MEDITATION* ──╮\n"
+        f"╭── 🧘 *TOTAL CONCENTRATION* ──╮\n"
         f"│\n"
-        f"│ > _Sit beneath a freezing waterfall, close your eyes,_\n"
-        f"│ > _and focus your breathing. Expanding your potential_\n"
-        f"│ > _unlocks permanent stat boosts!_\n"
+        f"│ 🔮 *Potential:* {potential}% / 100%\n"
+        f"│ {progress}\n"
+        f"│ 🎯 *Next awakening:* {remaining}% remaining\n"
+        f"│ 🏆 *Meditation tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\n"
+        f"│ 🔋 *Stamina:* {player.get('sta', 0)}/{player.get('max_sta', 0)}\n"
         f"│\n"
-        f"│ 🔋 Stamina: *{player['sta']}/{player['max_sta']}*\n"
-        f"│ 🔮 Current Potential: *{potential}%* {tier_label}\n"
-        f"│\n"
-        f"╰─ 👉 *Choose your Focus Strategy:* ───────╯",
+        f"│ Choose a breathing focus. React within *2.5 seconds*\n"
+        f"│ to gain potential. Higher gains cost more stamina.\n"
+        f"╰────────────────────────────╯",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
@@ -282,10 +260,12 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Show react button
     react_time_now = time.time()
-    col("meditate_pending").update_one(
-        {"user_id": user_id},
+    armed = col("meditate_pending").update_one(
+        {"user_id": user_id, "created_at": react_time},
         {"$set": {"react_start": react_time_now}}
     )
+    if not armed.modified_count:
+        return
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("⚡ REACT NOW!", callback_data="meditate_react")
@@ -339,18 +319,18 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
     if not player:
         return
 
-    pending = col("meditate_pending").find_one({"user_id": user_id})
-    if not pending or "react_start" not in pending:
-        await query.edit_message_text("❌ Meditation session expired or invalid.")
+    # Atomically claim the session so rapid/double taps cannot grant rewards twice.
+    pending = col("meditate_pending").find_one_and_delete({
+        "user_id": user_id,
+        "react_start": {"$exists": True},
+    })
+    if not pending:
+        await query.edit_message_text("❌ This meditation session has expired or was already claimed. Use /meditate to try again.")
         return
 
-    import time
     react_time_now = time.time()
-    react_start = pending["react_start"]
-    reaction_duration = react_time_now - react_start
-
-    # Remove pending session
-    col("meditate_pending").delete_one({"user_id": user_id})
+    react_start = float(pending["react_start"])
+    reaction_duration = max(0.0, react_time_now - react_start)
 
     fail_chance = pending["fail_chance"]
     min_gain = pending["min_gain"]
