@@ -66,7 +66,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     potential = max(0, min(100, int(player.get("potential", 0) or 0)))
     tier = max(0, int(player.get("potential_tier", 0) or 0))
-    tier_label = f"\\n🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
+    tier_label = f"\n🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
 
     # Prevent a second command from overwriting an active reaction challenge.
     pending = col("meditate_pending").find_one({"user_id": user_id})
@@ -74,7 +74,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         age = time.time() - float(pending.get("created_at", 0) or 0)
         if age <= 90:
             note = ("Your reaction button is waiting. Tap it within 2.5 seconds." if "react_start" in pending else "Your breathing session is being prepared. Wait for the reaction button.")
-            await update.message.reply_text("🧘 *Meditation already in progress*\\n\\n" + note, parse_mode="Markdown")
+            await update.message.reply_text("🧘 *Meditation already in progress*\n\n" + note, parse_mode="Markdown")
             return
         col("meditate_pending").delete_one({"user_id": user_id, "created_at": pending.get("created_at")})
         if "react_start" not in pending:
@@ -127,7 +127,6 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Build focus selection panel
     # Build a progress-focused strategy panel.
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🌬️ Focus Breath · 3–6% · 20 STA", callback_data="meditate_breath")],
@@ -139,16 +138,16 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filled = min(10, potential // 10)
     progress = "🟩" * filled + "⬜" * (10 - filled)
     await update.message.reply_text(
-        f"╭── 🧘 *TOTAL CONCENTRATION* ──╮\\n"
-        f"│\\n"
-        f"│ 🔮 *Potential:* {potential}% / 100%\\n"
-        f"│ {progress}\\n"
-        f"│ 🎯 *Next awakening:* {remaining}% remaining\\n"
-        f"│ 🏆 *Meditation tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\\n"
-        f"│ 🔋 *Stamina:* {player.get('sta', 0)}/{player.get('max_sta', 0)}\\n"
-        f"│\\n"
-        f"│ Choose a breathing focus. React within *2.5 seconds*\\n"
-        f"│ to gain potential. Higher gains cost more stamina.\\n"
+        f"╭── 🧘 *TOTAL CONCENTRATION* ──╮\n"
+        f"│\n"
+        f"│ 🔮 *Potential:* {potential}% / 100%\n"
+        f"│ {progress}\n"
+        f"│ 🎯 *Next awakening:* {remaining}% remaining\n"
+        f"│ 🏆 *Meditation tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\n"
+        f"│ 🔋 *Stamina:* {player.get('sta', 0)}/{player.get('max_sta', 0)}\n"
+        f"│\n"
+        f"│ Choose a breathing focus. React within *2.5 seconds*\n"
+        f"│ to gain potential. Higher gains cost more stamina.\n"
         f"╰────────────────────────────╯",
         parse_mode="Markdown",
         reply_markup=keyboard
@@ -330,29 +329,6 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass  # ignore if message is outdated or user clicked something else
     return
-
-    tier_label = f"\n│ 🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
-
-    status_msg = (f"│ ✨ *LIMIT BREAK READY!* Run /meditate again to Awaken!" if new_potential >= 100
-                  else f"│ ⌚ _Your spiritual body is exhausted. Cooldown active for 1 hour._")
-
-    await query.edit_message_text(
-        f"╭── 🧘 *MEDITATION COMPLETE* 🌿 ──╮\n"
-        f"│\n"
-        f"│ > {outcome_text}\n"
-        f"│\n"
-        f"├─ 📈 *REWARDS:* ─────────────────┤\n"
-        f"│ ⭐ XP: *+{xp_gain}*\n"
-        f"│ 🔋 Stamina used: *-{sta_cost} STA*\n"
-        f"│\n"
-        f"├─ 🔮 *POTENTIAL:* ───────────────┤\n"
-        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\n"
-        f"│\n"
-        f"{status_msg}\n"
-        f"╰─────────────────────────────────╯",
-        parse_mode="Markdown"
-    )
-
 async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes the reaction game result."""
     query = update.callback_query
