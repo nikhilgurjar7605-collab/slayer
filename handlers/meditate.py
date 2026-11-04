@@ -31,6 +31,27 @@ def _set_meditate_cooldown(user_id: int):
         upsert=True
     )
 
+def _stamina_display(player: dict) -> str:
+    """Compact stamina bar and automatic recovery countdown."""
+    current = max(0, int(player.get("sta", 0) or 0))
+    maximum = max(1, int(player.get("max_sta", current) or current))
+    ratio = min(1.0, current / maximum)
+    filled = min(10, int(ratio * 10))
+    bar = "🟩" * filled + "⬜" * (10 - filled)
+    lines = [f"🔋 *Stamina:* {current:,}/{maximum:,}", f"{bar}  *{int(ratio * 100)}%*"]
+    recovery_at = player.get("sta_recovery_at")
+    if current <= 0 and recovery_at:
+        remaining = max(0, int((recovery_at - datetime.utcnow()).total_seconds()))
+        hours, rem = divmod(remaining, 3600)
+        minutes, seconds = divmod(rem, 60)
+        lines.append(f"⏳ *Full recovery in:* {hours}h {minutes}m {seconds}s")
+    elif current <= 0:
+        lines.append("⏳ *Full recovery:* within 1 hour")
+    else:
+        lines.append("🌿 Stamina fully restores 1 hour after exhaustion.")
+    return "\n".join(lines)
+
+
 def _get_tier_title(tier: int) -> str:
     titles = {
         1: "🌟 Tier I (Awakened)",
@@ -144,7 +165,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"│ {progress}\n"
         f"│ 🎯 *Next awakening:* {remaining}% remaining\n"
         f"│ 🏆 *Meditation tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\n"
-        f"│ 🔋 *Stamina:* {player.get('sta', 0)}/{player.get('max_sta', 0)}\n"
+        f"│ {_stamina_display(player).replace(chr(10), chr(10) + '│ ')}\n"
         f"│\n"
         f"│ Choose a breathing focus. React within *2.5 seconds*\n"
         f"│ to gain potential. Higher gains cost more stamina.\n"
