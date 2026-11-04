@@ -383,23 +383,59 @@ def _player_defaults(faction="slayer"):
         }
 
 
+STAMINA_RECOVERY_SECONDS = 60 * 60  # Restore all stamina 1 hour after exhaustion
+
+
+def _refresh_stamina_recovery(user_id, doc):
+    """Lazily apply one-hour stamina recovery whenever the player is loaded."""
+    if not doc:
+        return doc
+
+    now = datetime.utcnow()
+    stamina = max(0, int(doc.get("sta", 0) or 0))
+    max_stamina = max(0, int(doc.get("max_sta", stamina) or stamina))
+    recovery_at = doc.get("sta_recovery_at")
+
+    # Backfill a timer for players who were already exhausted before this feature.
+    if stamina <= 0 and max_stamina > 0 and not recovery_at:
+        recovery_at = now + timedelta(seconds=STAMINA_RECOVERY_SECONDS)
+        col("players").update_one(
+            {"user_id": user_id, "sta": {"$lte": 0}, "sta_recovery_at": {"$exists": False}},
+            {"$set": {"sta_recovery_at": recovery_at}}
+        )
+        doc["sta_recovery_at"] = recovery_at
+
+    if recovery_at and stamina <= 0 and max_stamina > 0:
+        # MongoDB may return either naive or aware datetimes depending on configuration.
+        if recovery_at.tzinfo is not None:
+            recovery_at = recovery_at.replace(tzinfo=None)
+        if now >= recovery_at:
+            col("players").update_one(
+                {"user_id": user_id, "sta": {"$lte": 0}, "sta_recovery_at": recovery_at},
+                {"$set": {"sta": max_stamina}, "$unset": {"sta_recovery_at": ""}}
+            )
+            doc["sta"] = max_stamina
+            doc.pop("sta_recovery_at", None)
+
+    return doc
+
+
 def get_player(user_id):
-    """Get player with in-memory caching for speed."""
+    """Get player with in-memory caching and automatic stamina recovery."""
     import time
     cache_key = str(user_id)
-    
-    # Check cache
+
     if cache_key in _player_cache:
         cached_data, cached_time = _player_cache[cache_key]
         if time.time() - cached_time < _CACHE_TTL_SECONDS:
-            doc = cached_data.copy()
+            doc = _refresh_stamina_recovery(user_id, cached_data.copy())
             doc.pop("_id", None)
+            _player_cache[cache_key] = (doc.copy(), time.time())
             return doc
-    
-    # Cache miss or expired - fetch from DB
+
     doc = col("players").find_one({"user_id": user_id})
     if doc:
-        # Update cache
+        doc = _refresh_stamina_recovery(user_id, doc)
         _player_cache[cache_key] = (doc.copy(), time.time())
         doc.pop("_id", None)
         return doc
@@ -436,9 +472,18 @@ def create_player(user_id, username, name, faction, style, style_emoji,
 
 
 def update_player(user_id, **kwargs):
-    """Update player and invalidate cache."""
+    """Update player, start exhaustion recovery, and invalidate cache."""
+    if "sta" in kwargs:
+        new_sta = max(0, int(kwargs["sta"] or 0))
+        current = col("players").find_one(
+            {"user_id": user_id}, {"sta": 1, "sta_recovery_at": 1}
+        ) or {}
+        old_sta = max(0, int(current.get("sta", 0) or 0))
+        if new_sta <= 0 and old_sta > 0:
+            kwargs["sta_recovery_at"] = datetime.utcnow() + timedelta(seconds=STAMINA_RECOVERY_SECONDS)
+        elif new_sta > 0:
+            kwargs["sta_recovery_at"] = None
     col("players").update_one({"user_id": user_id}, {"$set": kwargs})
-    # Invalidate cache for this user
     _player_cache.pop(str(user_id), None)
 
 
