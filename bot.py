@@ -236,7 +236,7 @@ from handlers.direct_fetch import sword_command, armour_command
 from handlers.enemydex import slayerdex, demondex
 from handlers.image_checker import checkimages
 
-from handlers.meditate import meditate, meditate_callback, meditate_react_callback
+from handlers.meditate import meditate, meditate_callback
 from handlers.clan_list import clan_list, clanlist_page_callback
 from handlers.help_cmd import help_command, admin_help_list, help_callback, admin_help_callback
 from handlers.infinity_castle import castle, castle_callback, demonlevel
@@ -1067,7 +1067,7 @@ def main():
     app.add_handler(CallbackQueryHandler(banner_decision_callback, pattern=r'^banner_(approve|deny)_\d+$'), group=1)
     app.add_handler(CallbackQueryHandler(gifstore_page_callback, pattern=r'^gifstore_page_\d+$'), group=1)
     # ── Meditate callback handler ──
-    app.add_handler(CallbackQueryHandler(meditate_react_callback, pattern=r'^meditate_react$'), group=1)
+    # All faction-aware cultivation choices are handled by meditate_callback.
     app.add_handler(CallbackQueryHandler(meditate_callback, pattern=r'^meditate_'), group=1)
 
     # Command registration block moved into main()
