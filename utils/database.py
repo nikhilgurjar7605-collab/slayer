@@ -400,7 +400,7 @@ def _refresh_stamina_recovery(user_id, doc):
     if stamina <= 0 and max_stamina > 0 and not recovery_at:
         recovery_at = now + timedelta(seconds=STAMINA_RECOVERY_SECONDS)
         col("players").update_one(
-            {"user_id": user_id, "sta": {"$lte": 0}, "sta_recovery_at": {"$exists": False}},
+            {"user_id": user_id, "sta": {"$lte": 0}, "$or": [{"sta_recovery_at": {"$exists": False}}, {"sta_recovery_at": None}]},
             {"$set": {"sta_recovery_at": recovery_at}}
         )
         doc["sta_recovery_at"] = recovery_at
