@@ -148,28 +148,37 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Build a progress-focused strategy panel.
+    # Three distinct training paths with different risk/reward profiles.
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌬️ Focus Breath · 3–6% · 20 STA", callback_data="meditate_breath")],
-        [InlineKeyboardButton("🌊 Clear Mind · 2–11% · 20 STA", callback_data="meditate_mind")],
-        [InlineKeyboardButton("🔥 Ignite Spirit · 7–14% · 40 STA", callback_data="meditate_spirit")]
+        [InlineKeyboardButton("🌊 WATERFALL · Steady control · 20 STA", callback_data="meditate_breath")],
+        [InlineKeyboardButton("⚡ THUNDER · Reflex trial · 20 STA", callback_data="meditate_mind")],
+        [InlineKeyboardButton("🔥 FLAME · High intensity · 40 STA", callback_data="meditate_spirit")]
     ])
 
     remaining = max(0, 100 - potential)
     filled = min(10, potential // 10)
     progress = "🟩" * filled + "⬜" * (10 - filled)
+    combo = int(player.get("meditation_combo", 0) or 0)
+    perfects = int(player.get("meditation_perfects", 0) or 0)
     await update.message.reply_text(
-        f"╭── 🧘 *TOTAL CONCENTRATION* ──╮\n"
+        f"╭── 🧘 *TOTAL CONCENTRATION TRIAL* ──╮\n"
         f"│\n"
         f"│ 🔮 *Potential:* {potential}% / 100%\n"
         f"│ {progress}\n"
-        f"│ 🎯 *Next awakening:* {remaining}% remaining\n"
-        f"│ 🏆 *Meditation tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\n"
+        f"│ 🎯 *Awakening:* {remaining}% to go\n"
+        f"│ 🏆 *Current tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\n"
+        f"│ ⚡ *Perfect-form combo:* {combo}  ·  🌟 *Perfect trials:* {perfects}\n"
+        f"│\n"
+        f"├─ 🔋 *BODY CONDITION* ──────────────┤\n"
         f"│ {_stamina_display(player).replace(chr(10), chr(10) + '│ ')}\n"
         f"│\n"
-        f"│ Choose a breathing focus. React within *2.5 seconds*\n"
-        f"│ to gain potential. Higher gains cost more stamina.\n"
-        f"╰────────────────────────────╯",
+        f"├─ 🥋 *CHOOSE YOUR TRAINING PATH* ───┤\n"
+        f"│ 🌊 Waterfall: reliable gains, balanced cost\n"
+        f"│ ⚡ Thunder: risky focus test, bonus for speed\n"
+        f"│ 🔥 Flame: biggest potential gains, heavy cost\n"
+        f"│\n"
+        f"│ Every trial can trigger a rare spiritual event.\n"
+        f"╰────────────────────────────────────╯",
         parse_mode="Markdown",
         reply_markup=keyboard
     )
@@ -289,7 +298,19 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import time
     react_time = time.time()
 
-    # Store pending reaction data in database
+    # A random spiritual event changes the reward or difficulty of this trial.
+    event = random.choices(
+        [
+            {"name": "🌟 SPIRIT SURGE", "description": "A wave of energy empowers your next form.", "kind": "potential", "bonus": 3, "window": 2.5},
+            {"name": "🌿 CALMING CURRENT", "description": "A gentle current will restore 5 stamina after the trial.", "kind": "stamina", "bonus": 5, "window": 2.5},
+            {"name": "📜 ANCIENT MEMORY", "description": "A forgotten master shares a fragment of wisdom.", "kind": "xp", "bonus": 75, "window": 2.5},
+            {"name": "👁️ DEMON'S WHISPER", "description": "A hostile voice tests your reflexes; perfect timing grants extra potential.", "kind": "reflex", "bonus": 4, "window": 1.8},
+        ],
+        weights=[30, 30, 25, 15],
+        k=1
+    )[0]
+
+    # Store pending reaction data in database.
     col("meditate_pending").update_one(
         {"user_id": user_id},
         {"$set": {
@@ -302,19 +323,27 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "strategy_name": strategy_name,
             "created_at": react_time,
             "potential": potential,
+            "event_name": event["name"],
+            "event_description": event["description"],
+            "event_kind": event["kind"],
+            "event_bonus": event["bonus"],
+            "reaction_window": event["window"],
         }},
         upsert=True
     )
 
-    # Initial animation
+    # Trial intro.
     await query.edit_message_text(
-        f"╭── 🧘 *{strategy_name.upper()}* ──╮\n"
+        f"╭── 🧘 *{strategy_name.upper()} TRIAL* ──╮\n"
         f"│\n"
-        f"│ > _Gathering spiritual energy..._\n"
+        f"│ _{event['description']}_\n"
         f"│\n"
-        f"│ ⏳ Get ready to react!\n"
+        f"│ 🎴 *Encounter:* {event['name']}\n"
         f"│\n"
-        f"╰────────────────────────────╯",
+        f"│ > _Slow your heartbeat. Feel the rhythm._\n"
+        f"│ > _The signal can appear at any moment..._\n"
+        f"│\n"
+        f"╰────────────────────────────────╯",
         parse_mode="Markdown"
     )
 
@@ -332,17 +361,18 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚡ REACT NOW!", callback_data="meditate_react")
+        InlineKeyboardButton("⚡ RELEASE YOUR BREATH!", callback_data="meditate_react")
     ]])
 
     try:
         await query.edit_message_text(
-            f"╭── 🧘 *{strategy_name.upper()}* ──╮\n"
+            f"╭── ⚡ *SIGNAL DETECTED* ──╮\n"
             f"│\n"
-            f"│ > _The spiritual energy peaks!_\n"
+            f"│ 🎴 *{event['name']}*\n"
+            f"│ _{event['description']}_\n"
             f"│\n"
-            f"│ ⚡ *CLICK THE BUTTON QUICKLY!*\n"
-            f"│\n"
+            f"│ 🫁 The moment is here. Release your breath!\n"
+            f"│ ⚡ Tap fast for a *PERFECT FORM* bonus.\n"
             f"╰────────────────────────────╯",
             parse_mode="Markdown",
             reply_markup=keyboard
@@ -373,31 +403,68 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
     react_start = float(pending["react_start"])
     reaction_duration = max(0.0, react_time_now - react_start)
 
-    fail_chance = pending["fail_chance"]
-    min_gain = pending["min_gain"]
-    max_gain = pending["max_gain"]
-    xp_gain = pending["xp_gain"]
-    sta_cost = pending["sta_cost"]
-    strategy_name = pending["strategy_name"]
-    potential = pending["potential"]
+    fail_chance = float(pending.get("fail_chance", 0) or 0)
+    min_gain = int(pending.get("min_gain", 0) or 0)
+    max_gain = int(pending.get("max_gain", 0) or 0)
+    xp_gain = int(pending.get("xp_gain", 0) or 0)
+    sta_cost = int(pending.get("sta_cost", 0) or 0)
+    strategy_name = pending.get("strategy_name", "Concentration")
+    potential = int(pending.get("potential", 0) or 0)
+    event_name = pending.get("event_name", "🌿 QUIET MIND")
+    event_kind = pending.get("event_kind", "none")
+    event_bonus = int(pending.get("event_bonus", 0) or 0)
+    reaction_window = float(pending.get("reaction_window", 2.5) or 2.5)
 
-    # Base failure based on strategy risk
+    # Grade the player's timing instead of treating every successful tap equally.
     success = random.random() >= fail_chance
+    grade = "MISS"
+    bonus_gain = 0
+    stamina_refund = 0
+    bonus_xp = 0
 
-    # Reaction time check (e.g. must react within 2.5 seconds)
-    max_reaction_time = 2.5
-    if reaction_duration > max_reaction_time:
+    if reaction_duration > reaction_window:
         success = False
-        outcome_text = f"❌ *Too Slow!* ({reaction_duration:.2f}s)\n│ > Your mind strayed to earthly thoughts. No potential was gained."
+        outcome_text = f"❌ *MISSED THE MOMENT* ({reaction_duration:.2f}s)\\n│ > Your breathing rhythm broke before the signal."
         gain = 0
     elif not success:
-        outcome_text = f"❌ *Failed Focus* ({reaction_duration:.2f}s)\n│ > You reacted in time, but your breathing was flawed. No potential was gained."
+        outcome_text = f"🫥 *FOCUS BROKEN* ({reaction_duration:.2f}s)\\n│ > You reacted, but your concentration slipped."
         gain = 0
     else:
-        gain = random.randint(min_gain, max_gain)
-        outcome_text = f"🔮 *Perfect Form!* ({reaction_duration:.2f}s)\n│ > Your breathing pattern aligns perfectly. You gained *+{gain}%* Potential!"
+        if reaction_duration <= 0.70:
+            grade = "PERFECT"
+            gain = random.randint(min_gain, max_gain)
+            bonus_gain = 2
+            outcome_text = f"🌟 *PERFECT FORM!* ({reaction_duration:.2f}s)\\n│ > Your body moved as one. Bonus potential unlocked!"
+        elif reaction_duration <= 1.45:
+            grade = "GOOD"
+            gain = random.randint(min_gain, max_gain)
+            outcome_text = f"✨ *GOOD FORM!* ({reaction_duration:.2f}s)\\n│ > A clean, controlled breath. Your training paid off."
+        else:
+            grade = "LATE"
+            gain = max(1, random.randint(min_gain, max_gain) // 2)
+            outcome_text = f"🌫️ *LATE FORM* ({reaction_duration:.2f}s)\\n│ > You caught the rhythm late, but salvaged part of the training."
 
+    if success and event_kind == "potential":
+        bonus_gain += event_bonus
+    elif success and event_kind == "reflex" and grade == "PERFECT":
+        bonus_gain += event_bonus
+    elif success and event_kind == "stamina":
+        stamina_refund = event_bonus
+    elif success and event_kind == "xp":
+        bonus_xp = event_bonus
+
+    # Consecutive perfect forms build a small capped combo bonus.
+    old_combo = int(player.get("meditation_combo", 0) or 0)
+    combo = min(5, old_combo + 1) if grade == "PERFECT" else 0
+    combo_bonus = min(3, max(0, combo - 1))
+    if grade == "PERFECT":
+        bonus_gain += combo_bonus
+    perfects = int(player.get("meditation_perfects", 0) or 0) + (1 if grade == "PERFECT" else 0)
+
+    gain += bonus_gain
+    xp_total = xp_gain + bonus_xp
     new_potential = min(100, potential + gain)
+    new_sta = min(int(player.get("max_sta", 0) or 0), int(player.get("sta", 0) or 0) + stamina_refund)
     
     # Progress bar calculation
     filled_blocks = int(new_potential // 10)
@@ -408,29 +475,42 @@ async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_
     update_player(
         user_id,
         potential=new_potential,
-        xp=player["xp"] + xp_gain
+        xp=int(player.get("xp", 0) or 0) + xp_total,
+        meditation_combo=combo,
+        meditation_perfects=perfects,
+        **({"sta": new_sta} if stamina_refund else {})
     )
 
     # Final response
     tier = player.get("potential_tier", 0)
     tier_label = f"\n│ 🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
 
-    status_msg = (f"│ ✨ *LIMIT BREAK READY!* Run /meditate again to Awaken!" if new_potential >= 100
-                  else f"│ ⌚ _Your spiritual body is exhausted. Cooldown active for 1 hour._")
+    status_msg = (f"│ ✨ *AWAKENING READY!* Use /meditate to ascend." if new_potential >= 100
+                  else f"│ ⏳ Next trial unlocks in 1 hour.")
+
+    grade_emoji = {"PERFECT": "🌟", "GOOD": "✨", "LATE": "🌫️", "MISS": "❌"}.get(grade, "❔")
+    event_result = f"🎴 *Event:* {event_name}\\n"
+    reward_lines = [
+        f"│ ⭐ XP: *+{xp_total}*",
+        f"│ 🔋 Stamina used: *-{sta_cost} STA*" + (f"  ·  Refunded: *+{stamina_refund}*" if stamina_refund else ""),
+        f"│ 🔮 Potential: *+{gain}%*" + (f"  (includes +{bonus_gain}% bonus)" if bonus_gain else ""),
+        f"│ 🏅 Form grade: {grade_emoji} *{grade}*",
+        f"│ 🔥 Perfect combo: *{combo}*",
+    ]
 
     await query.edit_message_text(
-        f"╭── 🧘 *{strategy_name.upper()} COMPLETE* 🌿 ──╮\n"
-        f"│\n"
-        f"│ > {outcome_text}\n"
-        f"│\n"
-        f"├─ 📈 *REWARDS:* ─────────────────┤\n"
-        f"│ ⭐ XP: *+{xp_gain}*\n"
-        f"│ 🔋 Stamina used: *-{sta_cost} STA*\n"
-        f"│\n"
-        f"├─ 🔮 *POTENTIAL:* ───────────────┤\n"
-        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\n"
-        f"│\n"
-        f"{status_msg}\n"
-        f"╰─────────────────────────────────╯",
+        f"╭── 🧘 *TRIAL COMPLETE* ──╮\\n"
+        f"│\\n"
+        f"│ {event_result}"
+        f"│ > {outcome_text}\\n"
+        f"│\\n"
+        f"├─ 🎁 *TRIAL REWARDS* ──────────────┤\\n"
+        + "\\n".join(reward_lines) + "\\n"
+        f"│\\n"
+        f"├─ 🔮 *AWAKENING PROGRESS* ─────────┤\\n"
+        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\\n"
+        f"│\\n"
+        f"{status_msg}\\n"
+        f"╰──────────────────────────────────╯",
         parse_mode="Markdown"
     )
