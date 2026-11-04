@@ -1,190 +1,166 @@
 """
-🧘 Meditation System — Core Game Loop for training Potential
-Allows players to gain Potential via 3 distinct focus strategies,
-and ascend/awaken to next Potential Tiers for permanent max stats boosts.
+Faction-aware cultivation system.
+Slayers train Total Concentration; demons cultivate Blood Power.
+Sessions are three-stage choice adventures — no reaction timers or timing grades.
 """
 import random
 import logging
-import asyncio
 import time
 from datetime import datetime, timedelta
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+
 from utils.database import col, get_player, update_player
-from utils.helpers import get_level
 
 log = logging.getLogger(__name__)
+COOLDOWN_SECONDS = 3600
+SESSION_TIMEOUT = 180
 
-COOLDOWN_SECONDS = 3600 # 1 hour
+SLAYER_PATHS = {
+    "water": {"name": "🌊 Waterfall Discipline", "cost": 20, "desc": "A steady path focused on control and endurance."},
+    "thunder": {"name": "⚡ Thunder Focus", "cost": 20, "desc": "A demanding path that rewards bold decisions."},
+    "flame": {"name": "🔥 Flame Resolve", "cost": 35, "desc": "An intense path with the highest potential gains."},
+}
+DEMON_PATHS = {
+    "devour": {"name": "🩸 Blood Devour", "cost": 20, "desc": "Consume corrupted essence to strengthen your body."},
+    "shadow": {"name": "🌑 Shadow Cultivation", "cost": 20, "desc": "Hone speed, concealment and predatory instinct."},
+    "art": {"name": "🔴 Blood Art Evolution", "cost": 35, "desc": "Feed your Blood Demon Art and evolve its power."},
+}
 
-def _get_meditate_cooldown(user_id: int) -> datetime | None:
+SLAYER_SCENES = [
+    ("🌊 THE FALLING WATER", "A violent waterfall crashes around you. Your breathing begins to lose rhythm.",
+     [("🧘 Stay calm", 3, 35), ("🌊 Follow the current", 5, 20), ("🔥 Push through the pressure", 7, 10)]),
+    ("🌲 THE SILENT FOREST", "A demon's presence lurks between the trees. You must keep your senses sharp.",
+     [("👂 Listen carefully", 5, 25), ("⚔️ Take a guarded stance", 4, 30), ("💨 Move without hesitation", 6, 15)]),
+    ("⛰️ THE FINAL ASCENT", "Your legs tremble. One final climb stands between you and clarity.",
+     [("🫁 Regulate your breathing", 4, 30), ("🪨 Advance steadily", 5, 25), ("☀️ Unleash everything", 7, 10)]),
+]
+DEMON_SCENES = [
+    ("🩸 THE BLOOD ALTAR", "An ancient blood source pulses. Its power could strengthen you — or overwhelm you.",
+     [("🩸 Absorb a measured amount", 5, 25), ("☠️ Consume the entire offering", 7, 10), ("👁️ Study its essence first", 4, 30)]),
+    ("🌑 THE HUNTING SHADOW", "A powerful presence stalks your territory. Your instincts demand action.",
+     [("🐺 Track it patiently", 5, 25), ("🌑 Disappear into the dark", 6, 20), ("💥 Challenge it directly", 7, 10)]),
+    ("🔴 THE BLOOD ART TRIAL", "Your Blood Demon Art strains against its limits. You feel an evolution trying to emerge.",
+     [("🧬 Refine its control", 5, 30), ("🩸 Feed it more blood", 7, 10), ("🔮 Explore a new mutation", 6, 20)]),
+]
+
+def _cooldown(user_id):
     doc = col("cooldowns").find_one({"user_id": user_id, "type": "meditate"})
-    if doc:
-        return doc.get("expire_at")
-    return None
+    return doc.get("expire_at") if doc else None
 
-def _set_meditate_cooldown(user_id: int):
-    expire = datetime.utcnow() + timedelta(seconds=COOLDOWN_SECONDS)
+def _set_cooldown(user_id):
     col("cooldowns").update_one(
         {"user_id": user_id, "type": "meditate"},
-        {"$set": {"expire_at": expire}},
-        upsert=True
+        {"$set": {"expire_at": datetime.utcnow() + timedelta(seconds=COOLDOWN_SECONDS)}},
+        upsert=True,
     )
 
-def _stamina_display(player: dict) -> str:
-    """Compact stamina bar and automatic recovery countdown."""
-    current = max(0, int(player.get("sta", 0) or 0))
-    maximum = max(1, int(player.get("max_sta", current) or current))
-    ratio = min(1.0, current / maximum)
-    filled = min(10, int(ratio * 10))
-    bar = "🟩" * filled + "⬜" * (10 - filled)
-    lines = [f"🔋 *Stamina:* {current:,}/{maximum:,}", f"{bar}  *{int(ratio * 100)}%*"]
-    recovery_at = player.get("sta_recovery_at")
-    if current <= 0 and recovery_at:
-        remaining = max(0, int((recovery_at - datetime.utcnow()).total_seconds()))
-        hours, rem = divmod(remaining, 3600)
-        minutes, seconds = divmod(rem, 60)
-        lines.append(f"⏳ *Full recovery in:* {hours}h {minutes}m {seconds}s")
-    elif current <= 0:
-        lines.append("⏳ *Full recovery:* within 1 hour")
-    else:
-        lines.append("🌿 Stamina fully restores 1 hour after exhaustion.")
+def _tier_title(tier):
+    names = ["Unawakened", "Awakened", "Ascended", "Transcended", "Demi-God",
+             "Supreme Sovereign", "Astral", "Ethereal", "Infernal", "Glacial",
+             "Tempest", "Abyssal", "Radiant", "Omniscient", "Unbreakable",
+             "Sage", "Dragon Spirit", "Cosmic Entity", "Timeless", "Nova", "Absolute Zenith"]
+    return names[min(max(0, int(tier or 0)), 20)]
+
+def _bar(value):
+    filled = min(10, max(0, int(value) // 10))
+    return "🟩" * filled + "⬜" * (10 - filled)
+
+def _stamina_text(player):
+    sta = max(0, int(player.get("sta", 0) or 0))
+    maximum = max(1, int(player.get("max_sta", sta) or sta))
+    lines = [f"🔋 Stamina: *{sta:,}/{maximum:,}*", f"{_bar(int(sta / maximum * 100))}"]
+    recovery = player.get("sta_recovery_at")
+    if sta <= 0 and recovery:
+        if recovery.tzinfo is not None:
+            recovery = recovery.replace(tzinfo=None)
+        left = max(0, int((recovery - datetime.utcnow()).total_seconds()))
+        lines.append(f"⏳ Recovery: *{left // 60}m {left % 60}s*")
+    elif sta <= 0:
+        lines.append("⏳ Stamina recovers automatically after exhaustion.")
     return "\n".join(lines)
 
+def _path_keyboard(faction):
+    paths = DEMON_PATHS if faction == "demon" else SLAYER_PATHS
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"{p['name']} · {p['cost']} STA", callback_data=f"meditate_path_{key}")]
+        for key, p in paths.items()
+    ])
 
-def _get_tier_title(tier: int) -> str:
-    titles = {
-        1: "🌟 Tier I (Awakened)",
-        2: "✨ Tier II (Ascended)",
-        3: "💎 Tier III (Transcended)",
-        4: "🌌 Tier IV (Demi-God)",
-        5: "👑 Tier V (Supreme Sovereign)",
-        6: "☄️ Tier VI (Astral)",
-        7: "🌀 Tier VII (Ethereal)",
-        8: "🔥 Tier VIII (Infernal)",
-        9: "❄️ Tier IX (Glacial)",
-        10: "⚡ Tier X (Tempest)",
-        11: "🌑 Tier XI (Abyssal)",
-        12: "☀️ Tier XII (Radiant)",
-        13: "👁️ Tier XIII (Omniscient)",
-        14: "🦾 Tier XIV (Unbreakable)",
-        15: "⛩️ Tier XV (Sage)",
-        16: "🐉 Tier XVI (Dragon Spirit)",
-        17: "🌌 Tier XVII (Cosmic Entity)",
-        18: "⏳ Tier XVIII (Timeless)",
-        19: "🌠 Tier XIX (Nova)",
-        20: "♾️ Tier XX (Absolute Zenith)",
-    }
-    return titles.get(tier, f"🔥 Tier {tier}")
+def _scene_for(faction):
+    return random.choice(DEMON_SCENES if faction == "demon" else SLAYER_SCENES)
 
 async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Main /meditate command entry point."""
     user_id = update.effective_user.id
     player = get_player(user_id)
     if not player:
-        await update.message.reply_text("❌ No character found. Use /start to create one.")
+        await update.message.reply_text("❌ No character found. Use /start first.")
         return
 
+    faction = str(player.get("faction", "slayer")).lower()
+    is_demon = faction == "demon"
     potential = max(0, min(100, int(player.get("potential", 0) or 0)))
-    tier = max(0, int(player.get("potential_tier", 0) or 0))
-    tier_label = f"\n🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
+    tier = int(player.get("potential_tier", 0) or 0)
 
-    # Prevent a second command from overwriting an active reaction challenge.
     pending = col("meditate_pending").find_one({"user_id": user_id})
     if pending:
         age = time.time() - float(pending.get("created_at", 0) or 0)
-        if age <= 90:
-            note = ("Your reaction button is waiting. Tap it within 2.5 seconds." if "react_start" in pending else "Your breathing session is being prepared. Wait for the reaction button.")
-            await update.message.reply_text("🧘 *Meditation already in progress*\n\n" + note, parse_mode="Markdown")
+        if age < SESSION_TIMEOUT:
+            await update.message.reply_text("⏳ Your cultivation journey is already in progress. Finish the choices in the active session.")
             return
-        col("meditate_pending").delete_one({"user_id": user_id, "created_at": pending.get("created_at")})
-        if "react_start" not in pending:
-            refund = max(0, int(pending.get("sta_cost", 0) or 0))
-            current_sta = int(player.get("sta", 0) or 0)
-            max_sta = int(player.get("max_sta", current_sta) or current_sta)
-            update_player(user_id, sta=min(max_sta, current_sta + refund))
-            col("cooldowns").delete_one({"user_id": user_id, "type": "meditate"})
+        col("meditate_pending").delete_one({"user_id": user_id})
+        refund = int(pending.get("sta_cost", 0) or 0)
+        if refund:
+            update_player(user_id, sta=min(int(player.get("max_sta", 0) or 0), int(player.get("sta", 0) or 0) + refund))
+        col("cooldowns").delete_one({"user_id": user_id, "type": "meditate"})
 
-    # If potential is already 100%, offer limit break instantly
     if potential >= 100:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔮 SHATTER LIMITS / AWAKEN", callback_data="meditate_awaken")
-        ]])
+        title = "☠️ DEMON EVOLUTION" if is_demon else "☀️ TOTAL CONCENTRATION AWAKENING"
+        button = "🩸 EVOLVE DEMON FORM" if is_demon else "🔮 AWAKEN NEXT TIER"
         await update.message.reply_text(
-            f"╭── 🧘 *TOTAL CONCENTRATION BREATHING* ──╮\n"
-            f"│\n"
-            f"│ 🔮 Your potential has reached its peak (*100%*)!{tier_label}\n"
-            f"│\n"
-            f"│ > _You stand at the edge of physical limitations._\n"
-            f"│ > _Unleash your inner spirit and break your_\n"
-            f"│ > _boundaries to ascend to the next tier!_\n"
-            f"│\n"
-            f"├─ ⚡ *Permanent rewards upon Ascension:* ─┤\n"
-            f"│ • ❤️ Max HP:       *+15*\n"
-            f"│ • 🌀 Max Stamina:  *+10*\n"
-            f"│ • 💪 STR:          *+2*\n"
-            f"│ • ⚡ SPD:          *+1*\n"
-            f"│ • 🛡️ DEF:          *+1*\n"
-            f"│ • ⚔️ Combat DMG:   *+5% per tier (stacked)*\n"
-            f"│ • 🔰 DMG Reduce:   *+3% per tier (stacked)*\n"
-            f"╰────────────────────────────────────────╯",
+            f"*{title}*\n\nYour cultivation has reached *100%*.\n"
+            f"Current tier: *{_tier_title(tier)}*\n\n"
+            "Break through your current limits and claim permanent growth.",
             parse_mode="Markdown",
-            reply_markup=keyboard
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(button, callback_data="meditate_awaken")]]),
         )
         return
 
-    # Check cooldown
-    expire = _get_meditate_cooldown(user_id)
+    expire = _cooldown(user_id)
     if expire:
-        diff = expire - datetime.utcnow()
-        if diff.total_seconds() > 0:
-            mins = int(diff.total_seconds() // 60)
-            secs = int(diff.total_seconds() % 60)
+        if expire.tzinfo is not None:
+            expire = expire.replace(tzinfo=None)
+        seconds = int((expire - datetime.utcnow()).total_seconds())
+        if seconds > 0:
             await update.message.reply_text(
-                f"⏳ *MEDITATION RECOVERY*\n\n"
-                f"Your spiritual energy is recovering from your last training session.\n\n"
-                f"⌚ Next session available in:  *{mins}m {secs}s*",
-                parse_mode="Markdown"
+                f"⏳ Your energy is recovering. Next cultivation in *{seconds // 60}m {seconds % 60}s*.",
+                parse_mode="Markdown",
             )
             return
 
-    # Three distinct training paths with different risk/reward profiles.
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌊 WATERFALL · Steady control · 20 STA", callback_data="meditate_breath")],
-        [InlineKeyboardButton("⚡ THUNDER · Reflex trial · 20 STA", callback_data="meditate_mind")],
-        [InlineKeyboardButton("🔥 FLAME · High intensity · 40 STA", callback_data="meditate_spirit")]
-    ])
+    if is_demon:
+        heading = "☠️ BLOOD CULTIVATION"
+        intro = "Strengthen your demonic body, sharpen your instincts and evolve your Blood Demon Art."
+        progress_name = "Blood Potential"
+        stats = f"🩸 Demon level: *{player.get('demon_level', 1)}*"
+    else:
+        heading = "🧘 TOTAL CONCENTRATION"
+        intro = "Train your breathing, discipline your body and push beyond your human limits."
+        progress_name = "Breathing Potential"
+        stats = f"🥋 Breathing style: *{player.get('style') or 'Unassigned'}*"
 
-    remaining = max(0, 100 - potential)
-    filled = min(10, potential // 10)
-    progress = "🟩" * filled + "⬜" * (10 - filled)
-    combo = int(player.get("meditation_combo", 0) or 0)
-    perfects = int(player.get("meditation_perfects", 0) or 0)
     await update.message.reply_text(
-        f"╭── 🧘 *TOTAL CONCENTRATION TRIAL* ──╮\n"
-        f"│\n"
-        f"│ 🔮 *Potential:* {potential}% / 100%\n"
-        f"│ {progress}\n"
-        f"│ 🎯 *Awakening:* {remaining}% to go\n"
-        f"│ 🏆 *Current tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\n"
-        f"│ ⚡ *Perfect-form combo:* {combo}  ·  🌟 *Perfect trials:* {perfects}\n"
-        f"│\n"
-        f"├─ 🔋 *BODY CONDITION* ──────────────┤\n"
-        f"│ {_stamina_display(player).replace(chr(10), chr(10) + '│ ')}\n"
-        f"│\n"
-        f"├─ 🥋 *CHOOSE YOUR TRAINING PATH* ───┤\n"
-        f"│ 🌊 Waterfall: reliable gains, balanced cost\n"
-        f"│ ⚡ Thunder: risky focus test, bonus for speed\n"
-        f"│ 🔥 Flame: biggest potential gains, heavy cost\n"
-        f"│\n"
-        f"│ Every trial can trigger a rare spiritual event.\n"
-        f"╰────────────────────────────────────╯",
+        f"*{heading}*\n\n{intro}\n\n"
+        f"🔮 *{progress_name}:* {potential}% / 100%\n{_bar(potential)}\n"
+        f"🏆 *Cultivation tier:* {_tier_title(tier)}\n{stats}\n\n"
+        f"{_stamina_text(player)}\n\n"
+        "Choose your cultivation path. Each session contains three story choices.",
         parse_mode="Markdown",
-        reply_markup=keyboard
+        reply_markup=_path_keyboard(faction),
     )
 
 async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes focus strategy buttons."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -193,324 +169,168 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ No character found.")
         return
 
+    faction = str(player.get("faction", "slayer")).lower()
+    is_demon = faction == "demon"
     action = query.data
-    potential = player.get("potential", 0)
+    potential = max(0, min(100, int(player.get("potential", 0) or 0)))
 
-    # 1. Limit break Ascension action
     if action == "meditate_awaken":
         if potential < 100:
-            await query.edit_message_text("❌ You haven't reached 100% potential yet!")
+            await query.edit_message_text("❌ You need 100% potential before ascending.")
             return
-
-        current_tier = player.get("potential_tier", 0)
-        if current_tier >= 20:
-            await query.edit_message_text("❌ You have already reached the absolute zenith of your potential! (Max Tier 20)")
+        tier = int(player.get("potential_tier", 0) or 0)
+        if tier >= 20:
+            await query.edit_message_text("♾️ You have reached the maximum cultivation tier.")
             return
-
-        new_tier = current_tier + 1
-
-        # ── Permanent stat boosts on every awakening ──────────────────────
-        HP_BOOST  = 15
-        STA_BOOST = 10
-        STR_BOOST = 2
-        SPD_BOOST = 1
-        DEF_BOOST = 1
-
-        new_max_hp  = player["max_hp"]  + HP_BOOST
-        new_max_sta = player["max_sta"] + STA_BOOST
-        new_str     = player.get("str_stat", 22) + STR_BOOST
-        new_spd     = player.get("spd",      20) + SPD_BOOST
-        new_def     = player.get("def_stat", 18) + DEF_BOOST
-
-        update_player(
-            user_id,
-            potential=0,
-            potential_tier=new_tier,
-            max_hp=new_max_hp,
-            max_sta=new_max_sta,
-            hp=new_max_hp,
-            sta=new_max_sta,
-            str_stat=new_str,
-            spd=new_spd,
-            def_stat=new_def,
-        )
-
+        new_tier = tier + 1
+        hp_boost, sta_boost, str_boost, spd_boost, def_boost = 15, 10, 2, 1, 1
+        new_max_hp = int(player.get("max_hp", 240) or 240) + hp_boost
+        new_max_sta = int(player.get("max_sta", 170) or 170) + sta_boost
+        new_str = int(player.get("str_stat", 22) or 22) + str_boost
+        new_spd = int(player.get("spd", 20) or 20) + spd_boost
+        new_def = int(player.get("def_stat", 18) or 18) + def_boost
+        updates = {
+            "potential": 0, "potential_tier": new_tier,
+            "max_hp": new_max_hp, "max_sta": new_max_sta,
+            "hp": new_max_hp, "sta": new_max_sta,
+            "str_stat": new_str, "spd": new_spd, "def_stat": new_def,
+        }
+        if is_demon:
+            updates["demon_evolution_tier"] = int(player.get("demon_evolution_tier", 0) or 0) + 1
+        update_player(user_id, **updates)
+        label = "☠️ DEMON FORM EVOLVED" if is_demon else "☀️ BREATHING AWAKENED"
+        path_label = "Blood Cultivation" if is_demon else "Total Concentration"
         await query.edit_message_text(
-            f"╭── 🎆 *LIMIT SHATTERED — AWAKENED!* 🎇 ──╮\n"
-            f"│\n"
-            f"│ > _Your spirit surges with raw, unbridled energy!_\n"
-            f"│ > _The barriers holding your breathing and_\n"
-            f"│ > _technique back have dissolved!_\n"
-            f"│\n"
-            f"│ 🔮 Meditation Rank:  *{_get_tier_title(new_tier)}*\n"
-            f"│\n"
-            f"├─ 📈 *PERMANENT STAT GAINS:* ─────────────┤\n"
-            f"│ ❤️  Max HP:       *+{HP_BOOST}*  →  {new_max_hp}\n"
-            f"│ 🌀  Max Stamina:  *+{STA_BOOST}*  →  {new_max_sta}\n"
-            f"│ 💪  STR:          *+{STR_BOOST}*  →  {new_str}\n"
-            f"│ ⚡  SPD:          *+{SPD_BOOST}*  →  {new_spd}\n"
-            f"│ 🛡️  DEF:          *+{DEF_BOOST}*  →  {new_def}\n"
-            f"│ ⚔️  DMG Bonus:    *+{new_tier * 5}%* (stacked)\n"
-            f"│ 🔰  DMG Reduce:   *+{new_tier * 3}%* (stacked)\n"
-            f"│\n"
-            f"╰─ _Potential reset to 0%._ ───────────────╯",
-            parse_mode="Markdown"
-        )
-        return
-
-    # Check cooldown again for safety
-    expire = _get_meditate_cooldown(user_id)
-    if expire and (expire - datetime.utcnow()).total_seconds() > 0:
-        await query.edit_message_text("⏳ Meditation cooldown is active. Try again later.")
-        return
-
-    # Determine focus costs and rewards
-    if action == "meditate_breath":
-        sta_cost = 20
-        min_gain, max_gain = 3, 6
-        xp_gain = 50
-        strategy_name = "🌬️ Focus Breath"
-        fail_chance = 0.0
-    elif action == "meditate_mind":
-        sta_cost = 20
-        min_gain, max_gain = 2, 11
-        xp_gain = 40
-        strategy_name = "🌊 Clear Mind"
-        fail_chance = 0.15
-    elif action == "meditate_spirit":
-        sta_cost = 40
-        min_gain, max_gain = 7, 14
-        xp_gain = 100
-        strategy_name = "🔥 Ignite Spirit"
-        fail_chance = 0.0
-    else:
-        return
-
-    if player["sta"] < sta_cost:
-        await query.edit_message_text(f"❌ Not enough Stamina! Meditating requires *{sta_cost} STA*.", parse_mode="Markdown")
-        return
-
-    # Set cooldown and deduct stamina instantly to avoid spam
-    _set_meditate_cooldown(user_id)
-    update_player(user_id, sta=max(0, player["sta"] - sta_cost))
-
-    # Generate reaction timestamp and button
-    import time
-    react_time = time.time()
-
-    # A random spiritual event changes the reward or difficulty of this trial.
-    event = random.choices(
-        [
-            {"name": "🌟 SPIRIT SURGE", "description": "A wave of energy empowers your next form.", "kind": "potential", "bonus": 3, "window": 2.5},
-            {"name": "🌿 CALMING CURRENT", "description": "A gentle current will restore 5 stamina after the trial.", "kind": "stamina", "bonus": 5, "window": 2.5},
-            {"name": "📜 ANCIENT MEMORY", "description": "A forgotten master shares a fragment of wisdom.", "kind": "xp", "bonus": 75, "window": 2.5},
-            {"name": "👁️ DEMON'S WHISPER", "description": "A hostile voice tests your reflexes; perfect timing grants extra potential.", "kind": "reflex", "bonus": 4, "window": 1.8},
-        ],
-        weights=[30, 30, 25, 15],
-        k=1
-    )[0]
-
-    # Store pending reaction data in database.
-    col("meditate_pending").update_one(
-        {"user_id": user_id},
-        {"$set": {
-            "action": action,
-            "fail_chance": fail_chance,
-            "min_gain": min_gain,
-            "max_gain": max_gain,
-            "xp_gain": xp_gain,
-            "sta_cost": sta_cost,
-            "strategy_name": strategy_name,
-            "created_at": react_time,
-            "potential": potential,
-            "event_name": event["name"],
-            "event_description": event["description"],
-            "event_kind": event["kind"],
-            "event_bonus": event["bonus"],
-            "reaction_window": event["window"],
-        }},
-        upsert=True
-    )
-
-    # Trial intro.
-    await query.edit_message_text(
-        f"╭── 🧘 *{strategy_name.upper()} TRIAL* ──╮\n"
-        f"│\n"
-        f"│ _{event['description']}_\n"
-        f"│\n"
-        f"│ 🎴 *Encounter:* {event['name']}\n"
-        f"│\n"
-        f"│ > _Slow your heartbeat. Feel the rhythm._\n"
-        f"│ > _The signal can appear at any moment..._\n"
-        f"│\n"
-        f"╰────────────────────────────────╯",
-        parse_mode="Markdown"
-    )
-
-    # Wait random delay before showing the react button
-    delay = random.uniform(1.5, 3.5)
-    await asyncio.sleep(delay)
-
-    # Show react button
-    react_time_now = time.time()
-    armed = col("meditate_pending").update_one(
-        {"user_id": user_id, "created_at": react_time},
-        {"$set": {"react_start": react_time_now}}
-    )
-    if not armed.modified_count:
-        return
-
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚡ RELEASE YOUR BREATH!", callback_data="meditate_react")
-    ]])
-
-    try:
-        await query.edit_message_text(
-            f"╭── ⚡ *SIGNAL DETECTED* ──╮\n"
-            f"│\n"
-            f"│ 🎴 *{event['name']}*\n"
-            f"│ _{event['description']}_\n"
-            f"│\n"
-            f"│ 🫁 The moment is here. Release your breath!\n"
-            f"│ ⚡ Tap fast for a *PERFECT FORM* bonus.\n"
-            f"╰────────────────────────────╯",
+            f"*{label}*\n\n"
+            f"Your {path_label} has broken through to *Tier {new_tier}: {_tier_title(new_tier)}*.\n\n"
+            f"❤️ Max HP: +{hp_boost} → {new_max_hp}\n"
+            f"🔋 Max Stamina: +{sta_boost} → {new_max_sta}\n"
+            f"💪 STR: +{str_boost} · ⚡ SPD: +{spd_boost} · 🛡️ DEF: +{def_boost}\n\n"
+            "Your potential has reset to 0%.",
             parse_mode="Markdown",
-            reply_markup=keyboard
         )
-    except:
-        pass  # ignore if message is outdated or user clicked something else
-    return
-async def meditate_react_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes the reaction game result."""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-
-    player = get_player(user_id)
-    if not player:
         return
 
-    # Atomically claim the session so rapid/double taps cannot grant rewards twice.
-    pending = col("meditate_pending").find_one_and_delete({
-        "user_id": user_id,
-        "react_start": {"$exists": True},
-    })
-    if not pending:
-        await query.edit_message_text("❌ This meditation session has expired or was already claimed. Use /meditate to try again.")
+    if action.startswith("meditate_path_"):
+        expire = _cooldown(user_id)
+        if expire:
+            if expire.tzinfo is not None:
+                expire = expire.replace(tzinfo=None)
+            if (expire - datetime.utcnow()).total_seconds() > 0:
+                await query.edit_message_text("⏳ Cultivation cooldown is active.")
+                return
+
+        path_key = action.removeprefix("meditate_path_")
+        paths = DEMON_PATHS if is_demon else SLAYER_PATHS
+        path = paths.get(path_key)
+        if not path:
+            await query.edit_message_text("❌ That path does not belong to your faction.")
+            return
+        if int(player.get("sta", 0) or 0) < path["cost"]:
+            await query.edit_message_text(f"❌ You need {path['cost']} stamina for this path.")
+            return
+        scene = _scene_for(faction)
+        created = time.time()
+        update_player(user_id, sta=max(0, int(player.get("sta", 0) or 0) - path["cost"]))
+        _set_cooldown(user_id)
+        col("meditate_pending").update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "faction": faction, "path": path_key, "path_name": path["name"],
+                "sta_cost": path["cost"], "created_at": created,
+                "scene_index": 0, "score": 0, "xp_bonus": 0,
+                "scene_title": scene[0], "scene_text": scene[1], "scene_options": scene[2],
+            }},
+            upsert=True,
+        )
+        options = scene[2]
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(label, callback_data=f"meditate_choice_{i}")]
+            for i, (label, _, _) in enumerate(options)
+        ])
+        await query.edit_message_text(
+            f"*{path['name']}*\n_{path['desc']}_\n\n"
+            f"*{scene[0]}*\n{scene[1]}\n\n"
+            "*Stage 1 of 3 — Choose your approach:*",
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
         return
 
-    react_time_now = time.time()
-    react_start = float(pending["react_start"])
-    reaction_duration = max(0.0, react_time_now - react_start)
+    if action.startswith("meditate_choice_"):
+        pending = col("meditate_pending").find_one({"user_id": user_id})
+        if not pending:
+            await query.edit_message_text("⌛ This cultivation session has expired. Use /meditate to begin again.")
+            return
+        if pending.get("faction") != faction:
+            col("meditate_pending").delete_one({"user_id": user_id})
+            await query.edit_message_text("❌ Your faction changed. Start a new cultivation session.")
+            return
+        if time.time() - float(pending.get("created_at", 0) or 0) > SESSION_TIMEOUT:
+            col("meditate_pending").delete_one({"user_id": user_id})
+            refund = int(pending.get("sta_cost", 0) or 0)
+            update_player(user_id, sta=min(int(player.get("max_sta", 0) or 0), int(player.get("sta", 0) or 0) + refund))
+            col("cooldowns").delete_one({"user_id": user_id, "type": "meditate"})
+            await query.edit_message_text("⌛ The trial faded before completion. Your stamina was refunded; use /meditate to retry.")
+            return
 
-    fail_chance = float(pending.get("fail_chance", 0) or 0)
-    min_gain = int(pending.get("min_gain", 0) or 0)
-    max_gain = int(pending.get("max_gain", 0) or 0)
-    xp_gain = int(pending.get("xp_gain", 0) or 0)
-    sta_cost = int(pending.get("sta_cost", 0) or 0)
-    strategy_name = pending.get("strategy_name", "Concentration")
-    potential = int(pending.get("potential", 0) or 0)
-    event_name = pending.get("event_name", "🌿 QUIET MIND")
-    event_kind = pending.get("event_kind", "none")
-    event_bonus = int(pending.get("event_bonus", 0) or 0)
-    reaction_window = float(pending.get("reaction_window", 2.5) or 2.5)
+        try:
+            choice_index = int(action.rsplit("_", 1)[1])
+            options = pending.get("scene_options", [])
+            label, points, xp_bonus = options[choice_index]
+        except (ValueError, IndexError, TypeError):
+            await query.edit_message_text("❌ Invalid choice. Please start /meditate again.")
+            return
 
-    # Grade the player's timing instead of treating every successful tap equally.
-    success = random.random() >= fail_chance
-    grade = "MISS"
-    bonus_gain = 0
-    stamina_refund = 0
-    bonus_xp = 0
+        score = int(pending.get("score", 0) or 0) + int(points)
+        total_xp_bonus = int(pending.get("xp_bonus", 0) or 0) + int(xp_bonus)
+        stage = int(pending.get("scene_index", 0) or 0) + 1
 
-    if reaction_duration > reaction_window:
-        success = False
-        outcome_text = f"❌ *MISSED THE MOMENT* ({reaction_duration:.2f}s)\n│ > Your breathing rhythm broke before the signal."
-        gain = 0
-    elif not success:
-        outcome_text = f"🫥 *FOCUS BROKEN* ({reaction_duration:.2f}s)\n│ > You reacted, but your concentration slipped."
-        gain = 0
-    else:
-        if reaction_duration <= 0.70:
-            grade = "PERFECT"
-            gain = random.randint(min_gain, max_gain)
-            bonus_gain = 2
-            outcome_text = f"🌟 *PERFECT FORM!* ({reaction_duration:.2f}s)\n│ > Your body moved as one. Bonus potential unlocked!"
-        elif reaction_duration <= 1.45:
-            grade = "GOOD"
-            gain = random.randint(min_gain, max_gain)
-            outcome_text = f"✨ *GOOD FORM!* ({reaction_duration:.2f}s)\n│ > A clean, controlled breath. Your training paid off."
-        else:
-            grade = "LATE"
-            gain = max(1, random.randint(min_gain, max_gain) // 2)
-            outcome_text = f"🌫️ *LATE FORM* ({reaction_duration:.2f}s)\n│ > You caught the rhythm late, but salvaged part of the training."
+        if stage < 3:
+            scene = _scene_for(faction)
+            col("meditate_pending").update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "scene_index": stage, "score": score, "xp_bonus": total_xp_bonus,
+                    "scene_title": scene[0], "scene_text": scene[1], "scene_options": scene[2],
+                }},
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(opt[0], callback_data=f"meditate_choice_{i}")]
+                for i, opt in enumerate(scene[2])
+            ])
+            faction_word = "blood trial" if is_demon else "breathing trial"
+            await query.edit_message_text(
+                f"✅ *Choice recorded:* {label}\n\n"
+                f"*{scene[0]}*\n{scene[1]}\n\n"
+                f"*Stage {stage + 1} of 3 — Continue your {faction_word}:*",
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            return
 
-    if success and event_kind == "potential":
-        bonus_gain += event_bonus
-    elif success and event_kind == "reflex" and grade == "PERFECT":
-        bonus_gain += event_bonus
-    elif success and event_kind == "stamina":
-        stamina_refund = event_bonus
-    elif success and event_kind == "xp":
-        bonus_xp = event_bonus
+        # Complete the journey and award faction-specific mastery.
+        base_gain = {"water": 5, "thunder": 5, "flame": 7, "devour": 5, "shadow": 5, "art": 7}.get(pending.get("path"), 5)
+        gain = max(3, min(16, base_gain + score // 5))
+        xp_gain = (55 if is_demon else 50) + total_xp_bonus + score * 2
+        new_potential = min(100, potential + gain)
+        update_player(user_id, potential=new_potential, xp=int(player.get("xp", 0) or 0) + xp_gain)
+        col("meditate_pending").delete_one({"user_id": user_id})
+        progress_name = "Blood Potential" if is_demon else "Breathing Potential"
+        event_reward = "🩸 Blood Art mastery strengthened." if is_demon else "🌬️ Breathing control improved."
+        next_step = "☠️ Use /meditate to evolve your demon form at 100%." if is_demon else "☀️ Use /meditate to awaken your next tier at 100%."
+        await query.edit_message_text(
+            f"*{'☠️ BLOOD CULTIVATION COMPLETE' if is_demon else '🧘 MEDITATION COMPLETE'}*\n\n"
+            f"🛤️ Path: *{pending.get('path_name', 'Cultivation')}*\n"
+            f"📖 Final choice: _{label}_\n"
+            f"🏅 Journey score: *{score}*\n\n"
+            f"*Rewards*\n"
+            f"🔮 {progress_name}: *+{gain}%*\n"
+            f"⭐ XP: *+{xp_gain}*\n"
+            f"{event_reward}\n\n"
+            f"*Progress:* {new_potential}% / 100%\n{_bar(new_potential)}\n\n"
+            f"{'✨ ' + next_step if new_potential >= 100 else '⏳ Next session in 1 hour.'}",
+            parse_mode="Markdown",
+        )
+        return
 
-    # Consecutive perfect forms build a small capped combo bonus.
-    old_combo = int(player.get("meditation_combo", 0) or 0)
-    combo = min(5, old_combo + 1) if grade == "PERFECT" else 0
-    combo_bonus = min(3, max(0, combo - 1))
-    if grade == "PERFECT":
-        bonus_gain += combo_bonus
-    perfects = int(player.get("meditation_perfects", 0) or 0) + (1 if grade == "PERFECT" else 0)
-
-    gain += bonus_gain
-    xp_total = xp_gain + bonus_xp
-    new_potential = min(100, potential + gain)
-    new_sta = min(int(player.get("max_sta", 0) or 0), int(player.get("sta", 0) or 0) + stamina_refund)
-    
-    # Progress bar calculation
-    filled_blocks = int(new_potential // 10)
-    empty_blocks = 10 - filled_blocks
-    progress_bar = ("🟩" * filled_blocks) + ("⬜" * empty_blocks)
-
-    # Save player updates
-    update_player(
-        user_id,
-        potential=new_potential,
-        xp=int(player.get("xp", 0) or 0) + xp_total,
-        meditation_combo=combo,
-        meditation_perfects=perfects,
-        **({"sta": new_sta} if stamina_refund else {})
-    )
-
-    # Final response
-    tier = player.get("potential_tier", 0)
-    tier_label = f"\n│ 🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
-
-    status_msg = (f"│ ✨ *AWAKENING READY!* Use /meditate to ascend." if new_potential >= 100
-                  else f"│ ⏳ Next trial unlocks in 1 hour.")
-
-    grade_emoji = {"PERFECT": "🌟", "GOOD": "✨", "LATE": "🌫️", "MISS": "❌"}.get(grade, "❔")
-    event_result = f"🎴 *Event:* {event_name}\n"
-    reward_lines = [
-        f"│ ⭐ XP: *+{xp_total}*",
-        f"│ 🔋 Stamina used: *-{sta_cost} STA*" + (f"  ·  Refunded: *+{stamina_refund}*" if stamina_refund else ""),
-        f"│ 🔮 Potential: *+{gain}%*" + (f"  (includes +{bonus_gain}% bonus)" if bonus_gain else ""),
-        f"│ 🏅 Form grade: {grade_emoji} *{grade}*",
-        f"│ 🔥 Perfect combo: *{combo}*",
-    ]
-
-    await query.edit_message_text(
-        f"╭── 🧘 *TRIAL COMPLETE* ──╮\n"
-        f"│\n"
-        f"│ {event_result}"
-        f"│ > {outcome_text}\n"
-        f"│\n"
-        f"├─ 🎁 *TRIAL REWARDS* ──────────────┤\n"
-        + "\n".join(reward_lines) + "\n"
-        f"│\n"
-        f"├─ 🔮 *AWAKENING PROGRESS* ─────────┤\n"
-        f"│ {progress_bar} *{new_potential}%* / 100%{tier_label}\n"
-        f"│\n"
-        f"{status_msg}\n"
-        f"╰──────────────────────────────────╯",
-        parse_mode="Markdown"
-    )
