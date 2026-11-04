@@ -279,7 +279,6 @@ async def meditate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             expected_stage = int(expected_stage)
             choice_index = int(choice_index)
             if int(pending.get("scene_index", 0) or 0) != expected_stage:
-                await query.answer("That choice was already recorded.", show_alert=False)
                 return
             options = pending.get("scene_options", [])
             label, points, xp_bonus = options[choice_index]
