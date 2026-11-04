@@ -66,14 +66,15 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     potential = max(0, min(100, int(player.get("potential", 0) or 0)))
     tier = max(0, int(player.get("potential_tier", 0) or 0))
-    tier_label = f"\n🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
+    tier_label = f"\\n🏆 Rank: *{_get_tier_title(tier)}*" if tier > 0 else ""
 
+    # Prevent a second command from overwriting an active reaction challenge.
     pending = col("meditate_pending").find_one({"user_id": user_id})
     if pending:
         age = time.time() - float(pending.get("created_at", 0) or 0)
         if age <= 90:
             note = ("Your reaction button is waiting. Tap it within 2.5 seconds." if "react_start" in pending else "Your breathing session is being prepared. Wait for the reaction button.")
-            await update.message.reply_text("🧘 *Meditation already in progress*\n\n" + note, parse_mode="Markdown")
+            await update.message.reply_text("🧘 *Meditation already in progress*\\n\\n" + note, parse_mode="Markdown")
             return
         col("meditate_pending").delete_one({"user_id": user_id, "created_at": pending.get("created_at")})
         if "react_start" not in pending:
@@ -85,7 +86,50 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # If potential is already 100%, offer limit break instantly
     if potential >= 100:
-        keyboard = InlineKeyboardMarkup([
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔮 SHATTER LIMITS / AWAKEN", callback_data="meditate_awaken")
+        ]])
+        await update.message.reply_text(
+            f"╭── 🧘 *TOTAL CONCENTRATION BREATHING* ──╮\n"
+            f"│\n"
+            f"│ 🔮 Your potential has reached its peak (*100%*)!{tier_label}\n"
+            f"│\n"
+            f"│ > _You stand at the edge of physical limitations._\n"
+            f"│ > _Unleash your inner spirit and break your_\n"
+            f"│ > _boundaries to ascend to the next tier!_\n"
+            f"│\n"
+            f"├─ ⚡ *Permanent rewards upon Ascension:* ─┤\n"
+            f"│ • ❤️ Max HP:       *+15*\n"
+            f"│ • 🌀 Max Stamina:  *+10*\n"
+            f"│ • 💪 STR:          *+2*\n"
+            f"│ • ⚡ SPD:          *+1*\n"
+            f"│ • 🛡️ DEF:          *+1*\n"
+            f"│ • ⚔️ Combat DMG:   *+5% per tier (stacked)*\n"
+            f"│ • 🔰 DMG Reduce:   *+3% per tier (stacked)*\n"
+            f"╰────────────────────────────────────────╯",
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        return
+
+    # Check cooldown
+    expire = _get_meditate_cooldown(user_id)
+    if expire:
+        diff = expire - datetime.utcnow()
+        if diff.total_seconds() > 0:
+            mins = int(diff.total_seconds() // 60)
+            secs = int(diff.total_seconds() % 60)
+            await update.message.reply_text(
+                f"⏳ *MEDITATION RECOVERY*\n\n"
+                f"Your spiritual energy is recovering from your last training session.\n\n"
+                f"⌚ Next session available in:  *{mins}m {secs}s*",
+                parse_mode="Markdown"
+            )
+            return
+
+    # Build focus selection panel
+    # Build a progress-focused strategy panel.
+    keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🌬️ Focus Breath · 3–6% · 20 STA", callback_data="meditate_breath")],
         [InlineKeyboardButton("🌊 Clear Mind · 2–11% · 20 STA", callback_data="meditate_mind")],
         [InlineKeyboardButton("🔥 Ignite Spirit · 7–14% · 40 STA", callback_data="meditate_spirit")]
@@ -95,16 +139,16 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filled = min(10, potential // 10)
     progress = "🟩" * filled + "⬜" * (10 - filled)
     await update.message.reply_text(
-        f"╭── 🧘 *TOTAL CONCENTRATION* ──╮\n"
-        f"│\n"
-        f"│ 🔮 *Potential:* {potential}% / 100%\n"
-        f"│ {progress}\n"
-        f"│ 🎯 *Next awakening:* {remaining}% remaining\n"
-        f"│ 🏆 *Meditation tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\n"
-        f"│ 🔋 *Stamina:* {player.get('sta', 0)}/{player.get('max_sta', 0)}\n"
-        f"│\n"
-        f"│ Choose a breathing focus. React within *2.5 seconds*\n"
-        f"│ to gain potential. Higher gains cost more stamina.\n"
+        f"╭── 🧘 *TOTAL CONCENTRATION* ──╮\\n"
+        f"│\\n"
+        f"│ 🔮 *Potential:* {potential}% / 100%\\n"
+        f"│ {progress}\\n"
+        f"│ 🎯 *Next awakening:* {remaining}% remaining\\n"
+        f"│ 🏆 *Meditation tier:* {_get_tier_title(tier) if tier else 'Unawakened'}\\n"
+        f"│ 🔋 *Stamina:* {player.get('sta', 0)}/{player.get('max_sta', 0)}\\n"
+        f"│\\n"
+        f"│ Choose a breathing focus. React within *2.5 seconds*\\n"
+        f"│ to gain potential. Higher gains cost more stamina.\\n"
         f"╰────────────────────────────╯",
         parse_mode="Markdown",
         reply_markup=keyboard
